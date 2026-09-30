@@ -131,6 +131,13 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStop() {
+        // 与桌面端「退出即保存」同口径（crates/desktop-app/src/ui.rs 的 save_current(..., "退出")）：
+        // 进入后台前落盘当前位置，否则「读到章中退出再入」会退回上一次保存点。
+        readerViewModel.onHostPaused()
+        super.onStop()
+    }
+
     override fun onDestroy() {
         // 只关闭 SAF 执行器：已打开书籍的窗口会话须跨 Activity 重建存活（见 SafHost 文档）。
         safHost.close()

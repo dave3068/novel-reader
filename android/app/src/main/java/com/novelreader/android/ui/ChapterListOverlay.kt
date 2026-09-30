@@ -6,7 +6,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.background
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -21,6 +26,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.novelreader.android.reader.ChapterEntry
+import com.novelreader.android.reader.chapterListInitialIndex
 
 /**
  * 章节列表浮层（规格 `docs/novel-reader-v1-development-plan.md:611`
@@ -40,6 +46,14 @@ internal fun ChapterListOverlay(
     onJump: (Int) -> Unit,
     onClose: () -> Unit,
 ) {
+    // 打开即定位到当前章（上方保留 [CHAPTER_LIST_CONTEXT] 行作为上下文），
+    // 章节上千时不必再手动翻找（这是本浮层的核心可用性要求）。
+    val initialIndex = chapterListInitialIndex(currentChapterIndex, chapters.size)
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = initialIndex)
+    LaunchedEffect(currentChapterIndex, chapters.size) {
+        // 浮层在打开期间若当前章变化（例如跳转后重开），跟随一次。
+        listState.scrollToItem(chapterListInitialIndex(currentChapterIndex, chapters.size))
+    }
     Surface(
         modifier = Modifier.fillMaxSize().testTag(ReaderTestTags.READER_CHAPTER_LIST),
         color = MaterialTheme.colorScheme.surface,
@@ -61,12 +75,20 @@ internal fun ChapterListOverlay(
                 }
             }
             HorizontalDivider()
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
+            LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
                 itemsIndexed(chapters) { index, chapter ->
                     val current = index == currentChapterIndex
                     Text(
-                        text = "${index + 1}. ${chapter.title}",
-                        style = MaterialTheme.typography.bodyMedium,
+                        text = if (current) {
+                            "▶ ${index + 1}. ${chapter.title}"
+                        } else {
+                            "${index + 1}. ${chapter.title}"
+                        },
+                        style = if (current) {
+                            MaterialTheme.typography.titleSmall
+                        } else {
+                            MaterialTheme.typography.bodyMedium
+                        },
                         color = if (current) {
                             MaterialTheme.colorScheme.primary
                         } else {
@@ -74,6 +96,17 @@ internal fun ChapterListOverlay(
                         },
                         modifier = Modifier
                             .fillMaxWidth()
+                            .then(
+                                // 当前章整行加底色，滚动定位后一眼可见。
+                                if (current) {
+                                    Modifier.background(
+                                        color = MaterialTheme.colorScheme.primaryContainer,
+                                        shape = RoundedCornerShape(6.dp),
+                                    )
+                                } else {
+                                    Modifier
+                                },
+                            )
                             .clickable { onJump(index) }
                             .padding(horizontal = 8.dp, vertical = 12.dp)
                             .testTag(ReaderTestTags.readerChapterItem(index)),
