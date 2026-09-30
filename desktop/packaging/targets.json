@@ -1,0 +1,303 @@
+{
+  "schema": "nr.desktop.targets/1",
+  "card": "t_e83b8ad0",
+  "updated": "2026-09-29",
+  "description": "桌面端各平台的构建/打包目标清单（单一事实来源）。scripts/verify-desktop-targets.py 读取本文件做静态校验与状态输出；desktop/packaging/ 下的脚本按本文件的口径产出发布目录。",
+  "allowed_status": {
+    "verified": "通过",
+    "pending": "待验证"
+  },
+  "honesty_rule": "status=verified 必须指向一份真实存在且 result=PASS 的证据文件；无实测证据时只能为 pending，输出「待验证」。本文件与校验脚本都不得在未实测时写「通过」。",
+  "packaging_mode_allowed": [
+    "release-directory"
+  ],
+  "packaging_mode_forbidden": [
+    "single-executable"
+  ],
+  "dep_doc": "docs/desktop/platform-requirements.md",
+  "dep_doc_required_keywords": [
+    "glibc",
+    "字体",
+    "运行库"
+  ],
+  "app_manifest": "crates/desktop-app/Cargo.toml",
+  "build_artifact": "crates/desktop-app/target/release/desktop-app",
+  "third_party_runtime_added_by_this_card": [],
+  "targets": [
+    {
+      "id": "linux-x11",
+      "display_name": "Linux x86_64 / X11",
+      "host_os": "linux",
+      "arch": "x86_64",
+      "session": "x11",
+      "packaging_mode": "release-directory",
+      "package_script": "desktop/packaging/linux/package-linux.sh",
+      "package_script_kind": "bash",
+      "script_tokens": [
+        "set -Eeuo pipefail",
+        "novel-reader-${VERSION}-linux-",
+        "sha256sum",
+        "MANIFEST.sha256",
+        "share/doc/novel-reader",
+        "bin/novel-reader.sh",
+        "--bundle-font",
+        "--dry-run",
+        "--verify-launch"
+      ],
+      "build_command": "cargo build --manifest-path crates/desktop-app/Cargo.toml --release",
+      "package_command": "bash desktop/packaging/linux/package-linux.sh --backend x11 --out /tmp/nr-dist",
+      "release_dir_name_pattern": "novel-reader-{version}-linux-x86_64-x11",
+      "release_layout": [
+        { "path": "bin/novel-reader", "kind": "file", "required": true, "note": "Release 二进制：由 crates/desktop-app/target/release/desktop-app 复制并改名" },
+        { "path": "bin/novel-reader.sh", "kind": "file", "required": true, "note": "启动包装：定位发布目录、按需设置 FONTCONFIG_FILE/LD_LIBRARY_PATH、原样转发参数与环境" },
+        { "path": "share/doc/novel-reader/README.md", "kind": "file", "required": true, "note": "随包说明（版本、目标、启动方式、数据目录、验证状态）" },
+        { "path": "share/doc/novel-reader/platform-requirements.md", "kind": "file", "required": true, "note": "依赖与系统要求（glibc/字体/运行库）随包分发" },
+        { "path": "share/doc/novel-reader/runtime-libraries.txt", "kind": "file", "required": false, "note": "构建机 ldd 实测的动态库 soname 清单（ldd 不可用时缺省）" },
+        { "path": "share/applications/novel-reader.desktop", "kind": "file", "required": true, "note": "桌面菜单项（Exec 指向发布目录内绝对路径；移动目录后需照 README 修正）" },
+        { "path": "VERSION", "kind": "file", "required": true, "note": "key=value：版本、目标三元组、会话、构建时间、rustc、打包脚本" },
+        { "path": "MANIFEST.sha256", "kind": "file", "required": true, "note": "发布目录内全部文件的 sha256（排除自身），打包末尾自校验" },
+        { "path": "bin/", "kind": "dir", "required": true, "note": null },
+        { "path": "share/", "kind": "dir", "required": true, "note": null },
+        { "path": "share/applications/", "kind": "dir", "required": true, "note": null },
+        { "path": "share/doc/", "kind": "dir", "required": true, "note": null },
+        { "path": "share/doc/novel-reader/", "kind": "dir", "required": true, "note": null },
+        { "path": "share/fonts/", "kind": "dir", "required": false, "note": "仅在 --bundle-font 时创建：随包分发中文字体" },
+        { "path": "etc/fonts/fonts.conf", "kind": "file", "required": false, "note": "仅在 --bundle-font 时创建：fontconfig 同时指向随包字体与系统字体目录" },
+        { "path": "lib/", "kind": "dir", "required": false, "note": "预留：随包分发额外 .so（本卡不使用，避免引入第三方运行时依赖）" }
+      ],
+      "dependencies": {
+        "build": {
+          "toolchain": "rust 1.98（rust-toolchain.toml 锁定）",
+          "crates": "crates/desktop-app/Cargo.lock（精确锁定版本）",
+          "target_triple": "x86_64-unknown-linux-gnu",
+          "native_build_deps": "fontconfig/freetype/expat/png 开发头文件（本机位于 /opt/dev-tools/slint-libs，source slint-env.sh）"
+        },
+        "runtime_shared_libraries": [
+          "libfontconfig.so.1",
+          "libfreetype.so.6",
+          "libexpat.so.1",
+          "libuuid.so.1",
+          "libpng16.so.16",
+          "libz.so.1",
+          "libbrotlidec.so.1",
+          "libbrotlicommon.so.1",
+          "libgcc_s.so.1",
+          "libdl.so.2",
+          "librt.so.1",
+          "libpthread.so.0",
+          "libm.so.6",
+          "libc.so.6"
+        ],
+        "glibc": "构建机 glibc 2.28.21（Deepin 20.9）；由于 glibc 符号版本向下不兼容，发布物最低 glibc 由构建机决定，需在目标发行版用 `ldd --version` 实测",
+        "gui": "X11 会话（DISPLAY）；Slint 默认 features 含 backend-winit + renderer-femtovg（OpenGL 2.1+，由 glutin 运行时加载 EGL/GLX，故不出现在 ldd 硬依赖中）+ renderer-software 回退",
+        "fonts": [
+          "Noto Sans CJK SC",
+          "Noto Serif CJK SC",
+          "Noto Sans Mono CJK SC"
+        ],
+        "fonts_source": "系统字体（本机 fonts-noto-cjk）；不随包分发字体时依赖系统已安装中文字体",
+        "distro_packages_debian": [
+          "libfontconfig1",
+          "libfreetype6",
+          "libexpat1",
+          "libuuid1",
+          "libpng16-16",
+          "zlib1g",
+          "libbrotli1",
+          "libgcc1",
+          "libc6",
+          "fonts-noto-cjk"
+        ]
+      },
+      "verification_gate": "source /opt/dev-tools/slint-libs/slint-env.sh && bash scripts/smoke-desktop.sh --backend x11 --fixture tests/fixtures/smoke.txt",
+      "status": "verified",
+      "status_label": "通过",
+      "status_evidence": {
+        "kind": "gate-result-json",
+        "path": "results/desktop/smoke-desktop.json",
+        "gate": "smoke-desktop",
+        "run_id": "20260930T044550Z",
+        "result": "PASS",
+        "backend": "x11",
+        "display": ":0",
+        "binary_sha256": "19856f3f8fbdfc2d8f3432ae7e4e770c8e18d84f5b0f509bfa98df01a4b92990",
+        "summary": "12/12 检查通过（窗口 1080x720、首屏 page_index=0/lines=20、章节 8、无残留进程/窗口）；另有对等性门禁 verify-desktop-parity.py 23/23（results/desktop/parity.json）",
+        "evidence_doc": "results/dt5-desktop-gates.md"
+      },
+      "blocking_reason": null,
+      "unverified_items": [
+        "发布目录（本卡新口径）本身只在构建机 /tmp 下组装并启动通过，未在**干净目标发行版**（无 Slint 编译依赖、只有系统运行库）实测安装与启动",
+        "无需 X11 之外的显示协议（Wayland）未实测（见 linux-wayland 目标）",
+        "未安装中文字体（fonts-noto-cjk 缺失）时的字体回退与 tofu 表现未实测"
+      ]
+    },
+    {
+      "id": "linux-wayland",
+      "display_name": "Linux x86_64 / Wayland",
+      "host_os": "linux",
+      "arch": "x86_64",
+      "session": "wayland",
+      "packaging_mode": "release-directory",
+      "package_script": "desktop/packaging/linux/package-linux.sh",
+      "package_script_kind": "bash",
+      "script_tokens": [
+        "set -Eeuo pipefail",
+        "novel-reader-${VERSION}-linux-",
+        "sha256sum",
+        "MANIFEST.sha256",
+        "share/doc/novel-reader",
+        "bin/novel-reader.sh",
+        "--bundle-font",
+        "--dry-run",
+        "--verify-launch"
+      ],
+      "build_command": "cargo build --manifest-path crates/desktop-app/Cargo.toml --release",
+      "package_command": "bash desktop/packaging/linux/package-linux.sh --backend wayland --out /tmp/nr-dist",
+      "release_dir_name_pattern": "novel-reader-{version}-linux-x86_64-wayland",
+      "release_layout": [
+        { "path": "bin/novel-reader", "kind": "file", "required": true, "note": "Release 二进制（与 X11 目标同一二进制；winit 后端在运行期按 WAYLAND_DISPLAY/DISPLAY 选择）" },
+        { "path": "bin/novel-reader.sh", "kind": "file", "required": true, "note": "启动包装：定位发布目录、按需设置 FONTCONFIG_FILE/LD_LIBRARY_PATH、原样转发参数与环境" },
+        { "path": "share/doc/novel-reader/README.md", "kind": "file", "required": true, "note": "随包说明（版本、目标、启动方式、数据目录、验证状态）" },
+        { "path": "share/doc/novel-reader/platform-requirements.md", "kind": "file", "required": true, "note": "依赖与系统要求（glibc/字体/运行库/Wayland 会话要求）随包分发" },
+        { "path": "share/doc/novel-reader/runtime-libraries.txt", "kind": "file", "required": false, "note": "构建机 ldd 实测的动态库 soname 清单" },
+        { "path": "share/applications/novel-reader.desktop", "kind": "file", "required": true, "note": "桌面菜单项" },
+        { "path": "VERSION", "kind": "file", "required": true, "note": "key=value：版本、目标、会话、构建时间、rustc、打包脚本" },
+        { "path": "MANIFEST.sha256", "kind": "file", "required": true, "note": "发布目录内全部文件的 sha256" },
+        { "path": "bin/", "kind": "dir", "required": true, "note": null },
+        { "path": "share/", "kind": "dir", "required": true, "note": null },
+        { "path": "share/applications/", "kind": "dir", "required": true, "note": null },
+        { "path": "share/doc/", "kind": "dir", "required": true, "note": null },
+        { "path": "share/doc/novel-reader/", "kind": "dir", "required": true, "note": null },
+        { "path": "share/fonts/", "kind": "dir", "required": false, "note": "仅在 --bundle-font 时创建" },
+        { "path": "etc/fonts/fonts.conf", "kind": "file", "required": false, "note": "仅在 --bundle-font 时创建" },
+        { "path": "lib/", "kind": "dir", "required": false, "note": "预留：随包分发额外 .so（本卡不使用）" }
+      ],
+      "dependencies": {
+        "build": {
+          "toolchain": "rust 1.98（rust-toolchain.toml 锁定）",
+          "crates": "crates/desktop-app/Cargo.lock（精确锁定版本）",
+          "target_triple": "x86_64-unknown-linux-gnu",
+          "native_build_deps": "fontconfig/freetype/expat/png 开发头文件（/opt/dev-tools/slint-libs）"
+        },
+        "runtime_shared_libraries": [
+          "libfontconfig.so.1",
+          "libfreetype.so.6",
+          "libexpat.so.1",
+          "libuuid.so.1",
+          "libpng16.so.16",
+          "libz.so.1",
+          "libbrotlidec.so.1",
+          "libbrotlicommon.so.1",
+          "libgcc_s.so.1",
+          "libdl.so.2",
+          "librt.so.1",
+          "libpthread.so.0",
+          "libm.so.6",
+          "libc.so.6"
+        ],
+        "glibc": "同 linux-x11：构建机 glibc 2.28.21，最低 glibc 需在目标发行版实测",
+        "gui": "Wayland 会话：WAYLAND_DISPLAY 指向合成器 socket + XDG_RUNTIME_DIR + libwayland-client（Cargo.lock 已含 wayland-client/wayland-backend/wayland-csd-frame，winit 后端在运行期选择）；OpenGL/EGL（femtovg）或软件渲染回退",
+        "fonts": [
+          "Noto Sans CJK SC",
+          "Noto Serif CJK SC",
+          "Noto Sans Mono CJK SC"
+        ],
+        "fonts_source": "系统字体；Wayland 下 fontconfig 仍按系统配置解析（随包字体经 FONTCONFIG_FILE 生效）",
+        "distro_packages_debian": [
+          "libfontconfig1",
+          "libfreetype6",
+          "libexpat1",
+          "libuuid1",
+          "libpng16-16",
+          "zlib1g",
+          "libbrotli1",
+          "libgcc1",
+          "libc6",
+          "fonts-noto-cjk",
+          "libwayland-client0"
+        ]
+      },
+      "verification_gate": "source /opt/dev-tools/slint-libs/slint-env.sh && bash scripts/smoke-desktop.sh --backend wayland --fixture tests/fixtures/smoke.txt（需真实 Wayland 会话；无会话时脚本 exit 2 并标注未实测）",
+      "status": "pending",
+      "status_label": "待验证",
+      "status_evidence": null,
+      "blocking_reason": "当前开发机（Deepin 20.9 / X11，XDG_SESSION_TYPE 与 WAYLAND_DISPLAY 均未设置）没有 Wayland 合成器会话，无法执行真实 Wayland 启动与窗口验证；未实测前不得记为通过。",
+      "unverified_items": [
+        "Wayland 会话下的窗口创建与几何（winit 选择 wayland 后端）",
+        "Wayland 下中文正文渲染与分页是否与 X11 一致",
+        "Wayland 下输入（键盘/鼠标翻页、文件选择对话框）与退出清理",
+        "libwayland-client/EGL 在最小发行版上的可用性",
+        "发布目录在 Wayland 发行版上的启动"
+      ]
+    },
+    {
+      "id": "windows-x86_64",
+      "display_name": "Windows 10/11 x86_64",
+      "host_os": "windows",
+      "arch": "x86_64",
+      "session": "win32",
+      "packaging_mode": "release-directory",
+      "package_script": "desktop/packaging/windows/package-windows.ps1",
+      "package_script_kind": "powershell",
+      "script_tokens": [
+        "param(",
+        "$ErrorActionPreference",
+        "cargo build",
+        "--release",
+        "Get-FileHash",
+        "MANIFEST.sha256",
+        "start-novel-reader.cmd",
+        "-StaticCrt",
+        "-DryRun"
+      ],
+      "build_command": "cargo build --manifest-path crates/desktop-app/Cargo.toml --release --target x86_64-pc-windows-msvc",
+      "package_command": "pwsh -NoProfile -File desktop/packaging/windows/package-windows.ps1 -OutDir dist -Target x86_64-pc-windows-msvc",
+      "release_dir_name_pattern": "novel-reader-{version}-windows-x86_64",
+      "release_layout": [
+        { "path": "novel-reader.exe", "kind": "file", "required": true, "note": "Release 可执行文件：由 crates/desktop-app/target/<triple>/release/desktop-app.exe 复制并改名" },
+        { "path": "start-novel-reader.cmd", "kind": "file", "required": true, "note": "启动包装：把 dlls/ 加入 PATH 后启动 novel-reader.exe，原样转发参数" },
+        { "path": "docs/platform-requirements.md", "kind": "file", "required": true, "note": "依赖与系统要求（Windows 运行库/字体/显示）随包分发" },
+        { "path": "docs/README.txt", "kind": "file", "required": true, "note": "随包说明（版本、目标、启动方式、数据目录、验证状态）" },
+        { "path": "VERSION", "kind": "file", "required": true, "note": "key=value：版本、目标三元组、构建时间、rustc、打包脚本" },
+        { "path": "MANIFEST.sha256", "kind": "file", "required": true, "note": "发布目录内全部文件的 sha256（PowerShell Get-FileHash 生成并复核）" },
+        { "path": "novel-reader.exe.manifest", "kind": "file", "required": false, "note": "预留：需要时声明 DPI 感知/兼容性（本卡未生成）" },
+        { "path": "dlls/", "kind": "dir", "required": true, "note": "随包 DLL（未使用 -StaticCrt 且探测到 MSVC 运行库时放入 vcruntime140.dll 等）；为空目录时启动包装仍可用" },
+        { "path": "fonts/", "kind": "dir", "required": false, "note": "仅在 -BundleFont 时创建：随包分发中文字体（Windows 不走 fontconfig，需系统安装或由用户自行安装）" },
+        { "path": "docs/", "kind": "dir", "required": true, "note": null }
+      ],
+      "dependencies": {
+        "build": {
+          "toolchain": "rust 1.98 + MSVC 工具链（Visual Studio Build Tools，C++ 生成工具 + Windows SDK）",
+          "crates": "crates/desktop-app/Cargo.lock（精确锁定版本）",
+          "target_triple": "x86_64-pc-windows-msvc",
+          "native_build_deps": "无 C 依赖（Slint 在 Windows 走 DirectWrite/系统 API，不需要 fontconfig/freetype 开发头文件）"
+        },
+        "runtime_shared_libraries": [
+          "MSVC 运行库 vcruntime140.dll / msvcp140.dll（未使用 -StaticCrt 时需要；-StaticCrt 时为静态链接、无此依赖）",
+          "系统 DLL：kernel32/user32/gdi32/dwrite/d3d11/opengl32（由 Windows 自带）"
+        ],
+        "glibc": "不适用（Windows）",
+        "gui": "Windows 10/11 桌面会话；Slint 默认 features 含 backend-winit + renderer-femtovg（OpenGL，WC 下由 opengl32/驱动提供）+ renderer-software 回退",
+        "fonts": [
+          "微软雅黑（Microsoft YaHei）/ 宋体（SimSun）等系统中文字体（字体回退用）",
+          "Noto Sans CJK SC / Noto Serif CJK SC / Noto Sans Mono CJK SC（应用的字体族选项；未安装时回退行为待实测）"
+        ],
+        "fonts_source": "Windows 自带中文字体；Noto 系列需用户安装（本卡不随包分发字体）",
+        "distro_packages_debian": []
+      },
+      "verification_gate": "在 Windows 10/11 上：pwsh -File desktop/packaging/windows/package-windows.ps1 -OutDir dist，然后启动 start-novel-reader.cmd 并核对读取/翻页/书签（当前无 Windows 环境，未实测）",
+      "status": "pending",
+      "status_label": "待验证",
+      "status_evidence": null,
+      "blocking_reason": "当前开发机为 Deepin 20.9/Linux（本机无 pwsh、无 mingw-w64、rustup 只装了 linux 与 android 目标），没有 Windows 10/11 或 MSVC 工具链，无法执行 Windows 构建、打包与启动验证；未实测前不得记为通过。",
+      "unverified_items": [
+        "Windows 上 cargo build --target x86_64-pc-windows-msvc 是否通过（Slint 1.17.1 未在 Windows 实测）",
+        "novel-reader.exe 的 MSVC 运行库依赖与是否需要 vcruntime140.dll",
+        "Windows 下窗口创建、DPI 缩放与正文渲染/分页是否与 Linux 一致",
+        "Windows 下文件选择对话框（原生 picker）与 SAF/路径语义",
+        "中文字体（微软雅黑/宋体）与 Noto 字体族切换的实际表现",
+        "打包脚本 package-windows.ps1 未在任何 Windows 主机上执行过（本机无 pwsh，仅做静态结构校验）"
+      ]
+    }
+  ]
+}

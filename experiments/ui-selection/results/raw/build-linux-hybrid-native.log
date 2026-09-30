@@ -1,0 +1,6 @@
+# build-linux.sh hybrid-native variant=femtovg
+# date: 2026-09-12T07:26:28Z
+# rustc: 1.98.0 cargo: 1.98.0
+# SLINT_LIBS_PREFIX=/opt/dev-tools/slint-libs/usr
+    Finished `release` profile [optimized] target(s) in 0.67s
+-rwxr-xr-x 2 jwj jwj 21572720 9月  12 15:21 target/release/desktop-slint-probe

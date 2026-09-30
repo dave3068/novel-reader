@@ -1,0 +1,45 @@
+{
+  "candidate": "hybrid-native",
+  "platform": "desktop",
+  "phase": "pagination",
+  "status": "通过",
+  "framework": "slint",
+  "framework_version": "1.17.1",
+  "command": "bash scripts/test-pagination.sh hybrid-native --pages 1000 --platform desktop",
+  "exit_code": 0,
+  "timestamp": "2026-09-12T07:26:29Z",
+  "log_path": "results/raw/test-pagination-hybrid-native-desktop.log",
+  "environment": {
+    "os": "Deepin 20.9",
+    "glibc": "2.28",
+    "backend": "x11",
+    "ld_preload": null,
+    "rustc": "1.98.0",
+    "cargo": "1.98.0"
+  },
+  "details": {
+    "pages": 1000,
+    "backward_checked": 50,
+    "anchor_checked": 50,
+    "corpus_bytes": 1380250,
+    "layout_id": 13479548427441588952,
+    "reflow_layout_id": 3940341412620732266,
+    "read_calls": 2121,
+    "copied_bytes": 132492552,
+    "materialized_bytes": 132494747,
+    "max_window": 262144,
+    "evidence": "results/raw/hybrid-native-desktop-pagination.json"
+  },
+  "notes": [],
+  "metrics": {
+    "pages": 1000,
+    "rust_business_coverage": 100.0,
+    "platform_specific_loc": 2986,
+    "duplicated_ui_loc": 0,
+    "android_verified": true,
+    "android_guide": "docs/ui-selection/android.md",
+    "shared_core_loc": 2308,
+    "kotlin_business_duplication": false,
+    "measured_at": "2026-09-12T07:26:51Z"
+  }
+}

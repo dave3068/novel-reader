@@ -1,0 +1,37 @@
+{
+  "candidate": "hybrid-native",
+  "platform": "desktop",
+  "phase": "build",
+  "status": "通过",
+  "framework": "hybrid-native",
+  "framework_version": "1.17.1",
+  "variant": "femtovg",
+  "command": "bash scripts/build-linux.sh --release hybrid-native --variant femtovg",
+  "exit_code": 0,
+  "timestamp": "2026-09-12T07:26:28Z",
+  "log_path": "results/raw/build-linux-hybrid-native.log",
+  "environment": {
+    "os": "Deepin 20.9",
+    "glibc": "2.28",
+    "backend": "x11",
+    "ld_preload": null,
+    "rustc": "1.98.0",
+    "cargo": "1.98.0"
+  },
+  "details": {
+    "binary": "hybrid-native-probe/desktop-slint/target/release/desktop-slint-probe",
+    "binary_bytes": 21572720,
+    "variant": "femtovg"
+  },
+  "notes": [],
+  "metrics": {
+    "shared_core_loc": 2308,
+    "rust_business_coverage": 100.0,
+    "platform_specific_loc": 2986,
+    "duplicated_ui_loc": 0,
+    "android_verified": true,
+    "android_guide": "docs/ui-selection/android.md",
+    "kotlin_business_duplication": false,
+    "measured_at": "2026-09-12T07:26:51Z"
+  }
+}

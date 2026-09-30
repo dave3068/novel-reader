@@ -1,0 +1,49 @@
+{
+  "candidate": "hybrid-native",
+  "platform": "desktop",
+  "phase": "ui-contract",
+  "status": "通过",
+  "framework": "slint",
+  "framework_version": "1.17.1",
+  "command": "python3 scripts/verify-ui-contract.py --candidate hybrid-native --platform desktop",
+  "exit_code": 0,
+  "timestamp": "2026-09-12T07:26:33Z",
+  "log_path": "experiments/ui-selection/results/raw/verify-ui-contract-hybrid-native-desktop.log",
+  "environment": {
+    "os": "Deepin 20.9",
+    "glibc": "2.28",
+    "backend": "x11"
+  },
+  "details": {
+    "passed": [
+      "page:书架页",
+      "page:阅读页",
+      "page:配置页",
+      "page-switching",
+      "entry:翻页-上一页",
+      "entry:翻页-下一页",
+      "entry:位置保存",
+      "entry:阅读菜单",
+      "entry:书架搜索",
+      "entry:字号配置",
+      "entry:行距配置",
+      "entry:页边距配置",
+      "entry:背景配置",
+      "entry:模式切换",
+      "entry:6 层分类目录",
+      "pagination-gate"
+    ],
+    "failed": []
+  },
+  "notes": [],
+  "metrics": {
+    "shared_core_loc": 2308,
+    "rust_business_coverage": 100.0,
+    "platform_specific_loc": 2986,
+    "duplicated_ui_loc": 0,
+    "android_verified": true,
+    "android_guide": "docs/ui-selection/android.md",
+    "kotlin_business_duplication": false,
+    "measured_at": "2026-09-12T07:26:51Z"
+  }
+}

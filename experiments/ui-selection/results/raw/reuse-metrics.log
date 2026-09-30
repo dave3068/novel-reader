@@ -1,0 +1,15 @@
+# H-R5 复用 / 平台专属 / 重复 UI 指标实测
+# measured_at: 2026-09-12T07:26:51Z
+# 口径: 代码行 = 非空且非纯注释行
+
+shared_core_loc          =   2308   (12 个 .rs，共 2916 行)
+shared_ffi_header_loc    =    103
+desktop_ui_loc (.slint)  =    549
+desktop_rust_glue_loc    =   1382
+android_kotlin_loc       =    930
+android_jni_c_loc        =    125
+platform_specific_loc    =   2986   (platform_specific 合计)
+duplicated_ui_loc        =      0
+rust_business_coverage   = 100.00%  (9/9 职责在共享库中全部命中)
+reuse_ratio (shared 占比) = 43.60%
+# 已回写 metrics: android-device-verification.json, build-hybrid-native-android.json, build-hybrid-native-desktop.json, contract-hybrid-native.json, pagination-hybrid-native-android.json, pagination-hybrid-native-desktop.json, smoke-hybrid-native-desktop.json, ui-contract-hybrid-native-android.json, ui-contract-hybrid-native-desktop.json, unit-test-hybrid-native-android.json

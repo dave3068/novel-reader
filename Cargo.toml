@@ -1,0 +1,39 @@
+# novel-reader V1 正式工作区（TXT 阅读器）
+#
+# 契约冻结基线：results/gates/gate-0-baseline.md
+#   - ABI_VERSION = 1
+#   - 12 项错误码（0 = Ok，1..=11 见 crates/reading-core/src/error.rs）
+#   - 单次读取窗口 64 KiB / 硬上限 256 KiB
+#
+# 依赖策略：不得引入浮动依赖，所有依赖必须精确锁定版本（`version = "=X.Y.Z"`），
+# 由 scripts/verify-core-scope.py 强制校验。
+[workspace]
+resolver = "2"
+members = [
+    "crates/reading-core",
+    "crates/reading-ffi",
+    "crates/reading-index",
+    "crates/reading-source",
+    "crates/reading-storage",
+]
+# experiments/ 为技术验证探针（含模拟书库、合成文本源、空 External 数据源），
+# 严禁进入正式产品构建与依赖图；见 scripts/verify-core-scope.py。
+exclude = ["experiments"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.98.0"
+publish = false
+
+# 内部 crate 依赖：精确版本锁定（`=0.1.0`），不使用 `*` / `^` / `~` 等浮动区间。
+[workspace.dependencies]
+reading-core = { path = "crates/reading-core", version = "=0.1.0" }
+reading-ffi = { path = "crates/reading-ffi", version = "=0.1.0" }
+reading-index = { path = "crates/reading-index", version = "=0.1.0" }
+reading-source = { path = "crates/reading-source", version = "=0.1.0" }
+reading-storage = { path = "crates/reading-storage", version = "=0.1.0" }
+
+[profile.release]
+opt-level = 3
+debug = false

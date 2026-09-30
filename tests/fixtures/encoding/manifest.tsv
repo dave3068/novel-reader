@@ -1,0 +1,18 @@
+# novel-reader encoding fixtures manifest
+# generator=crates/reading-source/tests/generate-encoding-fixtures.py
+# detector_version=1
+# detect_head_bytes=32768 detect_sample_bytes=16384 detect_max_sampled_bytes=65536
+# gbk_table_limit=512 big5_table_limit=512
+# name	bytes	sha256	expected_encoding	expected_confidence	expects_confirmation	details
+utf8-bom.txt	4276	5821f23c19e33698eadecff5185bb36f728ba68eda640f1c835398fb8848ade1	UTF-8-BOM	high	false	bom_len=3
+utf8-plain.txt	4273	9b650af6d6fe5f9298af49e62c039d64c0ac28684ebf9e7fdd5962a8477462fa	UTF-8	high	false	bom_len=0
+utf16le-bom.txt	2912	942ac2df83ecfb886f580d7024d157f210c9fa1e9acef55c5cbe4e4ef070d9c6	UTF-16LE	high	false	bom_len=2
+utf16be-bom.txt	2912	f3f80ca4cb4e477eb389ad5d4fc832482f6c34b0f6d9c572d634324245a84b4b	UTF-16BE	high	false	bom_len=2
+gbk.txt	2864	ef07cecec7416a4679b7156354be9136064b2a4e0c7633c93dab414247970ebf	GBK	high	false	bom_len=0;compatible=GB18030
+gb18030.txt	2906	55cb998911d3d8252e229b50864b52da2d69ed73a7b379a48c1680366b405eb0	GB18030	high	false	bom_len=0;four_byte=1
+big5.txt	2864	55f847fe9e487e1e16d401fe498b22211e77450c8fe0d10bea70dcab0f81d3fb	Big5	high	false	bom_len=0
+ambiguous-gbk-big5.bin	288	ac4d7cab8d16cb616b38a01fc23ad7f20c486dc4e6b46981112069f25ed10d7d	GBK	low	true	runner_up=Big5
+ascii-only.txt	1244	b492686ecd63d32d3f8c68cb8850fb4971f0c0f3135f113326d3b38603ede3d5	UTF-8	high	false	bom_len=0;ascii_only=1
+garbage.bin	192	de124c3de4e11c223edb1bbfaf84598d76943d2b9e027caee1e0a3cd71dcbb5c	UTF-8	low	true	no_candidate_valid=1
+utf16le-bom-be-payload.txt	2912	1132b8013269f4a2521e3ff4e1db3b53beb8316dc0f31d3d1dd7a005d3d7b2ba	UTF-16LE	low	true	alternative=UTF-16BE
+empty.txt	0	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855	UTF-8	low	false	empty=1

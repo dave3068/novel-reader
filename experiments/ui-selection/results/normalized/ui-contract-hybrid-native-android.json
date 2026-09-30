@@ -1,0 +1,40 @@
+{
+  "candidate": "hybrid-native",
+  "platform": "android",
+  "phase": "ui-contract",
+  "status": "未验证",
+  "framework": "compose",
+  "framework_version": "",
+  "command": "python3 scripts/verify-ui-contract.py --candidate hybrid-native --platform android --allow-unverified",
+  "exit_code": 0,
+  "timestamp": "2026-09-10T04:31:09Z",
+  "log_path": "experiments/ui-selection/results/raw/verify-ui-contract-hybrid-native-android.log",
+  "environment": {
+    "os": "Deepin 20.9",
+    "glibc": "2.28",
+    "backend": "x11"
+  },
+  "details": {
+    "passed": [
+      "android:SAF 文件访问",
+      "android:系统返回/导航",
+      "android:旋转恢复",
+      "android:生命周期/后台恢复",
+      "android:JNI 取消"
+    ],
+    "failed": []
+  },
+  "notes": [
+    "Android 当前未实测，状态为 未验证"
+  ],
+  "metrics": {
+    "shared_core_loc": 2308,
+    "rust_business_coverage": 100.0,
+    "platform_specific_loc": 2986,
+    "duplicated_ui_loc": 0,
+    "android_verified": true,
+    "android_guide": "docs/ui-selection/android.md",
+    "kotlin_business_duplication": false,
+    "measured_at": "2026-09-12T07:26:51Z"
+  }
+}

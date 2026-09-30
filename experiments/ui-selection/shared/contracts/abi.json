@@ -1,0 +1,124 @@
+{
+  "version": 1,
+  "purpose": "共享 Rust 阅读业务原型与 C ABI 基线入口清单（S-R1 / S-R6）",
+  "core_crate": "shared/rust-reading-core",
+  "header": "shared/ffi/include/novel_reader_probe.h",
+  "library_name": "librust_reading_core",
+  "entry_count": 11,
+  "symbol_count": 12,
+  "entries": [
+    {
+      "entry": "engine_lifecycle",
+      "symbols": [
+        "nr_engine_create",
+        "nr_engine_destroy"
+      ],
+      "requirement": "S-R1",
+      "kind": "lifecycle"
+    },
+    {
+      "entry": "open_book",
+      "symbols": [
+        "nr_open_book"
+      ],
+      "requirement": "S-R1",
+      "kind": "source"
+    },
+    {
+      "entry": "read_window",
+      "symbols": [
+        "nr_read_window"
+      ],
+      "requirement": "S-R2",
+      "kind": "window"
+    },
+    {
+      "entry": "release_buffer",
+      "symbols": [
+        "nr_release_buffer"
+      ],
+      "requirement": "S-R2",
+      "kind": "memory"
+    },
+    {
+      "entry": "book_batch",
+      "symbols": [
+        "nr_get_book_batch"
+      ],
+      "requirement": "S-R1",
+      "kind": "domain"
+    },
+    {
+      "entry": "chapter_batch",
+      "symbols": [
+        "nr_get_chapter_batch"
+      ],
+      "requirement": "S-R1",
+      "kind": "domain"
+    },
+    {
+      "entry": "save_position",
+      "symbols": [
+        "nr_save_position"
+      ],
+      "requirement": "S-R3",
+      "kind": "position"
+    },
+    {
+      "entry": "commit_page_boundary",
+      "symbols": [
+        "nr_commit_page_boundary"
+      ],
+      "requirement": "S-R3",
+      "kind": "pagination"
+    },
+    {
+      "entry": "invalidate_layout",
+      "symbols": [
+        "nr_invalidate_layout"
+      ],
+      "requirement": "S-R3",
+      "kind": "pagination"
+    },
+    {
+      "entry": "subscribe_events",
+      "symbols": [
+        "nr_subscribe_events"
+      ],
+      "requirement": "S-R5",
+      "kind": "events"
+    },
+    {
+      "entry": "cancel_request",
+      "symbols": [
+        "nr_cancel_request"
+      ],
+      "requirement": "S-R5",
+      "kind": "events"
+    }
+  ],
+  "extensions": [
+    "nr_abi_version",
+    "nr_layout_page",
+    "nr_get_metrics",
+    "nr_last_error_message",
+    "nr_start_batch_request",
+    "nr_advance_request",
+    "nr_engine_snapshot_json",
+    "nr_open_external_book"
+  ],
+  "error_codes": {
+    "NR_ERR_OK": 0,
+    "NR_ERR_INVALID_ARGUMENT": 1,
+    "NR_ERR_OUT_OF_RANGE": 2,
+    "NR_ERR_UTF8_BOUNDARY": 3,
+    "NR_ERR_BOOK_NOT_FOUND": 4,
+    "NR_ERR_NO_OPEN_BOOK": 5,
+    "NR_ERR_IO": 6,
+    "NR_ERR_CANCELLED": 7,
+    "NR_ERR_LAYOUT_NOT_FOUND": 8,
+    "NR_ERR_ENGINE_DESTROYED": 9,
+    "NR_ERR_INTERNAL": 10,
+    "NR_ERR_CHAPTER_OUT_OF_RANGE": 11
+  }
+}

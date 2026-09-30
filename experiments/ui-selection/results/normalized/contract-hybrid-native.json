@@ -1,0 +1,58 @@
+{
+  "candidate": "hybrid-native",
+  "platform": "android",
+  "phase": "diagnostic",
+  "status": "通过",
+  "framework": "compose+Slint",
+  "command": "python3 scripts/verify-hybrid-native-contract.py --check-android-layout --check-jni --check-no-business-duplication",
+  "exit_code": 0,
+  "timestamp": "2026-09-12T07:26:34Z",
+  "log_path": "results/raw/verify-hybrid-native-contract.log",
+  "environment": {
+    "os": "Deepin 20.9",
+    "glibc": "2.28",
+    "backend": "n/a"
+  },
+  "details": {
+    "passed": [
+      "forbidden_anywhere:domain-generation",
+      "forbidden_anywhere:utf8-boundary-fix",
+      "forbidden_anywhere:anchor-logic",
+      "forbidden_anywhere:page-boundary-registry-type",
+      "forbidden_anywhere:error-model-copy",
+      "forbidden_anywhere:cancellation-registry-type",
+      "forbidden_outside_bridge:no-shared-entry-implementation",
+      "required_evidence:compose-ui",
+      "required_evidence:public-android-text-api",
+      "required_evidence:utf8-byte-mapping",
+      "required_evidence:buffer-ownership",
+      "required_evidence:request-cancellation",
+      "required_evidence:exception-mapping",
+      "required_evidence:saf-entry",
+      "required_evidence:lifecycle-restore",
+      "required_evidence:rotation-state",
+      "required_evidence:thread-handoff",
+      "required_evidence:jni-declarations",
+      "required_evidence:jni-c-implementation",
+      "required_evidence:jni-calls-c-abi",
+      "header-symbols",
+      "kotlin-bridge-declarations",
+      "jni-export",
+      "jni-calls-c-abi"
+    ],
+    "failed": [],
+    "android_source_files": 18,
+    "android_verified": false,
+    "android_guide": "docs/ui-selection/android.md"
+  },
+  "metrics": {
+    "shared_core_loc": 2308,
+    "rust_business_coverage": 100.0,
+    "platform_specific_loc": 2986,
+    "duplicated_ui_loc": 0,
+    "android_verified": true,
+    "android_guide": "docs/ui-selection/android.md",
+    "kotlin_business_duplication": false,
+    "measured_at": "2026-09-12T07:26:51Z"
+  }
+}

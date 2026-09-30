@@ -1,0 +1,34 @@
+# Android 纯 JVM 单元测试（真实执行）
+# date: 2026-09-12T07:26:34Z
+# java: java version "17.0.12" 2024-07-16 LTS
+# kotlin compiler: 1.9.24 (kotlin-compiler-embeddable)
+# junit: 4.13.2
+
+cached  kotlin-compiler-embeddable.jar
+cached  kotlin-stdlib.jar
+cached  trove4j.jar
+cached  annotations.jar
+cached  hamcrest.jar
+cached  junit.jar
+## 编译（K2JVMCompiler）
+hybrid-native-probe/android-native/app/src/test/java/com/novelreader/probe/PageBoundaryMathTest.kt:26:20: warning: check for instance is always 'true'
+        assertTrue(error is RuntimeException)
+                   ^
+# kotlinc exit=0
+# 产出 class:
+com/novelreader/probe/BoundaryMathTest.class
+com/novelreader/probe/core/NrCore.class
+com/novelreader/probe/core/NrErrorCodes.class
+com/novelreader/probe/core/NrException.class
+com/novelreader/probe/reader/Utf8OffsetMapper.class
+com/novelreader/probe/Utf8OffsetMapperTest.class
+
+## 执行（JUnitCore）
+JUnit version 4.13.2
+....
+Time: 0.142
+
+OK (4 tests)
+
+# JUnitCore exit=0
+## 结果 通过

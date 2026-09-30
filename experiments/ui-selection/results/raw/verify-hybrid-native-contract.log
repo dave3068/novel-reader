@@ -1,0 +1,33 @@
+# verify-hybrid-native-contract.py  android-native=${NR_PROJECT_DIR}/experiments/ui-selection/hybrid-native-probe/android-native
+# 契约: business-responsibilities.json  version=1
+# 扫描android源码文件数: 18
+## check-no-business-duplication
+[PASS] domain-generation 未命中（模拟领域数据必须来自 Rust 共享库）
+[PASS] utf8-boundary-fix 未命中（UTF-8 边界修正属于共享库）
+[PASS] anchor-logic 未命中（锚点构造与定位属于共享库）
+[PASS] page-boundary-registry-type 未命中（页面边界登记属于共享库，Kotlin 只调用 JNI）
+[PASS] error-model-copy 未命中（错误模型属于共享库，Kotlin 只映射 JNI 返回码）
+[PASS] cancellation-registry-type 未命中（取消语义属于共享库）
+[PASS] no-shared-entry-implementation 桥接文件之外未命中
+kotlin_business_duplication=false
+## required-evidence
+[PASS] compose-ui 命中 experiments/ui-selection/hybrid-native-probe/android-native/app/src/main/java/com/novelreader/probe/ui/theme/Theme.kt（H-R2：Jetpack Compose 实现 UI）
+[PASS] public-android-text-api 命中 experiments/ui-selection/hybrid-native-probe/android-native/app/src/main/java/com/novelreader/probe/reader/AndroidPageLayouter.kt（H-R2：只能使用公开 Android 文字排版 API）
+[PASS] utf8-byte-mapping 命中 experiments/ui-selection/hybrid-native-probe/android-native/app/src/main/java/com/novelreader/probe/reader/AndroidPageLayouter.kt（H-R2：页末位置必须为 UTF-8 字节偏移并映射到共享库位置）
+[PASS] buffer-ownership 命中 experiments/ui-selection/hybrid-native-probe/android-native/app/src/main/java/com/novelreader/probe/core/NrCore.kt（H-R3：跨边界缓冲必须显式释放）
+[PASS] request-cancellation 命中 experiments/ui-selection/hybrid-native-probe/android-native/app/src/main/java/com/novelreader/probe/core/NrEngine.kt（H-R3：取消入口）
+[PASS] exception-mapping 命中 experiments/ui-selection/hybrid-native-probe/android-native/app/src/main/java/com/novelreader/probe/core/NrCore.kt（H-R3：异常与错误码映射）
+[PASS] saf-entry 命中 experiments/ui-selection/hybrid-native-probe/android-native/app/src/main/java/com/novelreader/probe/data/SafBookSource.kt（H-R7：SAF 文件访问入口）
+[PASS] lifecycle-restore 命中 experiments/ui-selection/hybrid-native-probe/android-native/app/src/main/java/com/novelreader/probe/MainActivity.kt（H-R7：生命周期与后台恢复）
+[PASS] rotation-state 命中 experiments/ui-selection/hybrid-native-probe/android-native/app/src/main/java/com/novelreader/probe/MainActivity.kt（H-R7：旋转后恢复）
+[PASS] thread-handoff 命中 experiments/ui-selection/hybrid-native-probe/android-native/app/src/main/java/com/novelreader/probe/core/NrEngine.kt（H-R3：线程切换必须显式）
+[PASS] jni-declarations 命中 experiments/ui-selection/hybrid-native-probe/android-native/app/src/main/java/com/novelreader/probe/core/NrCore.kt（H-R3：薄 JNI 必须显式声明 external）
+[PASS] jni-c-implementation 命中 experiments/ui-selection/hybrid-native-probe/android-native/jni/nr_jni.c（H-R3：JNI C 适配层必须存在并调用 C ABI）
+[PASS] jni-calls-c-abi 命中 experiments/ui-selection/hybrid-native-probe/android-native/jni/nr_jni.c（H-R3：JNI 只调用共享 C ABI，不复制业务）
+## abi-baseline
+[PASS] 头文件包含全部 12 个基线符号（11 个入口）
+[PASS] NrCore.kt 声明了全部 11 个基线入口映射 + 缓冲释放
+## check-jni
+[PASS] nr_jni.c 使用 JNIEXPORT（13 处）
+[PASS] nr_jni.c 调用共享 C ABI: nr_engine_create, nr_read_window, nr_commit_page_boundary, nr_release_buffer, nr_cancel_request
+## 结果 status=通过 pass=24 fail=0

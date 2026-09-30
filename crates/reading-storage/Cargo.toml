@@ -1,0 +1,16 @@
+[package]
+name = "reading-storage"
+description = "SQLite 连接、迁移与事务仓储"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+name = "reading_storage"
+
+[dependencies]
+# SQLite 绑定：bundled 编译自带 SQLite 源码（离线可复现，不依赖系统 libsqlite3），
+# backup 提供 SQLite 在线备份 API（迁移前备份 / 失败恢复）。
+# 精确版本锁定（`=X.Y.Z`），由 scripts/verify-core-scope.py 强制校验。
+rusqlite = { version = "=0.40.2", features = ["bundled", "backup"] }

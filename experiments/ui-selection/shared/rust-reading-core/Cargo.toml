@@ -1,0 +1,16 @@
+[package]
+name = "rust-reading-core"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "UI 无关的共享阅读业务原型（技术验证用，非正式产品）"
+
+[lib]
+name = "rust_reading_core"
+crate-type = ["rlib", "staticlib", "cdylib"]
+
+[dependencies]
+
+[profile.release]
+opt-level = 3
+debug = false

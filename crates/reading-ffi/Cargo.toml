@@ -1,0 +1,17 @@
+[package]
+name = "reading-ffi"
+description = "跨语言 ABI 导出层：C ABI、JNI 与平台窗口内容协议"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+name = "reading_ffi"
+crate-type = ["rlib", "staticlib", "cdylib"]
+
+[dependencies]
+reading-core = { workspace = true }
+reading-index = { workspace = true }
+reading-source = { workspace = true }
+reading-storage = { workspace = true }

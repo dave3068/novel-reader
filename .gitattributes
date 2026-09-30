@@ -1,0 +1,12 @@
+# 测试夹具需字节精确：校验脚本按 sha256 断言，禁止换行符自动转换
+tests/fixtures/** -text
+
+# Windows 批处理脚本保持 CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制文件不做差异分析
+*.png binary
+*.jpg binary
+*.apk binary
+*.so binary

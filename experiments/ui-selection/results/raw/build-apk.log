@@ -1,0 +1,65 @@
+# build-apk.sh  2026-09-12T06:40:32Z
+# java:   java version "17.0.12" 2024-07-16 LTS
+# gradle: Gradle 8.11.1
+# sdk:    /opt/dev-tools/android-sdk
+# abi:    arm64-v8a
+
+== gradle :app:assembleDebug
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:mergeDebugNativeDebugMetadata NO-SOURCE
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:generateDebugBuildConfig
+> Task :app:checkDebugAarMetadata UP-TO-DATE
+> Task :app:generateDebugResValues UP-TO-DATE
+> Task :app:mapDebugSourceSetPaths UP-TO-DATE
+> Task :app:generateDebugResources UP-TO-DATE
+> Task :app:mergeDebugResources UP-TO-DATE
+> Task :app:packageDebugResources UP-TO-DATE
+> Task :app:parseDebugLocalResources UP-TO-DATE
+> Task :app:createDebugCompatibleScreenManifests UP-TO-DATE
+> Task :app:extractDeepLinksDebug UP-TO-DATE
+> Task :app:processDebugMainManifest UP-TO-DATE
+> Task :app:processDebugManifest UP-TO-DATE
+> Task :app:processDebugManifestForPackage UP-TO-DATE
+> Task :app:processDebugResources UP-TO-DATE
+> Task :app:javaPreCompileDebug UP-TO-DATE
+> Task :app:mergeDebugShaders UP-TO-DATE
+> Task :app:compileDebugShaders NO-SOURCE
+> Task :app:generateDebugAssets UP-TO-DATE
+> Task :app:mergeDebugAssets UP-TO-DATE
+> Task :app:compressDebugAssets UP-TO-DATE
+> Task :app:desugarDebugFileDependencies UP-TO-DATE
+> Task :app:checkDebugDuplicateClasses UP-TO-DATE
+> Task :app:mergeExtDexDebug UP-TO-DATE
+> Task :app:mergeLibDexDebug UP-TO-DATE
+> Task :app:mergeDebugJniLibFolders UP-TO-DATE
+> Task :app:mergeDebugNativeLibs UP-TO-DATE
+> Task :app:stripDebugDebugSymbols UP-TO-DATE
+> Task :app:validateSigningDebug UP-TO-DATE
+> Task :app:writeDebugAppMetadata UP-TO-DATE
+> Task :app:writeDebugSigningConfigVersions UP-TO-DATE
+> Task :app:compileDebugKotlin
+> Task :app:compileDebugJavaWithJavac
+> Task :app:dexBuilderDebug
+> Task :app:mergeDebugGlobalSynthetics UP-TO-DATE
+> Task :app:processDebugJavaRes UP-TO-DATE
+> Task :app:mergeDebugJavaResource UP-TO-DATE
+> Task :app:mergeProjectDexDebug
+> Task :app:packageDebug
+> Task :app:createDebugApkListingFileRedirect UP-TO-DATE
+> Task :app:assembleDebug
+
+BUILD SUCCESSFUL in 16s
+37 actionable tasks: 6 executed, 31 up-to-date
+
+## debug APK
+  APK: ${NR_PROJECT_DIR}/experiments/ui-selection/hybrid-native-probe/android-native/app/build/outputs/apk/debug/app-debug.apk
+  大小: 23807141 B (22 MB)  classes*.dex=7  lib/arm64-v8a/libnr_jni.so=1
+    lib/arm64-v8a/libandroidx.graphics.path.so
+    lib/arm64-v8a/libnr_jni.so
+    Signer #1 certificate DN: C=US, O=Android, CN=Android Debug
+    Signer #1 certificate SHA-256 digest: 36738ba3a9ecdc166caf2b48cb69362b7a0a4454a6d365b0b2c7ddea1b67eb8d
+    Signer #1 certificate SHA-1 digest: 87a7b582d8265283cbe96f17cdbde2f06fd7ad27
+  签名: 有效
+

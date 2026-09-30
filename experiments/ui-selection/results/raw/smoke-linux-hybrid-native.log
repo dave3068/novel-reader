@@ -1,0 +1,10 @@
+# smoke-linux.sh hybrid-native backend=x11 timeout=30s
+# date: 2026-09-12T07:27:24Z
+# binary: ${NR_PROJECT_DIR}/experiments/ui-selection/hybrid-native-probe/desktop-slint/target/release/desktop-slint-probe
+# ready: /tmp/nr-ready-zJFutL.json
+分页自检: {"pages":911,"chapters":40,"bytes_consumed":890720,"aligned_chapters":26,"forward_ok":true,"backward_ok":true,"reflow_ok":true,"anchor_ok":true,"status":"通过"}
+viewport: 窗口 0x0 → 正文区 -48x-160 重排=false
+启动期 viewport 探测（事件循环前，尺寸可能为 0）: 0x0 重排=false
+viewport: 窗口 1080x720 → 正文区 1032x560 重排=true
+ready.json 已写入: /tmp/nr-ready-zJFutL.json
+OK {"ready": {"candidate": "hybrid-native", "platform": "desktop", "framework": "slint", "framework_version": "1.17.1", "backend": "x11", "renderer": "femtovg", "pid": 2143428, "ui_ready": true, "event_loop": "running", "pagination_status": "通过", "pages": 911, "layout_id": 6711085028179287546, "window": {"width": 1080, "height": 720}, "core": {"version": "0.1.0", "abi_version": 1, "abi_entries": 11, "max_window": 262144, "opened_book": 1}, "self_check": {"pages": 911, "chapters": 40, "bytes_consumed": 890720, "aligned_chapters": 26, "forward_ok": true, "backward_ok": true, "reflow_ok": true, "anchor_ok": true, "status": "通过"}, "metrics": {"read_calls": 1917, "copied_bytes": 11750716, "materialized_bytes": 11751786, "page_boundaries": 0, "events_emitted": 1920, "layout_invalidations": 1}, "rust_business_coverage": 100, "platform_specific_loc": 0, "duplicated_ui_loc": 0, "timestamp": "2026-09-12T07:27:24Z"}, "ready_path": "/tmp/nr-ready-zJFutL.json", "leftover_pids": [], "warnings": []}

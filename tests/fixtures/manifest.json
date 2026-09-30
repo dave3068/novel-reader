@@ -1,0 +1,81 @@
+{
+  "generator": "scripts/generate-fixtures.py",
+  "generator_version": 1,
+  "profile": "smoke",
+  "seed": 20260912,
+  "generated_at_unix": 1789228743,
+  "python_version": "3.14.2",
+  "default_window_bytes": 65536,
+  "max_window_bytes": 262144,
+  "fingerprint_sample_bytes": 4096,
+  "file_count": 9,
+  "total_bytes": 146209,
+  "sizes_note": "smoke: 每个文件 ≤ 133120 字节",
+  "files": [
+    {
+      "name": "ascii-short.txt",
+      "bytes": 20,
+      "sha256": "70ea2f9a493bfafb858a387e43151b81b037e31f41f9d035d91cf8b7bb6ef0b9",
+      "kind": "ascii",
+      "details": "-"
+    },
+    {
+      "name": "empty.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "kind": "empty",
+      "details": "-"
+    },
+    {
+      "name": "utf8-bom.txt",
+      "bytes": 38,
+      "sha256": "faae2f1a4d5edfc833704588e5b1c47c65585776a20d852e251a9b9a5005e5ce",
+      "kind": "bom-utf8",
+      "details": "bom_len=3"
+    },
+    {
+      "name": "utf8-boundary-probe.txt",
+      "bytes": 8218,
+      "sha256": "14a4fd47faf7d15c1498d4ee4ba9b5c2235ac60c7b49854bc55280637b4ceaf1",
+      "kind": "boundary-probe",
+      "details": "char_start=4096;char_len=3;ascii_prefix=4096;second_char_start=4099;second_char_len=3;four_byte_start=4117;four_byte_len=4"
+    },
+    {
+      "name": "utf8-crlf.txt",
+      "bytes": 1518,
+      "sha256": "b8cc4f2f51961bf957b5cb295f60fccfc12b712566fa433e13be6bccd6e06b7f",
+      "kind": "crlf",
+      "details": "-"
+    },
+    {
+      "name": "utf8-four-byte.txt",
+      "bytes": 76,
+      "sha256": "c83d5b184ac8a6ef1ae08b2925613ec9105b0fb3d6c7544f033f54c09b308cde",
+      "kind": "four-byte",
+      "details": "four_byte_len=4"
+    },
+    {
+      "name": "utf8-long-line.txt",
+      "bytes": 133120,
+      "sha256": "c19ab8c0c3837e5675ebea1c0993242e1be067d33483533e58c581aa10f4810e",
+      "kind": "long-line",
+      "details": "line_bytes=133119;newline_count=1"
+    },
+    {
+      "name": "utf8-mixed-lines.txt",
+      "bytes": 3205,
+      "sha256": "a9404afc1f1cf7dea0de755e08005c4c080105af2b09cef00f47bc6c6ff4bd60",
+      "kind": "text",
+      "details": "-"
+    },
+    {
+      "name": "utf8-truncated-tail.txt",
+      "bytes": 14,
+      "sha256": "a80958deb27ad9ec72392d69eabefeb5b0fc063fc78740c6305dfe38ab34a444",
+      "kind": "truncated-tail",
+      "details": "kept_bytes_of_last_char=2"
+    }
+  ],
+  "notes": "确定性：同一 (profile, seed) 生成逐字节一致的文件；manifest.tsv 只含内容事实（跨次运行逐字节一致），manifest.json 额外含 generated_at_unix 等运行期元数据。pressure 档大文件仅用于临时目录，禁止提交版本库。",
+  "manifest_tsv": "manifest.tsv"
+}

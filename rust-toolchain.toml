@@ -1,0 +1,11 @@
+[toolchain]
+# V1 基线工具链：Rust 1.98.0（results/gates/gate-0-baseline.md §3.1）。
+# 固定具体版本号而非 `stable`，保证本机与 CI/验证环境一致。
+channel = "1.98.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-linux-android",
+    "x86_64-linux-android",
+]
