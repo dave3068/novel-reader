@@ -1,0 +1,1817 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>novel-reader 桌面端 · 重设计看板（IBM 设计语言）</title>
+<style>
+/* ============================================================
+   novel-reader 桌面端重设计 · 设计看板
+   设计语言：IBM Carbon 的栅格/间距/组件形态；主色沿用 #1890ff
+   字体：IBM Plex Sans（西文）+ Noto Sans CJK SC（中文）；数字 IBM Plex Mono
+   说明：本文件是「线框级」设计交付物，用色块/边框/真实文案表达布局与层级，
+        不做高保真视觉。所有数值均可在 docs/design/novel-reader-desktop-redesign.md
+        的令牌表中查到，并与 crates/desktop-app/src/layout.rs 对照。
+   ============================================================ */
+:root{
+  /* ---- 主色阶（Primary = #1890ff） ---- */
+  --p10:#e6f4ff; --p20:#bae0ff; --p30:#91caff; --p40:#69b1ff; --p50:#4096ff;
+  --p60:#1890ff; --p70:#0958d9; --p80:#003eb3; --p90:#002c8c; --p100:#001d66;
+  /* ---- 中性阶（Carbon Gray） ---- */
+  --g10:#f4f4f4; --g20:#e0e0e0; --g30:#c6c6c6; --g40:#a8a8a8; --g50:#8d8d8d;
+  --g60:#6f6f6f; --g70:#525252; --g80:#393939; --g90:#262626; --g100:#161616;
+  /* ---- 支持色 ---- */
+  --ok:#198038; --ok-10:#defbe6; --warn:#f1c21b; --warn-10:#fff8e1;
+  --err:#da1e28; --err-10:#fff1f0;
+  /* ---- 语义 ---- */
+  --text-1:#161616; --text-2:#525252; --text-3:#8d8d8d; --text-dis:#c6c6c6;
+  --line:#e0e0e0; --line-strong:#8d8d8d; --field:#ffffff; --bg:#ffffff; --layer:#f4f4f4;
+  --font:"IBM Plex Sans","Noto Sans CJK SC","Source Han Sans SC","PingFang SC",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+  --s:.85;            /* 屏幕画框缩放（看板缩放，非设计尺寸） */
+  --screen-w:1080px;  /* 基线窗口宽 */
+  --screen-h:720px;   /* 基线窗口高 */
+}
+*{box-sizing:border-box}
+body{margin:0;background:#dcdcdc;color:var(--text-1);font:14px/1.5 var(--font)}
+.board{max-width:1720px;margin:0 auto;padding:24px 24px 96px}
+h1{font-size:32px;line-height:40px;font-weight:600;margin:0 0 8px}
+h2{font-size:24px;line-height:32px;font-weight:600;margin:0 0 4px}
+h3{font-size:16px;line-height:22px;font-weight:600;margin:24px 0 8px}
+h4{font-size:14px;line-height:18px;font-weight:600;margin:16px 0 6px}
+p{margin:8px 0}
+a{color:var(--p70);text-decoration:none}
+code,.mono{font-family:var(--mono);font-size:.92em}
+.sec{background:#fff;border:1px solid var(--g30);padding:24px 24px 32px;margin:0 0 24px}
+.lead{font-size:16px;line-height:24px;color:var(--text-2);max-width:1100px}
+.meta{display:flex;flex-wrap:wrap;gap:24px;border-top:1px solid var(--g20);margin-top:16px;padding-top:12px;font-size:13px;color:var(--text-2)}
+.meta b{color:var(--text-1)}
+.toc{display:flex;flex-wrap:wrap;gap:8px 16px;font-size:13px;margin-top:16px}
+.toc a{border-bottom:1px solid var(--p30)}
+table{border-collapse:collapse;width:100%;font-size:13px;margin:8px 0 0}
+th,td{border:1px solid var(--g20);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:var(--g10);font-weight:600;white-space:nowrap}
+td.n,th.n{font-family:var(--mono);white-space:nowrap}
+.note{border-left:3px solid var(--p60);background:var(--p10);padding:10px 14px;font-size:13px;margin:12px 0}
+.note.w{border-left-color:var(--warn);background:var(--warn-10)}
+.note.r{border-left-color:var(--err);background:var(--err-10)}
+.note b{font-weight:600}
+.sw{display:flex;flex-wrap:wrap;gap:12px;margin:8px 0}
+.sw div{width:132px;border:1px solid var(--g20);font-size:11px;font-family:var(--mono)}
+.sw i{display:block;height:48px}
+.sw span{display:block;padding:4px 6px}
+
+/* ---------- 屏幕画框 ---------- */
+.screens{display:grid;grid-template-columns:repeat(auto-fit,minmax(960px,1fr));gap:24px}
+.card{background:#fff;border:1px solid var(--g30);padding:16px}
+.card>.cap{display:flex;align-items:baseline;gap:10px;margin-bottom:12px}
+.card>.cap b{font-family:var(--mono);font-size:13px;background:var(--g100);color:#fff;padding:2px 6px}
+.card>.cap span{font-size:15px;font-weight:600}
+.card>.cap em{font-style:normal;font-size:12px;color:var(--text-3);margin-left:auto}
+.duo{display:flex;gap:20px;align-items:flex-start}
+.stage{width:calc(var(--screen-w) * var(--s));height:calc(var(--screen-h) * var(--s));flex:none;background:#fff;border:1px solid var(--g40);overflow:hidden}
+.screen{width:var(--screen-w);height:var(--screen-h);transform:scale(var(--s));transform-origin:0 0;background:#fff;position:relative;overflow:hidden;display:flex;flex-direction:column}
+.spec{flex:1;min-width:260px;font-size:12.5px;line-height:1.62;color:var(--text-2)}
+.spec h4{color:var(--text-1);margin-top:0}
+.spec ul{margin:4px 0 10px;padding-left:18px}
+.spec li{margin:2px 0}
+.spec .k{font-family:var(--mono);color:var(--text-1)}
+
+/* ---------- 应用内元素（线框风格） ---------- */
+.tb{height:48px;background:var(--g100);display:flex;align-items:center;padding:0 8px 0 16px;gap:20px;flex:none}
+.brand{display:flex;align-items:center;gap:8px;color:#fff;font-weight:600;font-size:15px;white-space:nowrap}
+.brand svg{color:#fff}
+.gnav{display:flex;align-self:stretch;gap:2px}
+.gnav a{display:flex;align-items:center;padding:0 16px;color:var(--g30);font-size:14px;position:relative}
+.gnav a.on{color:#fff;font-weight:600;box-shadow:inset 0 -2px 0 var(--p60)}
+.tb-act{margin-left:auto;display:flex;gap:2px}
+.ibt{width:32px;height:32px;display:grid;place-items:center;border:0;background:transparent;color:#fff}
+.ibt:hover{background:var(--g80)}
+svg.i16{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.25;stroke-linecap:round;stroke-linejoin:round}
+svg.i20{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.25;stroke-linecap:round;stroke-linejoin:round}
+/* 工具条 / 状态栏 */
+.tbar{height:48px;flex:none;background:var(--g10);border-bottom:1px solid var(--g20);display:flex;align-items:center;gap:8px;padding:0 16px;font-size:13px;color:var(--text-2)}
+.tbar .mid{flex:1;text-align:center;color:var(--text-1);font-weight:600;font-size:14px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.sbar{height:32px;flex:none;background:var(--g10);border-top:1px solid var(--g20);display:flex;align-items:center;gap:12px;padding:0 16px;font-size:12px;color:var(--text-2)}
+.sbar .grow{flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.pbar{height:2px;background:var(--g20);flex:none;position:relative}
+.pbar i{position:absolute;left:0;top:0;bottom:0;background:var(--p60);width:42.3%}
+/* 按钮 */
+.btn{height:32px;padding:0 12px;display:inline-flex;align-items:center;gap:6px;font:14px/1 var(--font);border:1px solid transparent;white-space:nowrap}
+.btn.lg{height:40px;padding:0 16px}
+.btn.pri{background:var(--p60);color:#fff}
+.btn.sec{border-color:var(--p60);color:var(--p70)}
+.btn.ter{color:var(--p70);padding:0 8px}
+.btn.gho{border-color:var(--g30);color:var(--text-1);background:#fff}
+.btn.dan{background:var(--err);color:#fff}
+.btn.dis{border-color:var(--g20);color:var(--text-dis);background:var(--g10)}
+.ib{width:32px;height:32px;display:grid;place-items:center;border:1px solid var(--g30);background:#fff;color:var(--text-1)}
+.ib.sm{width:28px;height:28px}
+.ib.q{border-color:transparent;background:transparent}
+/* 输入 / 控件 */
+.inp{height:32px;border-bottom:1px solid var(--line-strong);display:flex;align-items:center;gap:6px;padding:0 8px 0 10px;font-size:13px;color:var(--text-3);background:var(--field)}
+.inp.lg{height:40px;font-size:14px}
+.sel{height:32px;border:1px solid var(--line-strong);display:flex;align-items:center;gap:8px;padding:0 8px 0 10px;font-size:13px;background:var(--field)}
+.swt{width:32px;height:18px;background:var(--p60);border-radius:999px;position:relative}
+.swt i{position:absolute;right:2px;top:2px;width:14px;height:14px;background:#fff;border-radius:50%}
+.slider{height:2px;background:var(--g30);position:relative;flex:1}
+.slider i{position:absolute;left:60%;top:-7px;width:16px;height:16px;background:var(--p60)}
+.radio{width:16px;height:16px;border:1px solid var(--line-strong);border-radius:50%;position:relative;flex:none}
+.radio.on{border-color:var(--p60);box-shadow:inset 0 0 0 4px #fff,inset 0 0 0 8px var(--p60)}
+.tag{height:20px;padding:0 8px;border-radius:999px;font-size:11px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+.tag.g{background:var(--g20);color:var(--g70)}
+.tag.b{background:var(--p20);color:var(--p90)}
+.tag.ok{background:var(--ok-10);color:var(--ok)}
+.tag.w{background:var(--warn-10);color:#8a6100}
+.tag.r{background:var(--err-10);color:var(--err)}
+/* 列表 / 表格 / 卡片 */
+.rows{flex:1;overflow:hidden}
+.rows .r{height:40px;display:flex;align-items:center;gap:12px;padding:0 16px;border-bottom:1px solid var(--g20);font-size:13.5px}
+.rows .r:hover{background:var(--g10)}
+.rows .r.on{background:var(--p10);box-shadow:inset 2px 0 0 var(--p60);color:var(--p80)}
+.rows .r .seq{font-family:var(--mono);font-size:12px;color:var(--text-3);width:36px;flex:none}
+.rows .r .t{flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.rows .r .m{font-family:var(--mono);font-size:12px;color:var(--text-3);white-space:nowrap}
+.ph{background:var(--g10);border:1px solid var(--g20)}
+.sep{border-top:1px solid var(--g20)}
+/* 画框内注解：仅用于尺寸/结构标注，正式实现中不存在 */
+.an{position:absolute;font-family:var(--mono);font-size:11px;color:var(--p70);background:var(--p10);border:1px dashed var(--p30);padding:1px 4px;z-index:9}
+.framecol{flex:none;display:flex;flex-direction:column}
+.hint{margin-top:8px;border:1px dashed var(--g30);background:#fafafa;padding:6px 8px;font-family:var(--mono);font-size:11px;line-height:1.55;color:var(--g60)}
+.tip{position:absolute;background:var(--g100);color:#fff;font-size:11px;padding:4px 8px;white-space:nowrap;z-index:10}
+/* 遮罩 / 弹窗 */
+.mask{position:absolute;inset:0;background:rgba(22,22,22,.5);display:grid;place-items:center;z-index:20}
+.modal{width:520px;background:#fff;padding:24px}
+.modal h4{font-size:20px;margin:0 0 10px}
+.modal .acts{display:flex;justify-content:flex-end;gap:12px;margin-top:24px}
+.toast{position:absolute;right:16px;bottom:44px;width:320px;background:var(--g90);color:#fff;font-size:13px;padding:12px 14px;z-index:25;display:flex;gap:10px}
+</style>
+</head>
+<body>
+<!-- ============ 图标（自绘几何线框图标；正式实现建议改用 @carbon/icons，Apache-2.0） ============ -->
+<svg style="display:none" aria-hidden="true">
+  <symbol id="i-shelf" viewBox="0 0 16 16"><path d="M2.5 13.5h11M3.5 13.5v-10h3v10M7.5 13.5v-7h3v7M11.5 13.5v-4h2v4"/></symbol>
+  <symbol id="i-book" viewBox="0 0 16 16"><path d="M2 3.5h4.2c.7 0 1.3.3 1.8.8.5-.5 1.1-.8 1.8-.8H14v8.6h-4.2c-.7 0-1.3.3-1.8.8-.5-.5-1.1-.8-1.8-.8H2z"/></symbol>
+  <symbol id="i-set" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.6v2M8 12.4v2M1.6 8h2M12.4 8h2M3.5 3.5 4.9 4.9M11.1 11.1l1.4 1.4M12.5 3.5 11.1 4.9M4.9 11.1l-1.4 1.4"/></symbol>
+  <symbol id="i-search" viewBox="0 0 16 16"><circle cx="6.6" cy="6.6" r="4.1"/><path d="M9.6 9.6 13.8 13.8"/></symbol>
+  <symbol id="i-tree" viewBox="0 0 16 16"><path d="M2.5 4h2.4M7 4h6.5M2.5 8h2.4M7 8h6.5M2.5 12h2.4M7 12h6.5"/></symbol>
+  <symbol id="i-mark" viewBox="0 0 16 16"><path d="M4 2.5h8v11.2l-4-3-4 3z"/></symbol>
+  <symbol id="i-opt" viewBox="0 0 16 16"><path d="M2.5 4.5h11M2.5 11.5h11"/><circle cx="6" cy="4.5" r="1.6"/><circle cx="10.6" cy="11.5" r="1.6"/></symbol>
+  <symbol id="i-save" viewBox="0 0 16 16"><path d="M8 2.4v7.2M5.2 6.8 8 9.6l2.8-2.8M2.5 13.2h11"/></symbol>
+  <symbol id="i-expand" viewBox="0 0 16 16"><path d="M6 2.5H2.5V6M10 13.5h3.5V10M13.5 6V2.5H10M2.5 10v3.5H6"/></symbol>
+  <symbol id="i-up" viewBox="0 0 16 16"><path d="M3.5 10 8 5.5 12.5 10"/></symbol>
+  <symbol id="i-down" viewBox="0 0 16 16"><path d="M3.5 6 8 10.5 12.5 6"/></symbol>
+  <symbol id="i-left" viewBox="0 0 16 16"><path d="M10 3.5 5.5 8 10 12.5"/></symbol>
+  <symbol id="i-right" viewBox="0 0 16 16"><path d="M6 3.5 10.5 8 6 12.5"/></symbol>
+  <symbol id="i-x" viewBox="0 0 16 16"><path d="M3.5 3.5 12.5 12.5M12.5 3.5 3.5 12.5"/></symbol>
+  <symbol id="i-more" viewBox="0 0 16 16"><circle cx="3.5" cy="8" r="1.1" fill="currentColor" stroke="none"/><circle cx="8" cy="8" r="1.1" fill="currentColor" stroke="none"/><circle cx="12.5" cy="8" r="1.1" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 16 16"><path d="M2.5 2.5h4v4h-4zM9.5 2.5h4v4h-4zM2.5 9.5h4v4h-4zM9.5 9.5h4v4h-4z"/></symbol>
+  <symbol id="i-list" viewBox="0 0 16 16"><path d="M2.5 4h11M2.5 8h11M2.5 12h11"/></symbol>
+  <symbol id="i-sort" viewBox="0 0 16 16"><path d="M4.5 2.5v10.4M2.4 10.8 4.5 13l2.1-2.2M8.6 5h4.9M8.6 9h4.9"/></symbol>
+  <symbol id="i-relink" viewBox="0 0 16 16"><path d="M13.4 8a5.4 5.4 0 1 1-1.7-3.9"/><path d="M13.4 2.6v3.6H9.8"/></symbol>
+  <symbol id="i-minus" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.4"/><path d="M5.6 8h4.8"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 16 16"><path d="M3 4.6h10M6.1 4.6V2.6h3.8v2M4.5 4.6l.7 8.9h5.6l.7-8.9"/></symbol>
+  <symbol id="i-exit" viewBox="0 0 16 16"><path d="M9.4 2.6h3.6v10.8H9.4M2.5 8h7.1M7 5.5 9.6 8 7 10.5"/></symbol>
+  <symbol id="i-help" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.4"/><path d="M6.3 6.2a1.8 1.8 0 1 1 2.2 1.7v1.2"/><circle cx="8.5" cy="11.4" r=".7" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-theme" viewBox="0 0 16 16"><path d="M12.6 9.4A5 5 0 0 1 6.6 3.4a5.4 5.4 0 1 0 6 6z"/></symbol>
+  <symbol id="i-info" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.4"/><path d="M8 7.2v4M8 4.8v.6"/></symbol>
+  <symbol id="i-warn" viewBox="0 0 16 16"><path d="M8 2.3 14 13.2H2z"/><path d="M8 6.4v3.1M8 11.4v.6"/></symbol>
+  <symbol id="i-err" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.4"/><path d="M6.1 6.1l3.8 3.8M9.9 6.1l-3.8 3.8"/></symbol>
+  <symbol id="i-check" viewBox="0 0 16 16"><path d="M3 8.6 6.4 12 13 4.6"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></symbol>
+  <symbol id="i-import" viewBox="0 0 16 16"><path d="M8 2.4v6.6M5.4 6.4 8 9l2.6-2.6M2.6 11.2v2.4h10.8v-2.4"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 16 16"><path d="M2.5 8h10.6M9.6 4.5 13.1 8l-3.5 3.5"/></symbol>
+</svg>
+
+<div class="board">
+
+<!-- ==================== 封面 / 决策记录 ==================== -->
+<section class="sec">
+  <h1>novel-reader 桌面端 · 界面重设计看板</h1>
+  <p class="lead">以 IBM 设计语言（Carbon 栅格、间距阶、组件形态与 IBM UI Shell 结构）重新组织现有功能，
+     解决当前界面「层级缺失、动作平铺、状态不可见」的 demo 感。本轮<strong>只出设计</strong>，
+     不改动应用代码。所有线框均为结构级：用真实中文文案、色块、边框与尺寸标注表达布局，不做高保真视觉。</p>
+  <div class="meta">
+    <span><b>交付</b> 本看板（HTML）+ 设计规格（Markdown）</span>
+    <span><b>范围</b> 桌面端（Slint）；Android 待后续</span>
+    <span><b>基线窗口</b> <span class="mono">1200×800</span>（看板画框按 <span class="mono">1080×720</span> 缩比呈现）</span>
+    <span><b>主色</b> <span class="mono">#1890ff</span>（沿用）</span>
+    <span><b>字体</b> IBM Plex Sans + Noto Sans CJK SC（正文无衬线）</span>
+  </div>
+  <h3>本次已定夺的五项口径</h3>
+  <table>
+    <tr><th style="width:36px">#</th><th style="width:190px">议题</th><th>结论</th></tr>
+    <tr><td class="n">1</td><td>功能边界</td><td>冻结现有功能 + <b>少量必要补全进入基线</b>：阅读进度条与跳转、书架搜索/排序/视图切换、书架移出与索引清理入口、快捷键说明面板。V1 范围外能力（连续滚动、全文搜索）仍不出。</td></tr>
+    <tr><td class="n">2</td><td>IBM 落地强度</td><td>采用 Carbon 的<b>栅格/间距阶/组件形态与 IBM UI Shell 结构</b>；主色沿用 <span class="mono">#1890ff</span>，不引入 Blue 60。</td></tr>
+    <tr><td class="n">3</td><td>字体</td><td>界面与正文均<b>无衬线</b>：IBM Plex Sans（西文）+ Noto Sans CJK SC（中文）；数字与偏移量用 IBM Plex Mono。</td></tr>
+    <tr><td class="n">4</td><td>阅读页信息架构</td><td><b>保留覆盖正文的面板形态</b>，不引入左右侧栏；面板改为「抽屉式面板 + 面板工具条」，行内不再挂动作按钮。</td></tr>
+    <tr><td class="n">5</td><td>交付形态</td><td>本 HTML 设计看板 + Markdown 设计规格（令牌表、组件清单、逐屏说明、功能对照与落地约束）。</td></tr>
+  </table>
+
+  <h3>目录</h3>
+  <div class="toc">
+    <a href="#p1">一、设计原则</a>
+    <a href="#p2">二、设计令牌（色彩 / 字号 / 间距 / 尺寸 / 栅格）</a>
+    <a href="#p3">三、组件库</a>
+    <a href="#p4">四、布局骨架与尺寸规格</a>
+    <a href="#s1">S1 书架 · 表格视图</a>
+    <a href="#s2">S2 书架 · 卡片视图</a>
+    <a href="#s3">S3 书架 · 空态</a>
+    <a href="#s4">S4 书架 · 文件失效</a>
+    <a href="#s5">S5 阅读 · 常态</a>
+    <a href="#s6">S6 阅读 · 目录面板</a>
+    <a href="#s7">S7 阅读 · 书签面板</a>
+    <a href="#s8">S8 阅读 · 选项面板</a>
+    <a href="#s9">S9 阅读 · 沉浸模式</a>
+    <a href="#s10">S10 设置</a>
+    <a href="#s11">S11 导入中</a>
+    <a href="#s12">S12 错误态</a>
+    <a href="#s13">S13 移出书架确认</a>
+    <a href="#s14">S14 清理索引确认</a>
+    <a href="#s15">S15 快捷键说明</a>
+    <a href="#s16">S16 状态矩阵</a>
+    <a href="#s17">五、现状→新设计对照与落地约束</a>
+  </div>
+</section>
+
+<!-- ==================== 一、设计原则 ==================== -->
+<section class="sec" id="p1">
+  <h2>一、设计原则</h2>
+  <p class="lead">六条原则对应现状的六个具体缺陷；每条都能在下面的屏里指出落点。</p>
+  <table>
+    <tr><th style="width:30px">#</th><th style="width:180px">原则</th><th>含义</th><th style="width:330px">现状缺陷 → 落点</th></tr>
+    <tr><td class="n">P1</td><td>内容在中心，外壳在边缘</td><td>正文区只放正文；书名、章节、进度、编码等信息收进工具条与状态栏，且默认弱化（12/14px、secondary 色）。</td><td>正文区是灰底上的一张白卡，且书名/章节曾压住首行 → S5</td></tr>
+    <tr><td class="n">P2</td><td>一屏一个主要动作</td><td>每屏只有一个实心主按钮；其余为次级/幽灵/图标按钮；图标动作必须带 tooltip。</td><td>13+ 个同尺寸蓝色块平铺，无主次 → S1、S5、S10</td></tr>
+    <tr><td class="n">P3</td><td>动作贴到对象上</td><td>列表行内不放动作按钮；整行即动作，行级操作以悬浮图标按钮出现；破坏性操作走确认弹窗。</td><td>每行都挂「跳转 / 选用 / 删除 / 阅读 / 重新关联」按钮 → S1、S6、S7、S8</td></tr>
+    <tr><td class="n">P4</td><td>一切状态可见</td><td>交互控件必须有 default / hover / focus / selected / disabled 五态；聚焦环 2px 主色；错误/警告用状态色 Tag 与 InlineNotification。</td><td>无 hover/focus 规范，禁用态只是变灰 → S16</td></tr>
+    <tr><td class="n">P5</td><td>2x 栅格与间距阶</td><td>所有间距取自 2/4/8/12/16/24/32/48；块间距 ≥ 16；页面外边距 16；尺寸全部来自单一来源常量（不着落于界面层）。</td><td>间距由字号派生、数值散落 → 二、四</td></tr>
+    <tr><td class="n">P6</td><td>键盘与鼠标等价</td><td>每个鼠标动作都有键盘路径并在快捷键面板中列出；只承诺核心已实现的按键。</td><td>键盘能力存在但不可发现 → S15</td></tr>
+  </table>
+</section>
+
+<!-- ==================== 二、设计令牌 ==================== -->
+<section class="sec" id="p2">
+  <h2>二、设计令牌</h2>
+
+  <h3>2.1 色彩</h3>
+  <h4>主色阶（Primary #1890ff —— 沿用现有主色，向 Carbon 的「10 阶」结构对齐）</h4>
+  <div class="sw">
+    <div><i style="background:#e6f4ff"></i><span>#e6f4ff<br>p10 · 选中底/通知底</span></div>
+    <div><i style="background:#bae0ff"></i><span>#bae0ff<br>p20 · Tag 底/进度轨道强调</span></div>
+    <div><i style="background:#91caff"></i><span>#91caff<br>p30 · 悬浮态描边</span></div>
+    <div><i style="background:#69b1ff"></i><span>#69b1ff<br>p40 · 暗色主题主色</span></div>
+    <div><i style="background:#4096ff"></i><span>#4096ff<br>p50 · 暗色 hover</span></div>
+    <div><i style="background:#1890ff;color:#fff"></i><span>#1890ff<br>p60 · 主色（实心按钮/指示）</span></div>
+    <div><i style="background:#0958d9"></i><span>#0958d9<br>p70 · 正文链接/次级按钮文字</span></div>
+    <div><i style="background:#003eb3"></i><span>#003eb3<br>p80 · 主色按压态</span></div>
+    <div><i style="background:#002c8c"></i><span>#002c8c<br>p90 · 暗色 Tag 文字</span></div>
+    <div><i style="background:#001d66"></i><span>#001d66<br>p100 · 深色强调</span></div>
+  </div>
+  <div class="note"><b>对比度规则（必须遵守）</b>：#1890ff 在白底上对比度约 3.1:1，<b>只允许用于 ≥18px 文字、粗体、图标、色块与描边</b>；
+    任何小于 18px 的正文/链接文本一律用 <span class="mono">#0958d9</span>（约 5.1:1，AA 达标）；暗色主题主色提亮为 <span class="mono">#4096ff</span>。</div>
+
+  <h4>中性阶与层（取自 Carbon Gray，明/暗两套）</h4>
+  <div class="sw">
+    <div><i style="background:#f4f4f4"></i><span>#f4f4f4<br>g10 · layer-01 / 工具条</span></div>
+    <div><i style="background:#e0e0e0"></i><span>#e0e0e0<br>g20 · 分隔线</span></div>
+    <div><i style="background:#c6c6c6"></i><span>#c6c6c6<br>g30 · 禁用/占位</span></div>
+    <div><i style="background:#8d8d8d"></i><span>#8d8d8d<br>g50 · 输入底边/次要文本</span></div>
+    <div><i style="background:#525252;color:#fff"></i><span>#525252<br>g70 · 次要文本</span></div>
+    <div><i style="background:#393939;color:#fff"></i><span>#393939<br>g80 · 暗色 layer-02</span></div>
+    <div><i style="background:#262626;color:#fff"></i><span>#262626<br>g90 · Toast/暗色 layer-01</span></div>
+    <div><i style="background:#161616;color:#fff"></i><span>#161616<br>g100 · 顶栏/主文本</span></div>
+  </div>
+  <table>
+    <tr><th style="width:150px">语义令牌</th><th>明色主题</th><th>暗色主题</th><th>用途</th></tr>
+    <tr><td class="n">background</td><td class="n">#ffffff</td><td class="n">#161616</td><td>窗口底</td></tr>
+    <tr><td class="n">layer-01</td><td class="n">#f4f4f4</td><td class="n">#262626</td><td>工具条 / 状态栏 / 表头 / 面板底</td></tr>
+    <tr><td class="n">layer-02</td><td class="n">#ffffff</td><td class="n">#393939</td><td>卡片 / 弹窗内的次级块</td></tr>
+    <tr><td class="n">field-01</td><td class="n">#ffffff</td><td class="n">#262626</td><td>输入 / 选择控件底</td></tr>
+    <tr><td class="n">border-subtle</td><td class="n">#e0e0e0</td><td class="n">#393939</td><td>分隔线、行分隔</td></tr>
+    <tr><td class="n">border-strong</td><td class="n">#8d8d8d</td><td class="n">#6f6f6f</td><td>输入底边、下拉描边</td></tr>
+    <tr><td class="n">text-primary</td><td class="n">#161616</td><td class="n">#f4f4f4</td><td>正文、标题</td></tr>
+    <tr><td class="n">text-secondary</td><td class="n">#525252</td><td class="n">#c6c6c6</td><td>辅助说明、元信息</td></tr>
+    <tr><td class="n">text-placeholder</td><td class="n">#8d8d8d</td><td class="n">#6f6f6f</td><td>占位符</td></tr>
+    <tr><td class="n">support-success</td><td class="n">#198038 / #defbe6</td><td class="n">#42be65 / #0f3a24</td><td>「可阅读」Tag、成功通知</td></tr>
+    <tr><td class="n">support-warning</td><td class="n">#8a6100 / #fff8e1</td><td class="n">#f1c21b / #3a2c00</td><td>「需重建索引」Tag、未生效说明</td></tr>
+    <tr><td class="n">support-error</td><td class="n">#da1e28 / #fff1f0</td><td class="n">#ff8389 / #3a1214</td><td>「文件失效」Tag、破坏性动作</td></tr>
+    <tr><td class="n">focus</td><td class="n">#1890ff</td><td class="n">#4096ff</td><td>2px 聚焦环（内 1px 底色隔离）</td></tr>
+  </table>
+  <div class="note w"><b>暗色主题下的正文</b>：正文 <span class="mono">#e0e0e0</span> on <span class="mono">#161616</span>（≈13:1）；
+    禁用/占位不得低于 <span class="mono">#6f6f6f</span>。夜间阅读不做「纯白底黑字」反转，避免亮度跳变。</div>
+
+  <h3>2.2 字号与行高</h3>
+  <table>
+    <tr><th style="width:150px">令牌</th><th class="n" style="width:130px">字号 / 行高</th><th style="width:220px">用途</th><th>样例</th></tr>
+    <tr><td class="n">caption-01</td><td class="n">12 / 16</td><td>状态栏、辅助说明、Tag</td><td style="font-size:12px">已保存进度 · 第 12 页 · 42.3%</td></tr>
+    <tr><td class="n">label-01</td><td class="n">13 / 18</td><td>表格行、面板行、按钮（紧凑）</td><td style="font-size:13px">第七章 谷雨</td></tr>
+    <tr><td class="n">body-compact-01</td><td class="n">14 / 20</td><td>按钮、输入、导航、表单标签</td><td style="font-size:14px">导入 TXT… / 翻页模式</td></tr>
+    <tr><td class="n">body-01</td><td class="n">16 / 24</td><td>页面说明、卡片标题、面板标题</td><td style="font-size:16px">书架 / 目录</td></tr>
+    <tr><td class="n">reading-01</td><td class="n">18 / 30</td><td><b>正文</b>（设置页可调 12–40px，行距倍数 1.0–2.4）</td><td style="font-size:18px;line-height:30px">夜色压在城墙上，风从西边来。</td></tr>
+    <tr><td class="n">heading-03</td><td class="n">20 / 26</td><td>弹窗标题、页头</td><td style="font-size:20px;font-weight:600">移出书架</td></tr>
+    <tr><td class="n">heading-04</td><td class="n">24 / 32</td><td>页面大标题</td><td style="font-size:24px;font-weight:600">书架</td></tr>
+    <tr><td class="n">heading-05</td><td class="n">28 / 36</td><td>看板级标题（应用内不用）</td><td style="font-size:28px;font-weight:600">novel-reader</td></tr>
+    <tr><td class="n">mono-01</td><td class="n">12 / 16</td><td>页码、偏移、版本、编码等机器可核对信息</td><td class="mono">偏移 128450 · v0.1.0</td></tr>
+  </table>
+  <div class="note"><b>正文排版口径</b>：正文行高 = 字号 × 行距倍数（默认 1.667 → 18/30）；界面不施加首行缩进与段间距
+    （Slint 渲染不支持，设置页相应项标注为「暂未生效」）；段落之间以空行分隔，分页测量与渲染共用同一行盒高度。</div>
+
+  <h3>2.3 间距阶（2x 栅格）</h3>
+  <div class="sw">
+    <div><i style="background:var(--p20);height:2px"></i><span>2 · 图标与文字</span></div>
+    <div><i style="background:var(--p20);height:4px"></i><span>4 · 图标按钮之间</span></div>
+    <div><i style="background:var(--p30);height:8px"></i><span>8 · 行内元素</span></div>
+    <div><i style="background:var(--p30);height:12px"></i><span>12 · 控件与标签</span></div>
+    <div><i style="background:var(--p40);height:16px"></i><span>16 · 区块内、页面边距</span></div>
+    <div><i style="background:var(--p50);height:24px"></i><span>24 · 区块之间</span></div>
+    <div><i style="background:var(--p60);height:32px"></i><span>32 · 分组之间</span></div>
+    <div><i style="background:var(--p70);height:48px"></i><span>48 · 栏高/正文留白</span></div>
+  </div>
+  <p style="font-size:13px;color:var(--text-2)">规则：同组元素 8；跨组 16；跨区块 24–32；页面外边距 16；正文区左右留白 48（见 S5）。</p>
+
+  <h3>2.4 尺寸与形态</h3>
+  <table>
+    <tr><th style="width:170px">元素</th><th class="n" style="width:150px">尺寸</th><th>说明</th></tr>
+    <tr><td>顶栏 UI Shell</td><td class="n">高 48</td><td>深色 #161616；品牌 + 全局导航 + 全局动作</td></tr>
+    <tr><td>阅读工具条</td><td class="n">高 48</td><td>layer-01；可收起（→0）与沉浸态自动隐藏</td></tr>
+    <tr><td>状态栏</td><td class="n">高 32</td><td>layer-01 + 上边框 1px</td></tr>
+    <tr><td>阅读进度条</td><td class="n">高 2（悬浮 4）</td><td>跨整宽；可点击/拖拽跳转（新增）</td></tr>
+    <tr><td>按钮</td><td class="n">高 32 / 40；内边距 12 / 16</td><td>紧凑 32 用于工具条与行内，默认 40 用于页头与弹窗</td></tr>
+    <tr><td>图标按钮</td><td class="n">32×32（行内 28×28）</td><td>图标 16；必须有 tooltip 与可访问名称</td></tr>
+    <tr><td>输入 / 选择</td><td class="n">高 32（紧凑）/ 40</td><td>Carbon 风格：1px 底边 + 聚焦 2px 主色底边</td></tr>
+    <tr><td>列表行</td><td class="n">阅读面板 40；书架表格 48；表头 40</td><td>行分隔 1px；hover = layer-01</td></tr>
+    <tr><td>开关 / 单选 / 滑块</td><td class="n">32×18 / 16 / 轨道 2 + 把手 16</td><td>滑块左右带数值（mono 12）与单位</td></tr>
+    <tr><td>Tag</td><td class="n">高 20；圆角 999</td><td>状态标签；文字 11</td></tr>
+    <tr><td>滚动条</td><td class="n">宽 8；与右缘间距 12；滑块最小 32</td><td>轨道 layer-01，滑块 g30（hover 主色）</td></tr>
+    <tr><td>圆角</td><td class="n">0</td><td>Carbon 直角形态（封面占位、Toast 除外：4）</td></tr>
+    <tr><td>投影</td><td class="n">弹窗 0 4px 16px rgba(0,0,0,.16)</td><td>层级靠「层色 + 边框」表达，不靠投影</td></tr>
+    <tr><td>聚焦环</td><td class="n">2px 主色 + 1px 底色隔离</td><td>键盘可达的强制可见证据</td></tr>
+  </table>
+
+  <h3>2.5 栅格与断点</h3>
+  <p style="font-size:13px;color:var(--text-2)">基线窗口 <span class="mono">1200×800</span> → 16 列 × 16px 沟槽，外边距 16。
+    阅读页正文区按剩余宽度自适应，左右留白 48（可选行宽约束见 S5）。</p>
+  <table>
+    <tr><th style="width:150px">窗口宽度</th><th>布局行为</th></tr>
+    <tr><td class="n">≥ 1440</td><td>书架：表格列宽按比例放大，正文区左右留白 64；面板宽度最大 720 并居中</td></tr>
+    <tr><td class="n">1200 – 1439</td><td>基线布局（本看板所有画框）</td></tr>
+    <tr><td class="n">960 – 1199</td><td>书架隐藏「最近阅读」列；正文留白 40</td></tr>
+    <tr><td class="n">720 – 959</td><td>工具条只留图标按钮（隐藏「保存进度/沉浸阅读」文字）；状态栏隐藏版本与编码</td></tr>
+    <tr><td class="n">560 – 719</td><td>紧凑模式：正文留白 24，工具条 40，书架切卡片视图</td></tr>
+    <tr><td class="n">560（最小）</td><td>低于此值不保证可用；窗口最小尺寸 560×400</td></tr>
+  </table>
+</section>
+
+<!-- ==================== 三、组件库 ==================== -->
+<section class="sec" id="p3">
+  <h2>三、组件库</h2>
+  <p class="lead">下列组件是各屏的构件。所有尺寸取自 2.4；所有控件必须实现五态（见 S16）。</p>
+
+  <h3>3.1 按钮与图标按钮</h3>
+  <div style="display:flex;flex-wrap:wrap;gap:24px;align-items:flex-end;">
+    <div><div class="btn pri lg"><svg class="i16"><use href="#i-import"/></svg>导入 TXT…</div><p style="font-size:12px;color:var(--text-2)">Primary（每屏唯一）</p></div>
+    <div><div class="btn sec lg">重新关联…</div><p style="font-size:12px;color:var(--text-2)">Secondary</p></div>
+    <div><div class="btn ter lg">取消</div><p style="font-size:12px;color:var(--text-2)">Tertiary</p></div>
+    <div><div class="btn gho lg">选项…</div><p style="font-size:12px;color:var(--text-2)">Ghost（带描边）</p></div>
+    <div><div class="btn dan lg">移出书架</div><p style="font-size:12px;color:var(--text-2)">Danger（破坏性确认）</p></div>
+    <div><div class="btn dis lg">重新关联…</div><p style="font-size:12px;color:var(--text-2)">Disabled（不可用）</p></div>
+    <div><span class="ib"><svg class="i16"><use href="#i-tree"/></svg></span><p style="font-size:12px;color:var(--text-2)">Icon 32（tooltip：目录）</p></div>
+    <div><span class="ib sm"><svg class="i16"><use href="#i-x"/></svg></span><p style="font-size:12px;color:var(--text-2)">Icon 28（行内）</p></div>
+  </div>
+  <div class="note"><b>铁律</b>：图标按钮必须带 tooltip（文案 = 动作名；若有快捷键则附「(快捷键)」）；禁用态除变灰外必须给出原因（tooltip 或行内说明），不得只变灰。</div>
+
+  <h3>3.2 输入、选择与设置控件</h3>
+  <div style="display:flex;flex-wrap:wrap;gap:32px;align-items:flex-start;">
+    <div style="width:220px"><div class="inp lg"><svg class="i16"><use href="#i-search"/></svg>搜索书名或文件名</div><p style="font-size:12px;color:var(--text-2)">搜索（底边 1px；聚焦 2px 主色）</p></div>
+    <div style="width:180px"><div class="sel lg">最近阅读<svg class="i16"><use href="#i-down"/></svg></div><p style="font-size:12px;color:var(--text-2)">Select（排序/字体族/主题）</p></div>
+    <div style="width:220px"><div style="display:flex;align-items:center;gap:12px"><span class="swt"><i></i></span><span style="font-size:13px">沉浸时自动隐藏工具条</span></div><p style="font-size:12px;color:var(--text-2)">Switch</p></div>
+    <div style="width:260px"><div style="display:flex;align-items:center;gap:12px"><span class="mono" style="font-size:12px;width:36px">12</span><span class="slider"><i></i></span><span class="mono" style="font-size:12px;width:36px">40</span></div><p style="font-size:12px;color:var(--text-2)">Slider（字号 18px）＋两端边界值</p></div>
+    <div style="width:200px"><div style="display:flex;gap:20px;align-items:center"><span style="display:flex;gap:8px;align-items:center"><span class="radio on"></span><span style="font-size:13px">按钮</span></span><span style="display:flex;gap:8px;align-items:center"><span class="radio"></span><span style="font-size:13px">手势</span></span></div><p style="font-size:12px;color:var(--text-2)">Radio（互斥项 ≤4 时使用）</p></div>
+  </div>
+
+  <h3>3.3 标签、通知与空态</h3>
+  <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;">
+    <span class="tag ok"><svg class="i16" style="width:12px;height:12px"><use href="#i-check"/></svg>可阅读</span>
+    <span class="tag r"><svg class="i16" style="width:12px;height:12px"><use href="#i-warn"/></svg>需重新关联</span>
+    <span class="tag w">需重建索引</span>
+    <span class="tag g">已移出</span>
+    <span class="tag b">GBK（手动）</span>
+    <span class="tag b">12 本</span>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">
+    <div style="border-left:3px solid var(--err);background:var(--err-10);padding:12px 14px;font-size:13px;display:flex;gap:10px">
+      <svg class="i20" style="color:var(--err);flex:none"><use href="#i-err"/></svg>
+      <div><b>1 本书的原始文件已失效</b><div style="color:var(--text-2)">「云海志」的源文件不在原位。原始 TXT 未被修改，请重新关联文件位置。</div>
+      <div style="margin-top:8px"><span class="btn ter">重新关联…</span><span class="btn ter">忽略</span></div></div>
+    </div>
+    <div style="border-left:3px solid var(--p60);background:var(--p10);padding:12px 14px;font-size:13px;display:flex;gap:10px">
+      <svg class="i20" style="color:var(--p70);flex:none"><use href="#i-info"/></svg>
+      <div><b>索引已清理</b><div style="color:var(--text-2)">删除章节索引 128 条、分页记录 46 条；进度、书签与设置已保留。</div>
+      <div style="margin-top:8px"><span class="btn ter">查看详情</span><span class="btn ter">关闭</span></div></div>
+    </div>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">
+    <div class="ph" style="padding:32px;text-align:center">
+      <svg class="i20" style="width:48px;height:48px;color:var(--g30)"><use href="#i-shelf"/></svg>
+      <div style="font-size:20px;font-weight:600;margin-top:12px">书架还是空的</div>
+      <div style="font-size:14px;color:var(--text-2);max-width:420px;margin:6px auto 16px">导入一个普通 TXT 文件即可开始阅读。文件保留在您原来的位置，本应用只记录路径与阅读进度。</div>
+      <span class="btn pri lg"><svg class="i16"><use href="#i-import"/></svg>导入 TXT…</span>
+    </div>
+    <div style="padding:8px 0">
+      <p style="font-size:13px;color:var(--text-2);margin:0 0 8px"><b>Toast</b>（右下，宽 320，深底，3s 自动消失，可带一个动作）</p>
+      <div class="toast" style="position:static;width:100%"><svg class="i20" style="flex:none"><use href="#i-check"/></svg>
+        <div style="flex:1">已保存进度：第七章 · 偏移 128450<div style="color:var(--g30);font-size:12px">12:04</div></div>
+        <svg class="i16" style="flex:none"><use href="#i-x"/></svg></div>
+    </div>
+  </div>
+
+  <h3>3.4 表格行 / 面板行 / 卡片</h3>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+    <div>
+      <p style="font-size:13px;color:var(--text-2);margin:0 0 8px"><b>书架表格行</b>（48px；hover 显示行级图标按钮）</p>
+      <div style="border:1px solid var(--g20)">
+        <div class="rows"><div class="r on" style="height:48px">
+          <div style="flex:1;min-width:0"><div style="font-weight:600">云海志</div><div class="mono" style="font-size:11px;color:var(--text-3)">/home/user/books/yunhaizhi.txt · 2.4 MB</div></div>
+          <span class="tag ok">可阅读</span>
+          <div style="width:150px"><div style="font-size:11px;color:var(--text-2);margin-bottom:4px">第七章 · 42.3%</div><div class="pbar" style="background:var(--g20)"><i style="width:42.3%;position:static;display:block;height:2px"></i></div></div>
+          <span class="mono" style="font-size:11px;color:var(--text-3);width:96px">09-30 21:12</span>
+          <span class="ib sm"><svg class="i16"><use href="#i-book"/></svg></span>
+          <span class="ib sm"><svg class="i16"><use href="#i-more"/></svg></span>
+        </div></div>
+      </div>
+    </div>
+    <div>
+      <p style="font-size:13px;color:var(--text-2);margin:0 0 8px"><b>面板行</b>（40px；整行可点，行尾悬浮图标）</p>
+      <div style="border:1px solid var(--g20)">
+        <div class="rows">
+          <div class="r"><span class="seq">001</span><span class="t">第一章 灯下</span><span class="m">偏移 0</span><span class="ib sm q"><svg class="i16"><use href="#i-right"/></svg></span></div>
+          <div class="r"><span class="seq">002</span><span class="t">第二章 城墙</span><span class="m">偏移 8412</span><span class="ib sm q"><svg class="i16"><use href="#i-right"/></svg></span></div>
+          <div class="r on"><span class="seq">007</span><span class="t">第七章 谷雨</span><span class="m">当前</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div style="margin-top:16px">
+    <p style="font-size:13px;color:var(--text-2);margin:0 0 8px"><b>书籍卡片</b>（网格视图，300×212；封面为按书名派生的色块占位，不含版权素材）</p>
+    <div style="display:flex;gap:16px">
+      <div style="width:300px;border:1px solid var(--g20);background:#fff">
+        <div class="ph" style="height:120px;display:grid;place-items:center;background:var(--p10);border:0;border-bottom:1px solid var(--g20)"><span style="font-size:32px;font-weight:600;color:var(--p80)">云</span></div>
+        <div style="padding:12px 16px">
+          <div style="font-size:16px;font-weight:600;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">云海志</div>
+          <div class="mono" style="font-size:11px;color:var(--text-3);margin:2px 0 10px">2.4 MB · UTF-8</div>
+          <div class="pbar" style="background:var(--g20)"><i style="width:42.3%;position:static;display:block;height:2px"></i></div>
+          <div style="display:flex;justify-content:space-between;margin-top:8px;font-size:12px;color:var(--text-2)"><span>第七章</span><span class="mono">42.3%</span></div>
+        </div>
+      </div>
+      <div style="width:300px;border:1px solid var(--g20);background:#fff">
+        <div style="height:120px;display:grid;place-items:center;background:var(--err-10);border-bottom:1px solid var(--g20)"><svg class="i20" style="width:32px;height:32px;color:var(--err)"><use href="#i-warn"/></svg></div>
+        <div style="padding:12px 16px">
+          <div style="font-size:16px;font-weight:600">孤灯录</div>
+          <div class="mono" style="font-size:11px;color:var(--text-3);margin:2px 0 10px">源文件不在原位</div>
+          <span class="tag r">需重新关联</span>
+          <div style="margin-top:12px;display:flex;gap:8px"><span class="btn sec">重新关联…</span><span class="btn gho"><svg class="i16"><use href="#i-more"/></svg></span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 四、布局骨架 ==================== -->
+<section class="sec" id="p4">
+  <h2>四、布局骨架与尺寸规格</h2>
+  <h3>4.1 纵向分区（与 layout.rs 常量对照）</h3>
+  <table>
+    <tr><th style="width:190px">区域</th><th class="n" style="width:150px">现状常量</th><th class="n" style="width:150px">新设计</th><th>说明</th></tr>
+    <tr><td>顶栏 UI Shell</td><td class="n">TOP_BAR_HEIGHT 56</td><td class="n">48</td><td>深色；品牌 + 全局导航 + 全局动作</td></tr>
+    <tr><td>阅读工具条</td><td class="n">MENU_HEIGHT 36（仅展开时占位）</td><td class="n">48（常驻，可收起）</td><td>含目录/书签/选项/保存进度/沉浸/收起</td></tr>
+    <tr><td>正文区左右留白</td><td class="n">CONTENT_PADDING_H 32</td><td class="n">48</td><td>影响分页宽度（核心语义不变）</td></tr>
+    <tr><td>正文区上下留白</td><td class="n">CONTENT_PADDING_V 28</td><td class="n">32</td><td>影响分页高度</td></tr>
+    <tr><td>进度条</td><td class="n">—</td><td class="n">2（悬浮 4）</td><td>新增；正文区之下、状态栏之上</td></tr>
+    <tr><td>状态栏</td><td class="n">BOTTOM_BAR_HEIGHT 44</td><td class="n">32</td><td>信息 + 翻页图标按钮</td></tr>
+    <tr><td>导航项宽度</td><td class="n">NAV_TAB_WIDTH 104 / H 34</td><td class="n">文字自适应 / 项高 48</td><td>顶栏 tab，底部 2px 选中条</td></tr>
+    <tr><td>图标按钮</td><td class="n">NAV_TAB_HEIGHT 34（按钮）</td><td class="n">32（行内 28）</td><td>全部带 tooltip</td></tr>
+    <tr><td>默认窗口</td><td class="n">1080 × 720</td><td class="n">1200 × 800</td><td>可自由缩放；正文区随之重排</td></tr>
+    <tr><td>最小窗口</td><td class="n">480 × 360</td><td class="n">560 × 400</td><td>低于此值不保证可用</td></tr>
+    <tr><td>字号</td><td class="n">TITLE 20 / BODY 18 / CAPTION 14</td><td class="n">24 / 18 / 12–14</td><td>见 2.2 字号阶</td></tr>
+    <tr><td>圆角</td><td class="n">CORNER_RADIUS 6</td><td class="n">0</td><td>Carbon 直角</td></tr>
+    <tr><td>滚动条</td><td class="n">宽 6 / 间距 8 / 最小 24</td><td class="n">宽 8 / 间距 12 / 最小 32</td><td>面板与书架共用</td></tr>
+    <tr><td>面板行高</td><td class="n">NAV_TAB_HEIGHT 34</td><td class="n">40</td><td>目录/书签/选项行</td></tr>
+  </table>
+  <div class="note w"><b>实现约束（务必遵守）</b>：以上数值是新设计对 <span class="mono">crates/desktop-app/src/layout.rs</span> 的<b>建议取值</b>，
+    它们仍是「版式常量唯一来源」。界面（<span class="mono">.slint</span>）只保留属性声明，不得写死尺寸 ——
+    <span class="mono">scripts/verify-desktop-scope.py</span> 与 <span class="mono">tests/layout_constants.rs</span> 会双重强制。
+    新增常量（如工具条常驻高度、进度条高度、行高 40）需同步四处：<span class="mono">layout.rs</span> 常量、<span class="mono">LayoutMetrics</span> 字段、
+    <span class="mono">app.slint</span> 的 <span class="mono">UiMetrics</span> 声明、<span class="mono">ui.rs::apply_layout_metrics</span>。</div>
+  <h3>4.2 阅读页纵向分配（1080×720 基线画框）</h3>
+  <pre class="mono" style="font-size:12px;line-height:1.7;background:var(--g10);border:1px solid var(--g20);padding:12px;overflow:auto"> 0 ┌──────────────────────────────────────────────┐
+   │ 顶栏 UI Shell                        高 48   │
+48 ├──────────────────────────────────────────────┤
+   │ 阅读工具条                           高 48   │
+96 ├──────────────────────────────────────────────┤
+   │                                              │
+   │ 正文区（左右留白 48，上下留白 32）            │  高 590
+   │ 行盒 = 字号 × 行距倍数 = 18 × 1.667 ≈ 30px    │  → 可容 17 行
+   │                                              │
+686├──────────────────────────────────────────────┤  ← 进度条 高 2（686–688）
+688├──────────────────────────────────────────────┤
+   │ 状态栏                               高 32   │
+720└──────────────────────────────────────────────┘</pre>
+</section>
+
+<!-- ==================== 逐屏线框 ==================== -->
+<section class="sec">
+  <h2>逐屏线框（S1–S17）</h2>
+  <p class="lead">每屏右侧为结构说明与交互口径；画框按 0.85 缩比呈现 1080×720 基线窗口。
+    画框内的真实中文文案取自应用现有投影（书名、章节名、状态标签等），便于对照。</p>
+</section>
+
+<div class="screens">
+
+<!-- ============ S1 书架 · 表格视图 ============ -->
+<figure class="card" id="s1">
+  <figcaption class="cap"><b>S1</b><span>书架 · 表格视图</span><em>默认视图</em></figcaption>
+  <div class="duo">
+    <div class="framecol">
+      <div class="stage"><div class="screen">
+      <header class="tb">
+        <div class="brand"><svg class="i20"><use href="#i-book"/></svg>novel-reader</div>
+        <nav class="gnav"><a class="on">书架</a><a>阅读</a><a>设置</a></nav>
+        <div class="tb-act">
+          <span class="ibt"><svg class="i16"><use href="#i-theme"/></svg></span>
+          <span class="ibt"><svg class="i16"><use href="#i-help"/></svg></span>
+          <span class="ibt"><svg class="i16"><use href="#i-exit"/></svg></span>
+        </div>
+      </header>
+      <div style="padding:24px 24px 16px;display:flex;align-items:center;gap:16px;flex:none">
+        <div style="display:flex;align-items:baseline;gap:12px"><span style="font-size:24px;font-weight:600">书架</span><span class="tag b">12 本</span></div>
+        <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+          <div class="inp" style="width:240px"><svg class="i16"><use href="#i-search"/></svg>搜索书名或文件名</div>
+          <span style="display:flex;border:1px solid var(--g30)">
+            <span class="ib q" style="background:var(--p10);color:var(--p80)"><svg class="i16"><use href="#i-list"/></svg></span>
+            <span class="ib q" style="border-left:1px solid var(--g30)"><svg class="i16"><use href="#i-grid"/></svg></span>
+          </span>
+          <div class="sel" style="width:150px">最近阅读<svg class="i16"><use href="#i-down"/></svg></div>
+          <span class="btn pri"><svg class="i16"><use href="#i-import"/></svg>导入 TXT…</span>
+        </div>
+      </div>
+      <div style="height:40px;display:flex;align-items:center;gap:16px;padding:0 24px;background:var(--g10);border-top:1px solid var(--g20);border-bottom:1px solid var(--g20);font-size:12px;color:var(--text-2);flex:none">
+        <div style="flex:1;display:flex;align-items:center;gap:6px">书名 / 文件<svg class="i16" style="width:12px;height:12px"><use href="#i-sort"/></svg></div>
+        <div style="width:120px">状态</div><div style="width:180px">进度</div><div style="width:110px">最近阅读</div><div style="width:80px"></div>
+      </div>
+      <div class="rows" style="flex:none">
+        <div class="r" style="height:48px;padding:0 24px;gap:16px">
+          <div style="flex:1;min-width:0"><div style="font-weight:600">云海志</div><div class="mono" style="font-size:11px;color:var(--text-3)">/home/user/books/yunhaizhi.txt · 2.4 MB</div></div>
+          <span class="tag ok" style="width:120px">可阅读</span>
+          <div style="width:180px"><div style="font-size:11px;color:var(--text-2);margin-bottom:4px">第七章 · 42.3%</div><div class="pbar"><i style="width:42.3%;display:block;position:static;height:2px"></i></div></div>
+          <span class="mono" style="font-size:11px;color:var(--text-3);width:110px">09-30 21:12</span>
+          <div style="width:80px;display:flex;gap:4px;justify-content:flex-end"><span class="ib sm"><svg class="i16"><use href="#i-book"/></svg></span><span class="ib sm"><svg class="i16"><use href="#i-more"/></svg></span></div>
+        </div>
+        <div class="r" style="height:48px;padding:0 24px;gap:16px">
+          <div style="flex:1;min-width:0"><div style="font-weight:600">孤灯录</div><div class="mono" style="font-size:11px;color:var(--text-3)">/home/user/books/gudenglu.txt · 1.1 MB</div></div>
+          <span class="tag r" style="width:120px">需重新关联</span>
+          <div style="width:180px"><div style="font-size:11px;color:var(--text-2);margin-bottom:4px">第三章 · 12.8%</div><div class="pbar"><i style="width:12.8%;display:block;position:static;height:2px"></i></div></div>
+          <span class="mono" style="font-size:11px;color:var(--text-3);width:110px">09-28 22:40</span>
+          <div style="width:80px;display:flex;gap:4px;justify-content:flex-end"><span class="ib sm"><svg class="i16"><use href="#i-relink"/></svg></span><span class="ib sm"><svg class="i16"><use href="#i-more"/></svg></span></div>
+        </div>
+        <div class="r on" style="height:48px;padding:0 24px;gap:16px">
+          <div style="flex:1;min-width:0"><div style="font-weight:600">南山纪事</div><div class="mono" style="font-size:11px;color:var(--text-3)">/home/user/books/nanshan.txt · 3.7 MB</div></div>
+          <span class="tag w" style="width:120px">需重建索引</span>
+          <div style="width:180px"><div style="font-size:11px;color:var(--text-2);margin-bottom:4px">未开始</div><div class="pbar"><i style="width:0%;display:block;position:static;height:2px"></i></div></div>
+          <span class="mono" style="font-size:11px;color:var(--text-3);width:110px">—</span>
+          <div style="width:80px;display:flex;gap:4px;justify-content:flex-end"><span class="ib sm"><svg class="i16"><use href="#i-book"/></svg></span><span class="ib sm"><svg class="i16"><use href="#i-more"/></svg></span></div>
+        </div>
+        <div class="r" style="height:48px;padding:0 24px;gap:16px">
+          <div style="flex:1;min-width:0"><div style="font-weight:600">海外拾遗</div><div class="mono" style="font-size:11px;color:var(--text-3)">/home/user/books/haiwai.txt · 860 KB</div></div>
+          <span class="tag g" style="width:120px">已移出</span>
+          <div style="width:180px"><div style="font-size:11px;color:var(--text-2);margin-bottom:4px">第二章 · 8.1%</div><div class="pbar"><i style="width:8.1%;display:block;position:static;height:2px"></i></div></div>
+          <span class="mono" style="font-size:11px;color:var(--text-3);width:110px">09-12 19:03</span>
+          <div style="width:80px;display:flex;gap:4px;justify-content:flex-end"><span class="ib sm"><svg class="i16"><use href="#i-more"/></svg></span></div>
+        </div>
+      </div>
+      <div style="flex:1"></div>
+      <div class="sbar">
+        <span class="grow">书架：12 本（已移出 1 本，可再次导入同一文件恢复）</span>
+        <span class="mono">v0.1.0</span>
+      </div>
+    </div></div>
+      <div class="hint">画框注解：页头 24/16 内边距 · 表头 40 · 行 48 · 整行单击即进入阅读 · 行尾图标按钮（阅读 / 更多）</div>
+    </div>
+    <div class="spec">
+      <h4>结构</h4>
+      <ul>
+        <li>顶栏 48：品牌 + 全局导航（书架/阅读/设置）+ 右侧全局动作（主题、快捷键说明、退出）。</li>
+        <li>页头 <span class="k">80</span>：标题 24/600 + 计数 Tag；右侧一行控件 = 搜索（新增）· 视图切换 · 排序（新增）· 主按钮「导入 TXT…」。</li>
+        <li>表头 40（layer-01）：书名/文件（可排序）、状态、进度、最近阅读；列宽 120/180/110/<span class="k">自适应</span>。</li>
+        <li>行 48：书名 14/600 + 路径与体积（mono 11）两行；状态 Tag；进度 = 文本 + 2px 进度条；行尾图标按钮 28。</li>
+        <li>状态栏 32：书架计数与说明（左）+ 版本（右）。</li>
+      </ul>
+      <h4>交互</h4>
+      <ul>
+        <li><b>整行单击</b> = 打开阅读（等价现状「阅读」按钮，也是 <span class="k">NR_READER_BOOK</span> 的等价入口）；行尾「更多」菜单 = 重新关联… / 移出书架 / 重命名。</li>
+        <li>「需重新关联」「需重建索引」的行：打开动作仍可用（触发重建），但状态列以状态色 Tag 明示。</li>
+        <li>行尾动作按钮在 <span class="k">hover / 键盘聚焦 / 触屏</span>三种情况下可见；纯键盘可达（Tab 进表，↑↓ 移动，Enter 打开）。</li>
+      </ul>
+      <h4>与现状差异</h4>
+      <ul>
+        <li>去掉每行两个 104×34 蓝色块 → 整行即动作 + 行尾图标按钮。</li>
+        <li>新增：搜索、排序、视图切换、行级「更多」（含移出书架）；均为本轮已授权的必要补全。</li>
+        <li>数据来源：<span class="k">books</span> + <span class="k">reading_progress</span> 已含书名/路径/体积/状态/进度/最近打开时间；无需新表。</li>
+      </ul>
+    </div>
+  </div>
+</figure>
+
+<!-- ============ S2 书架 · 卡片视图 ============ -->
+<figure class="card" id="s2">
+  <figcaption class="cap"><b>S2</b><span>书架 · 卡片视图</span><em>视图切换（新增）</em></figcaption>
+  <div class="duo">
+    <div class="framecol">
+      <div class="stage"><div class="screen">
+      <header class="tb">
+        <div class="brand"><svg class="i20"><use href="#i-book"/></svg>novel-reader</div>
+        <nav class="gnav"><a class="on">书架</a><a>阅读</a><a>设置</a></nav>
+        <div class="tb-act">
+          <span class="ibt"><svg class="i16"><use href="#i-theme"/></svg></span>
+          <span class="ibt"><svg class="i16"><use href="#i-help"/></svg></span>
+          <span class="ibt"><svg class="i16"><use href="#i-exit"/></svg></span>
+        </div>
+      </header>
+      <div style="padding:24px 24px 16px;display:flex;align-items:center;gap:16px;flex:none">
+        <div style="display:flex;align-items:baseline;gap:12px"><span style="font-size:24px;font-weight:600">书架</span><span class="tag b">12 本</span></div>
+        <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+          <div class="inp" style="width:240px"><svg class="i16"><use href="#i-search"/></svg>搜索书名或文件名</div>
+          <span style="display:flex;border:1px solid var(--g30)">
+            <span class="ib q"><svg class="i16"><use href="#i-list"/></svg></span>
+            <span class="ib q" style="border-left:1px solid var(--g30);background:var(--p10);color:var(--p80)"><svg class="i16"><use href="#i-grid"/></svg></span>
+          </span>
+          <div class="sel" style="width:150px">最近阅读<svg class="i16"><use href="#i-down"/></svg></div>
+          <span class="btn pri"><svg class="i16"><use href="#i-import"/></svg>导入 TXT…</span>
+        </div>
+      </div>
+      <div style="padding:0 24px 16px;display:flex;gap:16px;flex:none">
+        <div style="width:320px;border:1px solid var(--g20)">
+          <div class="ph" style="height:128px;display:grid;place-items:center;background:var(--p10);border:0;border-bottom:1px solid var(--g20)"><span style="font-size:32px;font-weight:600;color:var(--p80)">云</span></div>
+          <div style="padding:12px 16px">
+            <div style="font-size:16px;font-weight:600">云海志</div>
+            <div class="mono" style="font-size:11px;color:var(--text-3);margin:2px 0 10px">2.4 MB · UTF-8 · /books/yunhaizhi.txt</div>
+            <div class="pbar"><i style="width:42.3%;display:block;position:static;height:2px"></i></div>
+            <div style="display:flex;justify-content:space-between;margin-top:8px;font-size:12px;color:var(--text-2)"><span>第七章 谷雨</span><span class="mono">42.3%</span></div>
+            <div style="margin-top:12px"><span class="btn pri" style="width:100%;justify-content:center"><svg class="i16"><use href="#i-book"/></svg>继续阅读</span></div>
+          </div>
+        </div>
+        <div style="width:320px;border:1px solid var(--g20)">
+          <div class="ph" style="height:128px;display:grid;place-items:center;background:var(--p10);border:0;border-bottom:1px solid var(--g20)"><span style="font-size:32px;font-weight:600;color:var(--p80)">南</span></div>
+          <div style="padding:12px 16px">
+            <div style="font-size:16px;font-weight:600">南山纪事</div>
+            <div class="mono" style="font-size:11px;color:var(--text-3);margin:2px 0 10px">3.7 MB · GBK（手动）</div>
+            <div class="pbar"><i style="width:0%;display:block;position:static;height:2px"></i></div>
+            <div style="display:flex;justify-content:space-between;margin-top:8px;font-size:12px;color:var(--text-2)"><span>未开始</span><span class="mono">0.0%</span></div>
+            <div style="margin-top:12px;display:flex;gap:8px;align-items:center"><span class="tag w">需重建索引</span><span class="btn gho" style="margin-left:auto">打开</span></div>
+          </div>
+        </div>
+        <div style="width:320px;border:1px solid var(--g20)">
+          <div style="height:128px;display:grid;place-items:center;background:var(--err-10);border-bottom:1px solid var(--g20)"><svg class="i20" style="width:32px;height:32px;color:var(--err)"><use href="#i-warn"/></svg></div>
+          <div style="padding:12px 16px">
+            <div style="font-size:16px;font-weight:600">孤灯录</div>
+            <div class="mono" style="font-size:11px;color:var(--text-3);margin:2px 0 10px">源文件不在原位</div>
+            <span class="tag r">需重新关联</span>
+            <div style="margin-top:12px;display:flex;gap:8px"><span class="btn sec">重新关联…</span><span class="btn gho"><svg class="i16"><use href="#i-more"/></svg></span></div>
+          </div>
+        </div>
+      </div>
+      <div style="flex:1"></div>
+      <div class="sbar">
+        <span class="grow">书架：12 本 · 卡片视图（3 列）</span>
+        <span class="mono">v0.1.0</span>
+      </div>
+    </div></div>
+      <div class="hint">画框注解：卡片 320×≈260 · 列间距 16 · 封面为按书名派生的色块占位（不含任何版权素材）</div>
+    </div>
+    <div class="spec">
+      <h4>结构</h4>
+      <ul>
+        <li>与 S1 共用页头与全局控件，仅切换内容区：3 列卡片（窗口 &lt; 960 自动降到 2 列，&lt; 720 降到 1 列）。</li>
+        <li>卡片：封面占位 128（大写首字 + 主色 10 底）· 书名 16/600 · 元信息 mono 11 · 进度条 + 章节/百分比 · 主按钮「继续阅读」。</li>
+        <li>状态异常时卡片头改为状态色底 + 状态图标，动作相应变为「重新关联…」。</li>
+      </ul>
+      <h4>交互与理由</h4>
+      <ul>
+        <li>卡片视图面向「找一本继续读」的场景，主按钮是唯一显式动作；表格视图面向核对与治理（路径、状态、最近阅读）。</li>
+        <li>视图选择、排序、搜索三者都可持久化到 <span class="k">reader_settings</span> 的扩展键（实现建议；不持久化也可接受，工作区内记忆即可）。</li>
+        <li>封面为本地派生占位，不引入网络素材，符合「离线、无遥测」的产品边界。</li>
+      </ul>
+      <div class="note">若主人认为封面占位是多余视觉，可退为「无封面，仅标题 + 进度」的紧凑卡片；结构不变。</div>
+    </div>
+  </div>
+</figure>
+
+<!-- ============ S3 书架 · 空态 ============ -->
+<figure class="card" id="s3">
+  <figcaption class="cap"><b>S3</b><span>书架 · 空态</span><em>首次启动</em></figcaption>
+  <div class="duo">
+    <div class="framecol">
+      <div class="stage"><div class="screen">
+      <header class="tb">
+        <div class="brand"><svg class="i20"><use href="#i-book"/></svg>novel-reader</div>
+        <nav class="gnav"><a class="on">书架</a><a>阅读</a><a>设置</a></nav>
+        <div class="tb-act">
+          <span class="ibt"><svg class="i16"><use href="#i-theme"/></svg></span>
+          <span class="ibt"><svg class="i16"><use href="#i-help"/></svg></span>
+          <span class="ibt"><svg class="i16"><use href="#i-exit"/></svg></span>
+        </div>
+      </header>
+      <div style="padding:24px 24px 16px;display:flex;align-items:center;gap:16px;flex:none">
+        <div style="display:flex;align-items:baseline;gap:12px"><span style="font-size:24px;font-weight:600">书架</span><span class="tag g">0 本</span></div>
+        <div style="margin-left:auto"><span class="btn pri"><svg class="i16"><use href="#i-import"/></svg>导入 TXT…</span></div>
+      </div>
+      <div style="flex:1;display:grid;place-items:center;text-align:center">
+        <div style="max-width:520px">
+          <svg class="i20" style="width:64px;height:64px;color:var(--g30)"><use href="#i-shelf"/></svg>
+          <div style="font-size:20px;font-weight:600;margin-top:16px">书架还是空的</div>
+          <div style="font-size:14px;color:var(--text-2);margin:8px 0 24px">
+            导入一个普通 TXT 文件即可开始阅读。文件保留在原来的位置，本应用只记录它的路径、章节索引与阅读进度，
+            不会修改或删除您的文件。
+          </div>
+          <span class="btn pri lg"><svg class="i16"><use href="#i-import"/></svg>导入 TXT…</span>
+          <div style="margin-top:24px;font-size:12px;color:var(--text-3);text-align:left;border-top:1px solid var(--g20);padding-top:12px">
+            <div>· 支持格式：普通 <span class="mono">.txt</span>（ZIP / EPUB / PDF 不在范围内）</div>
+            <div>· 编码：UTF-8 / UTF-8 BOM / UTF-16 LE/BE / GB18030 / GBK / Big5，识别不准时可在阅读页「选项」中手动指定</div>
+            <div>· 数据位置：<span class="mono">$XDG_DATA_HOME/novel-reader/library.db</span>（退出后复制该文件即可备份）</div>
+          </div>
+        </div>
+      </div>
+      <div class="sbar">
+        <span class="grow">书架：0 本 · 尚未导入 TXT</span>
+        <span class="mono">v0.1.0</span>
+      </div>
+    </div></div>
+      <div class="hint">画框注解：空态居中块最大宽 520 · 说明文字反引号内为等宽 · 底部三条约束来自 release/known-limitations</div>
+    </div>
+    <div class="spec">
+      <h4>结构</h4>
+      <ul>
+        <li>空态 = 64px 灰图标 + 标题 20/600 + 说明 14（最大宽 520）+ 唯一主按钮。</li>
+        <li>说明区回答「支持什么 / 编码怎么办 / 数据在哪」，把当前仅一句「书架为空：尚未导入 TXT。导入链路在 DT2 接入后可用。」替换为面向用户的交付文案（不含内部代号）。</li>
+      </ul>
+      <h4>交互</h4>
+      <ul>
+        <li>「导入 TXT…」= 系统文件选择器（现状 <span class="k">on_import_txt</span>）；取消后回到本屏，状态栏不留残留文案。</li>
+        <li>快捷键 <span class="k">Ctrl+O</span> 触发同一入口（建议项，需 <span class="k">input.rs</span> 扩展）；未实现前不在快捷键面板中列出。</li>
+      </ul>
+      <div class="note w">文案纪律：界面不得暴露内部里程碑代号（如「DT2 接入后可用」），空态/错误态文案一律由 Rust 侧投影，界面只渲染。</div>
+    </div>
+  </div>
+</figure>
+
+<!-- ============ S4 书架 · 文件失效 ============ -->
+<figure class="card" id="s4">
+  <figcaption class="cap"><b>S4</b><span>书架 · 源文件失效</span><em>状态可见性</em></figcaption>
+  <div class="duo">
+    <div class="framecol">
+      <div class="stage"><div class="screen">
+      <header class="tb">
+        <div class="brand"><svg class="i20"><use href="#i-book"/></svg>novel-reader</div>
+        <nav class="gnav"><a class="on">书架</a><a>阅读</a><a>设置</a></nav>
+        <div class="tb-act">
+          <span class="ibt"><svg class="i16"><use href="#i-theme"/></svg></span>
+          <span class="ibt"><svg class="i16"><use href="#i-help"/></svg></span>
+          <span class="ibt"><svg class="i16"><use href="#i-exit"/></svg></span>
+        </div>
+      </header>
+      <div style="padding:24px 24px 16px;display:flex;align-items:center;gap:16px;flex:none">
+        <div style="display:flex;align-items:baseline;gap:12px"><span style="font-size:24px;font-weight:600">书架</span><span class="tag b">12 本</span></div>
+        <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+          <div class="inp" style="width:240px"><svg class="i16"><use href="#i-search"/></svg>搜索书名或文件名</div>
+          <span class="btn pri"><svg class="i16"><use href="#i-import"/></svg>导入 TXT…</span>
+        </div>
+      </div>
+      <div style="margin:0 24px 12px;border-left:3px solid var(--err);background:var(--err-10);padding:12px 14px;display:flex;gap:10px;align-items:flex-start;flex:none">
+        <svg class="i20" style="color:var(--err);flex:none"><use href="#i-err"/></svg>
+        <div style="font-size:13px;flex:1">
+          <b>1 本书的源文件已失效</b>
+          <div style="color:var(--text-2)">原始 TXT 文件未被修改或删除。重新指定文件位置即可继续阅读；章节与进度会按指纹重新校验。</div>
+        </div>
+        <span class="btn ter">全部重新关联…</span>
+        <span class="btn ter">忽略</span>
+        <svg class="i16" style="color:var(--text-2);margin-top:2px"><use href="#i-x"/></svg>
+      </div>
+      <div style="height:40px;display:flex;align-items:center;gap:16px;padding:0 24px;background:var(--g10);border-top:1px solid var(--g20);border-bottom:1px solid var(--g20);font-size:12px;color:var(--text-2);flex:none">
+        <div style="flex:1;display:flex;align-items:center;gap:6px">书名 / 文件<svg class="i16" style="width:12px;height:12px"><use href="#i-sort"/></svg></div>
+        <div style="width:120px">状态</div><div style="width:180px">进度</div><div style="width:110px">最近阅读</div><div style="width:80px"></div>
+      </div>
+      <div class="rows" style="flex:none">
+        <div class="r" style="height:48px;padding:0 24px;gap:16px">
+          <div style="flex:1;min-width:0"><div style="font-weight:600">孤灯录</div><div class="mono" style="font-size:11px;color:var(--text-3)">原路径 /home/user/books/gudenglu.txt（当前不可读）</div></div>
+          <span class="tag r" style="width:120px">需重新关联</span>
+          <div style="width:180px"><div style="font-size:11px;color:var(--text-2);margin-bottom:4px">第三章 · 12.8%</div><div class="pbar"><i style="width:12.8%;display:block;position:static;height:2px"></i></div></div>
+          <span class="mono" style="font-size:11px;color:var(--text-3);width:110px">09-28 22:40</span>
+          <div style="width:80px;display:flex;gap:4px;justify-content:flex-end"><span class="ib sm"><svg class="i16"><use href="#i-relink"/></svg></span><span class="ib sm"><svg class="i16"><use href="#i-more"/></svg></span></div>
+        </div>
+        <div class="r" style="height:48px;padding:0 24px;gap:16px">
+          <div style="flex:1;min-width:0"><div style="font-weight:600">云海志</div><div class="mono" style="font-size:11px;color:var(--text-3)">/home/user/books/yunhaizhi.txt · 2.4 MB</div></div>
+          <span class="tag ok" style="width:120px">可阅读</span>
+          <div style="width:180px"><div style="font-size:11px;color:var(--text-2);margin-bottom:4px">第七章 · 42.3%</div><div class="pbar"><i style="width:42.3%;display:block;position:static;height:2px"></i></div></div>
+          <span class="mono" style="font-size:11px;color:var(--text-3);width:110px">09-30 21:12</span>
+          <div style="width:80px;display:flex;gap:4px;justify-content:flex-end"><span class="ib sm"><svg class="i16"><use href="#i-book"/></svg></span><span class="ib sm"><svg class="i16"><use href="#i-more"/></svg></span></div>
+        </div>
+      </div>
+      <div style="flex:1"></div>
+      <div class="sbar">
+        <span class="grow">书架：12 本 · 1 本待重新关联</span>
+        <span class="mono">v0.1.0</span>
+      </div>
+    </div></div>
+      <div class="hint">画框注解：通知条左 3px 状态色 · 全局动作「全部重新关联…」+「忽略」+ 关闭 · 通知可被「忽略」后本次会话不再出现</div>
+    </div>
+    <div class="spec">
+      <h4>结构</h4>
+      <ul>
+        <li>状态摘要用 InlineNotification（宽 = 内容区，左 3px 状态色）：标题 + 一句解释 + 全局动作 + 关闭。</li>
+        <li>失效行的状态 Tag 用红色；行尾图标按钮首位变为「重新关联」（<span class="k">on_relink_book</span> 等价入口）。</li>
+        <li>原路径以 mono 显示，便于用户自行定位文件；不可读时附「（当前不可读）」。</li>
+      </ul>
+      <h4>交互</h4>
+      <ul>
+        <li>「全部重新关联…」逐个走系统文件选择器（若一次只能选一个，则文案改为「重新关联…」并逐行触发）。</li>
+        <li>「忽略」只收起通知条，不改变书籍状态；下次启动仍会提示（状态是持久事实）。</li>
+        <li>数据安全口径必须在此屏明确：<b>原始 TXT 不会被修改或删除</b>。</li>
+      </ul>
+      <div class="note">现状只有行内「重新关联…」按钮且需滚动查找；本设计把「有多少本失效、可以做什么」提到页面级，符合 P4「一切状态可见」。</div>
+    </div>
+  </div>
+</figure>
+
+<!-- ============ S5 阅读 · 常态 ============ -->
+<figure class="card" id="s5">
+  <figcaption class="cap"><b>S5</b><span>阅读 · 常态（核心屏）</span><em>整页分页</em></figcaption>
+  <div class="duo">
+    <div class="framecol">
+      <div class="stage"><div class="screen">
+      <header class="tb">
+        <div class="brand"><svg class="i20"><use href="#i-book"/></svg>novel-reader</div>
+        <nav class="gnav"><a>书架</a><a class="on">阅读</a><a>设置</a></nav>
+        <div class="tb-act">
+          <span class="ibt"><svg class="i16"><use href="#i-theme"/></svg></span>
+          <span class="ibt"><svg class="i16"><use href="#i-help"/></svg></span>
+          <span class="ibt"><svg class="i16"><use href="#i-exit"/></svg></span>
+        </div>
+      </header>
+      <div class="tbar">
+        <span class="ib q"><svg class="i16"><use href="#i-tree"/></svg></span>
+        <span class="ib q"><svg class="i16"><use href="#i-mark"/></svg></span>
+        <span class="ib q"><svg class="i16"><use href="#i-opt"/></svg></span>
+        <div class="mid">云海志 · 第七章 谷雨</div>
+        <span class="ib q"><svg class="i16"><use href="#i-save"/></svg></span>
+        <span class="ib q"><svg class="i16"><use href="#i-expand"/></svg></span>
+        <span class="ib q"><svg class="i16"><use href="#i-up"/></svg></span>
+      </div>
+      <div style="flex:1;padding:32px 48px;font-size:18px;line-height:30px;overflow:hidden">
+        <div>夜色压在城墙上，风从西边来。他把手里的灯举高了些，照见石阶上薄薄一层霜。</div>
+        <div>巷子很长，两壁的砖缝里长着不知名的草。走到底，能听见水声，像是有人在低声说话。</div>
+        <div>他把灯放在石阶上，坐下来歇息。</div>
+        <div>&nbsp;</div>
+        <div>「师傅说过，走路要慢。」他想起这句话的时候，天已经暗透了。</div>
+        <div>那时他还不懂，慢的不是脚步，是心里那点不肯熄的东西。</div>
+        <div>&nbsp;</div>
+        <div>城门在身后落锁，声音很轻，却把整座城分成了两半：一半是他的来处，一半是他的去处。</div>
+        <div>他抬头看星，星子零落，像谁把一把米撒在了黑布上。</div>
+        <div>&nbsp;</div>
+        <div>那一夜他没有睡。他把书从头翻到尾，又从尾翻到头，像是在寻找一个自己也不敢承认的答案。</div>
+        <div>天亮之前，他终于合上书，吹熄了灯。</div>
+        <div>&nbsp;</div>
+        <div>第二日，城门开了。守城的兵士换了岗，谁也没注意到，一个背着旧布包的年轻人，逆着人流走了出去。</div>
+        <div>他走得很慢，一步一步，踩在结了霜的石板上。</div>
+        <div>霜在他脚下碎开，声音细得像一句没能说完的话。</div>
+        <div>他不知道前面有什么，只知道不能停。</div>
+      </div>
+      <div class="pbar"><i></i></div>
+      <div class="sbar">
+        <span class="grow">已保存进度 · 12:04</span>
+        <span>第七章 谷雨</span><span>第 12 页</span><span class="mono">42.3%</span>
+        <span class="tag b">GBK（手动）</span>
+        <span class="mono" style="color:var(--text-3)">v0.1.0</span>
+        <span class="ib sm"><svg class="i16"><use href="#i-left"/></svg></span>
+        <span class="ib sm"><svg class="i16"><use href="#i-right"/></svg></span>
+      </div>
+    </div></div>
+      <div class="hint">画框注解：横向分区 1080；纵向 顶栏 48 / 工具条 48 / 正文区 590 / 进度条 2 / 状态栏 32 = 720。行盒 = 18 × 1.667 ≈ 30px；本页 17 行（含 4 个段间空行）= 510px ≤ 正文区内容高 526px，不出现滚动条与半行裁切。段落以空行分隔，不做首行缩进（渲染后端限制，见设置页「版式」分组）</div>
+    </div>
+    <div class="spec">
+      <h4>结构（纵向 48 / 48 / 590 / 2 / 32）</h4>
+      <ul>
+        <li><b>顶栏 48</b>：全局导航在这层，阅读页不再重复导航；右侧三个全局动作。</li>
+        <li><b>工具条 48</b>：左 = 目录 / 书签 / 选项（图标按钮）；中 = <span class="k">书名 · 章节</span>（居中、单行省略）；右 = 保存进度 / 沉浸阅读 / 收起工具条。</li>
+        <li><b>正文区</b>：左右留白 48、上下 32；逐行渲染，行盒由测量决定（界面不换行、不加缩进、不加字距）。</li>
+        <li><b>进度条 2</b>：占比读数（字节千分比）可视化；hover 变 4px 并显示浮标「42.3% · 第七章」。</li>
+        <li><b>状态栏 32</b>：左 = 状态/提示（已保存、重排中…），右 = 章节 · 页码 · 百分比 · 编码 Tag · 版本 · 上一页/下一页。</li>
+      </ul>
+      <h4>交互</h4>
+      <ul>
+        <li>点击正文：手势模式下左 1/3 上一页、右 1/3 下一页、中部收起/呼出工具条；按钮模式下点中部收起工具条（现状语义保持）。</li>
+        <li>滚轮仍映射为整页翻页（正文不出现滚动条）；键盘 PageUp/↑/← 上一页，PageDown/↓/→ 下一页。</li>
+        <li>进度条可点击/拖拽跳转（<b>新增</b>）：换算为书内位置后走与目录跳转同一入口，跳转后如实回报位置校验结果。</li>
+      </ul>
+      <h4>字号与行宽</h4>
+      <ul>
+        <li>字号 18 / 行距 1.667（设置页可调 12–40px、1.0–2.4）；正文字体无衬线。</li>
+        <li><b>可选行宽约束</b>：中文长文舒适行宽约 30–40 字/行。1080 宽窗口下正文区 984 → 约 54 字/行，偏长。方案 A（推荐）：正文列最大宽 = 40 × 字号（720px）居中，两侧留白各 132；仅改桌面侧正文区宽度口径，核心分页语义不变。方案 B：维持拉满正文区（改动最小）。</li>
+      </ul>
+    </div>
+  </div>
+</figure>
+
+<!-- ============ S6 阅读 · 目录面板 ============ -->
+<figure class="card" id="s6">
+  <figcaption class="cap"><b>S6</b><span>阅读 · 目录面板</span><em>覆盖式抽屉（保留现状形态）</em></figcaption>
+  <div class="duo">
+    <div class="framecol">
+      <div class="stage"><div class="screen">
+      <header class="tb">
+        <div class="brand"><svg class="i20"><use href="#i-book"/></svg>novel-reader</div>
+        <nav class="gnav"><a>书架</a><a class="on">阅读</a><a>设置</a></nav>
+        <div class="tb-act">
+          <span class="ibt"><svg class="i16"><use href="#i-theme"/></svg></span>
+          <span class="ibt"><svg class="i16"><use href="#i-help"/></svg></span>
+          <span class="ibt"><svg class="i16"><use href="#i-exit"/></svg></span>
+        </div>
+      </header>
+      <div class="tbar">
+        <span class="ib q" style="background:var(--p10);color:var(--p80)"><svg class="i16"><use href="#i-tree"/></svg></span>
+        <span class="ib q"><svg class="i16"><use href="#i-mark"/></svg></span>
+        <span class="ib q"><svg class="i16"><use href="#i-opt"/></svg></span>
+        <div class="mid">云海志 · 第七章 谷雨</div>
+        <span class="ib q"><svg class="i16"><use href="#i-save"/></svg></span>
+        <span class="ib q"><svg class="i16"><use href="#i-expand"/></svg></span>
+        <span class="ib q"><svg class="i16"><use href="#i-up"/></svg></span>
+      </div>
+      <div style="flex:1;padding:32px 48px;font-size:18px;line-height:30px;color:var(--g30)">
+        <div>夜色压在城墙上，风从西边来。他把手里的灯举高了些，照见石阶上薄薄一层霜。</div>
+        <div>巷子很长，两壁的砖缝里长着不知名的草。走到底，能听见水声，像是有人在低声说话。</div>
+        <div>他把灯放在石阶上，坐下来歇息。</div>
+        <div>&nbsp;</div>
+        <div>「师傅说过，走路要慢。」他想起这句话的时候，天已经暗透了。</div>
+      </div>
+      <div class="pbar"><i></i></div>
+      <div class="sbar">
+        <span class="grow">已保存进度 · 12:04</span>
+        <span>第七章 谷雨</span><span>第 12 页</span><span class="mono">42.3%</span>
+        <span class="ib sm"><svg class="i16"><use href="#i-left"/></svg></span>
+        <span class="ib sm"><svg class="i16"><use href="#i-right"/></svg></span>
+      </div>
+      <!-- 面板 -->
+      <div style="position:absolute;left:24px;right:24px;top:112px;height:558px;background:var(--g10);border:1px solid var(--g20);display:flex;flex-direction:column">
+        <div style="height:48px;display:flex;align-items:center;gap:12px;padding:0 16px;border-bottom:1px solid var(--g20);flex:none">
+          <span style="font-size:16px;font-weight:600">目录</span>
+          <span class="tag b">128 章</span>
+          <div class="inp" style="width:260px;margin-left:auto;background:var(--field)"><svg class="i16"><use href="#i-search"/></svg>搜索章节名</div>
+          <span class="ib"><svg class="i16"><use href="#i-x"/></svg></span>
+        </div>
+        <div class="rows">
+          <div class="r"><span class="seq">001</span><span class="t">第一章 灯下</span><span class="m">偏移 0</span></div>
+          <div class="r"><span class="seq">002</span><span class="t">第二章 城墙</span><span class="m">偏移 8412</span></div>
+          <div class="r"><span class="seq">003</span><span class="t">第三章 落锁</span><span class="m">偏移 16980</span></div>
+          <div class="r"><span class="seq">004</span><span class="t">第四章 星子</span><span class="m">偏移 26104</span></div>
+          <div class="r"><span class="seq">005</span><span class="t">第五章 不眠</span><span class="m">偏移 35870</span></div>
+          <div class="r"><span class="seq">006</span><span class="t">第六章 灯灭</span><span class="m">偏移 44021</span></div>
+          <div class="r on"><span class="seq">007</span><span class="t">第七章 谷雨</span><span class="m">当前 · 偏移 51240</span></div>
+          <div class="r"><span class="seq">008</span><span class="t">第八章 换岗</span><span class="m">偏移 61488</span></div>
+          <div class="r"><span class="seq">009</span><span class="t">第九章 逆流</span><span class="m">偏移 72006</span></div>
+          <div class="r"><span class="seq">010</span><span class="t">第十章 霜声</span><span class="m">偏移 81233</span></div>
+          <div class="r"><span class="seq">011</span><span class="t">第十一章 来处与去处</span><span class="m">偏移 90881</span></div>
+        </div>
+        <div style="position:absolute;right:12px;top:64px;width:8px;height:466px;background:var(--g20)">
+          <div style="width:8px;height:150px;background:var(--g30)"></div>
+        </div>
+        <div style="height:32px;display:flex;align-items:center;gap:16px;padding:0 16px;border-top:1px solid var(--g20);font-size:12px;color:var(--text-2);flex:none">
+          <span>滚轮滚动列表（不翻动正文）</span><span>点击整行即跳转</span><span class="mono">7 / 128</span>
+        </div>
+      </div>
+    </div></div>
+      <div class="hint">画框注解：面板 = 正文区以内缩 24/16 · 面板头 48 · 行 40 · 滚动条 8（轨道 g20 / 滑块 g30）· 当前章左 2px 主色 + p10 底</div>
+    </div>
+    <div class="spec">
+      <h4>结构</h4>
+      <ul>
+        <li>面板仍覆盖正文（口径 4），但内部重做：<b>面板头 48</b>（标题 + 章节计数 Tag + 搜索框 + 关闭图标）→ <b>行列表 40</b> → <b>底部提示条 32</b>（滚轮行为 + 位置读数）。</li>
+        <li>行 = 序号（mono 12）+ 章节名 13.5/600（当前章）+ 元信息（偏移量 mono 12）。<b>行内不再挂「跳转」按钮</b>：整行可点，hover 变 layer-01，键盘聚焦有 2px 聚焦环。</li>
+        <li>当前章：左缘 2px 主色 + p10 底色 + 文字 p80；不再用大面积浅蓝块。</li>
+        <li>自定义滚动条 8px：轨道 layer-01，滑块 g30，hover 主色；可拖拽与点击轨道。</li>
+        <li>搜索框（新增）：按章节名过滤，过滤中标题右侧显示「已过滤 N 条 / 清除」。</li>
+      </ul>
+      <h4>交互</h4>
+      <ul>
+        <li>滚轮在面板内被消费，不翻正文（现状已修正的行为，保持不变）。</li>
+        <li>点击行 = <span class="k">chapter-jump(sequence)</span>；跳转后关闭面板并把键盘焦点交回阅读页（现状已处理的焦点回收，保持不变）。</li>
+        <li>Esc / 点面板外区域关闭面板（<b>建议</b>：需在 <span class="k">input.rs</span> 增加面板级 Esc；未实现前以「关闭」图标按钮为准）。</li>
+      </ul>
+      <div class="note">大目录（数千章）时：行列表虚拟化由 Slint <span class="k">ListView</span> 承担，保持「行高固定 40」以便虚拟化成立。</div>
+    </div>
+  </div>
+</figure>
+
+<!-- ============ S7 阅读 · 书签面板 ============ -->
+<figure class="card" id="s7">
+  <figcaption class="cap"><b>S7</b><span>阅读 · 书签面板</span><em>增删改跳</em></figcaption>
+  <div class="duo">
+    <div class="framecol">
+      <div class="stage"><div class="screen">
+      <header class="tb">
+        <div class="brand"><svg class="i20"><use href="#i-book"/></svg>novel-reader</div>
+        <nav class="gnav"><a>书架</a><a class="on">阅读</a><a>设置</a></nav>
+        <div class="tb-act">
+          <span class="ibt"><svg class="i16"><use href="#i-theme"/></svg></span>
+          <span class="ibt"><svg class="i16"><use href="#i-help"/></svg></span>
+          <span class="ibt"><svg class="i16"><use href="#i-exit"/></svg></span>
+        </div>
+      </header>
+      <div class="tbar">
+        <span class="ib q"><svg class="i16"><use href="#i-tree"/></svg></span>
+        <span class="ib q" style="background:var(--p10);color:var(--p80)"><svg class="i16"><use href="#i-mark"/></svg></span>
+        <span class="ib q"><svg class="i16"><use href="#i-opt"/></svg></span>
+        <div class="mid">云海志 · 第七章 谷雨</div>
+        <span class="ib q"><svg class="i16"><use href="#i-save"/></svg></span>
+        <span class="ib q"><svg class="i16"><use href="#i-expand"/></svg></span>
+        <span class="ib q"><svg class="i16"><use href="#i-up"/></svg></span>
+      </div>
+      <div style="flex:1;padding:32px 48px;font-size:18px;line-height:30px;color:var(--g30)">
+        <div>夜色压在城墙上，风从西边来。他把手里的灯举高了些，照见石阶上薄薄一层霜。</div>
+        <div>巷子很长，两壁的砖缝里长着不知名的草。走到底，能听见水声，像是有人在低声说话。</div>
+        <div>他把灯放在石阶上，坐下来歇息。</div>
+      </div>
+      <div class="pbar"><i></i></div>
+      <div class="sbar">
+        <span class="grow">已新增书签「谷雨的雨」</span>
+        <span>第七章 谷雨</span><span class="mono">42.3%</span>
+        <span class="ib sm"><svg class="i16"><use href="#i-left"/></svg></span>
+        <span class="ib sm"><svg class="i16"><use href="#i-right"/></svg></span>
+      </div>
+      <div style="position:absolute;left:24px;right:24px;top:112px;height:558px;background:var(--g10);border:1px solid var(--g20);display:flex;flex-direction:column">
+        <div style="height:48px;display:flex;align-items:center;gap:12px;padding:0 16px;border-bottom:1px solid var(--g20);flex:none">
+          <span style="font-size:16px;font-weight:600">书签</span>
+          <span class="tag b">3 个</span>
+          <span class="btn pri" style="margin-left:auto"><svg class="i16"><use href="#i-plus"/></svg>在当前页新增书签</span>
+          <span class="ib"><svg class="i16"><use href="#i-x"/></svg></span>
+        </div>
+        <div class="rows">
+          <div class="r"><span class="m" style="width:64px">004 章</span><span class="t">星子那一段</span><span class="m">偏移 26104</span>
+            <span class="ib sm q"><svg class="i16"><use href="#i-right"/></svg></span><span class="ib sm q"><svg class="i16"><use href="#i-opt"/></svg></span><span class="ib sm q"><svg class="i16"><use href="#i-trash"/></svg></span></div>
+          <div class="r on"><span class="m" style="width:64px">007 章</span><span class="t">谷雨的雨</span><span class="m">当前 · 偏移 51240</span>
+            <span class="ib sm q"><svg class="i16"><use href="#i-right"/></svg></span><span class="ib sm q"><svg class="i16"><use href="#i-opt"/></svg></span><span class="ib sm q"><svg class="i16"><use href="#i-trash"/></svg></span></div>
+          <div class="r"><span class="m" style="width:64px">010 章</span><span class="t">霜声</span><span class="m">偏移 81233</span>
+            <span class="ib sm q"><svg class="i16"><use href="#i-right"/></svg></span><span class="ib sm q"><svg class="i16"><use href="#i-opt"/></svg></span><span class="ib sm q"><svg class="i16"><use href="#i-trash"/></svg></span></div>
+        </div>
+        <div style="height:64px;display:flex;align-items:center;gap:12px;padding:0 16px;border-top:1px solid var(--g20);flex:none">
+          <span style="font-size:13px;color:var(--text-2);width:96px">重命名选中项</span>
+          <div class="inp" style="flex:1;background:var(--field)">谷雨的雨</div>
+          <span class="btn sec">保存名称</span>
+        </div>
+        <div style="height:32px;display:flex;align-items:center;gap:16px;padding:0 16px;border-top:1px solid var(--g20);font-size:12px;color:var(--text-2);flex:none">
+          <span>点击行选中 · 双击跳转</span><span class="mono">3 / 3</span>
+        </div>
+      </div>
+    </div></div>
+      <div class="hint">画框注解：面板头 48（主按钮唯一）· 行 40 · 行尾图标按钮 hover 显示（跳转 / 重命名 / 删除）· 底部重命名区 64</div>
+    </div>
+    <div class="spec">
+      <h4>结构</h4>
+      <ul>
+        <li>面板头把「新增书签」提为唯一主按钮（现状是行内一级按钮之一，主次不分）。</li>
+        <li>行：章节读数（mono 12）+ 书签标题 13.5/600 + 位置（偏移量 mono 12）+ 行尾三个图标按钮（跳转 / 重命名 / 删除）。</li>
+        <li>删除为破坏性动作：点击后该行短暂进入「确认删除？」内联态（图标按钮变成「删除 / 取消」两个文字按钮），不弹窗、不误删。</li>
+        <li>重命名区固定在面板底部（现状在面板头下方），选中项与输入框相邻，符合「动作贴到对象上」。</li>
+      </ul>
+      <h4>交互</h4>
+      <ul>
+        <li>单击行 = 选中（<span class="k">mark-select</span>）；双击或行尾跳转 = <span class="k">mark-jump</span>；新增 = <span class="k">mark-add</span>；重命名 = <span class="k">mark-rename</span>；删除 = <span class="k">mark-delete</span>。</li>
+        <li>重命名输入框聚焦时，键盘翻页必须被屏蔽（现状 <span class="k">input.rs</span> 已实现「焦点不在键盘作用域时不翻页」，保持不变）。</li>
+        <li>删除后状态栏给出反馈（Toast 或状态栏文案）：<span class="k">已删除书签「霜声」</span>。</li>
+      </ul>
+    </div>
+  </div>
+</figure>
+
+<!-- ============ S8 阅读 · 选项（编码） ============ -->
+<figure class="card" id="s8">
+  <figcaption class="cap"><b>S8</b><span>阅读 · 选项面板</span><em>通用选项（当前承载：编码）</em></figcaption>
+  <div class="duo">
+    <div class="framecol">
+      <div class="stage"><div class="screen">
+      <header class="tb">
+        <div class="brand"><svg class="i20"><use href="#i-book"/></svg>novel-reader</div>
+        <nav class="gnav"><a>书架</a><a class="on">阅读</a><a>设置</a></nav>
+        <div class="tb-act">
+          <span class="ibt"><svg class="i16"><use href="#i-theme"/></svg></span>
+          <span class="ibt"><svg class="i16"><use href="#i-help"/></svg></span>
+          <span class="ibt"><svg class="i16"><use href="#i-exit"/></svg></span>
+        </div>
+      </header>
+      <div class="tbar">
+        <span class="ib q"><svg class="i16"><use href="#i-tree"/></svg></span>
+        <span class="ib q"><svg class="i16"><use href="#i-mark"/></svg></span>
+        <span class="ib q" style="background:var(--p10);color:var(--p80)"><svg class="i16"><use href="#i-opt"/></svg></span>
+        <div class="mid">云海志 · 第七章 谷雨</div>
+        <span class="ib q"><svg class="i16"><use href="#i-save"/></svg></span>
+        <span class="ib q"><svg class="i16"><use href="#i-expand"/></svg></span>
+        <span class="ib q"><svg class="i16"><use href="#i-up"/></svg></span>
+      </div>
+      <div style="flex:1;padding:32px 48px;font-size:18px;line-height:30px;color:var(--g30)">
+        <div>夜色压在城墙上，风从西边来。他把手里的灯举高了些，照见石阶上薄薄一层霜。</div>
+        <div>巷子很长，两壁的砖缝里长着不知名的草。走到底，能听见水声，像是有人在低声说话。</div>
+        <div>他把灯放在石阶上，坐下来歇息。</div>
+      </div>
+      <div class="pbar"><i></i></div>
+      <div class="sbar">
+        <span class="grow">已切换并重建索引 · 偏移按字节位置保留</span>
+        <span>第七章 谷雨</span><span class="mono">42.3%</span>
+        <span class="ib sm"><svg class="i16"><use href="#i-left"/></svg></span>
+        <span class="ib sm"><svg class="i16"><use href="#i-right"/></svg></span>
+      </div>
+      <div style="position:absolute;left:0;right:0;top:0;bottom:0;background:rgba(22,22,22,.5);display:grid;place-items:center">
+        <div style="width:560px;background:#fff;padding:24px">
+          <div style="display:flex;align-items:flex-start;gap:12px">
+            <div style="flex:1">
+              <div style="font-size:20px;font-weight:600">选项</div>
+              <div style="font-size:13px;color:var(--text-2);margin-top:4px">当前：<span class="mono">GBK（手动指定）</span></div>
+            </div>
+            <span class="ib" style="border-color:transparent"><svg class="i16"><use href="#i-x"/></svg></span>
+          </div>
+          <div style="margin-top:16px;border:1px solid var(--g20)">
+            <div class="rows">
+              <div class="r" style="padding:0 12px"><span class="radio"></span><span class="t">自动识别（当前内容：UTF-8）</span></div>
+              <div class="r on" style="padding:0 12px"><span class="radio on"></span><span class="t">GBK / CP936</span><span class="tag b">当前</span></div>
+              <div class="r" style="padding:0 12px"><span class="radio"></span><span class="t">GB18030</span></div>
+              <div class="r" style="padding:0 12px"><span class="radio"></span><span class="t">Big5</span></div>
+              <div class="r" style="padding:0 12px"><span class="radio"></span><span class="t">UTF-16 LE</span></div>
+              <div class="r" style="padding:0 12px"><span class="radio"></span><span class="t">UTF-16 BE</span></div>
+            </div>
+          </div>
+          <div style="margin-top:12px;font-size:12px;color:var(--text-2)">
+            指定后按新编码重建章节索引与分页缓存；阅读位置按字节偏移保留，若偏移在新编码下非法则回到所在章首并如实提示。
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:12px;margin-top:20px">
+            <span class="btn ter lg">取消</span><span class="btn pri lg">应用</span>
+          </div>
+        </div>
+      </div>
+    </div></div>
+      <div class="hint">画框注解：设置型面板 = 居中弹窗 560（遮罩 rgba(22,22,22,.5)）· 列表行 40 · 单选 16 · 底部按钮右对齐</div>
+    </div>
+    <div class="spec">
+      <h4>为什么这里改成弹窗</h4>
+      <ul>
+        <li>目录 / 书签是「浏览型」动作，覆盖式面板 + 滚动列表最合适；<b>选项是「一次性设定」</b>，用居中弹窗可以明确表达「有未决定的选择」并给出「取消 / 应用」。</li>
+        <li>口径 4（保留覆盖正文的面板形态）继续成立：弹窗同样覆盖正文，不引入侧栏。</li>
+        <li>编码选项列表仍由 Rust 投影（<span class="k">choice-rows</span>），界面只渲染名称与「当前」标记。<b>界面层不得出现编码语义标记</b>（<span class="k">verify-desktop-scope.py</span> 词法扫描会命中 <span class="k">encoding</span>/<span class="k">gbk</span>/<span class="k">gb18030</span> 等 token）。</li>
+        <li>行从「名称 + 选用按钮」改为「单选 + 名称」：选中即预览，点「应用」才落库（现状是点「选用」立即生效，容易误触）。</li>
+      </ul>
+      <h4>交互</h4>
+      <ul>
+        <li>应用 = 现状的 <span class="k">choice-select</span> 全链路：落库 → 失效内容索引 → 重建目录 → 按字节位置重开 → 保存进度；过程中状态栏显示进度文案并可取消（建议项）。</li>
+        <li>取消 = 关闭弹窗，不改动任何状态（现状没有取消路径，属体验缺口）。</li>
+        <li>「自动识别」项显示识别结果作为辅助信息，帮助用户判断是否要手动指定。</li>
+      </ul>
+      <div class="note w">弹窗宽度 560 来自 2.4 的尺寸表；键盘：↑↓ 在选项间移动、Enter 应用、Esc 取消（<b>建议</b>，需要 <span class="k">input.rs</span> 扩展，未实现前以鼠标操作为准）。</div>
+    </div>
+  </div>
+</figure>
+
+<!-- ============ S9 阅读 · 沉浸模式 ============ -->
+<figure class="card" id="s9">
+  <figcaption class="cap"><b>S9</b><span>阅读 · 沉浸模式</span><em>工具条自动隐藏</em></figcaption>
+  <div class="duo">
+    <div class="framecol">
+      <div class="stage"><div class="screen">
+      <div style="flex:1;padding:48px;font-size:18px;line-height:30px;overflow:hidden">
+        <div>夜色压在城墙上，风从西边来。他把手里的灯举高了些，照见石阶上薄薄一层霜。</div>
+        <div>巷子很长，两壁的砖缝里长着不知名的草。走到底，能听见水声，像是有人在低声说话。</div>
+        <div>他把灯放在石阶上，坐下来歇息。</div>
+        <div>&nbsp;</div>
+        <div>「师傅说过，走路要慢。」他想起这句话的时候，天已经暗透了。</div>
+        <div>那时他还不懂，慢的不是脚步，是心里那点不肯熄的东西。</div>
+        <div>&nbsp;</div>
+        <div>城门在身后落锁，声音很轻，却把整座城分成了两半：一半是他的来处，一半是他的去处。</div>
+        <div>他抬头看星，星子零落，像谁把一把米撒在了黑布上。</div>
+        <div>&nbsp;</div>
+        <div>那一夜他没有睡。他把书从头翻到尾，又从尾翻到头，像是在寻找一个自己也不敢承认的答案。</div>
+        <div>天亮之前，他终于合上书，吹熄了灯。</div>
+        <div>&nbsp;</div>
+        <div>第二日，城门开了。守城的兵士换了岗，谁也没注意到，一个背着旧布包的年轻人，逆着人流走了出去。</div>
+        <div>他走得很慢，一步一步，踩在结了霜的石板上。</div>
+        <div>霜在他脚下碎开，声音细得像一句没能说完的话。</div>
+        <div>他不知道前面有什么，只知道不能停。</div>
+        <div>&nbsp;</div>
+        <div>天光一点点漫上来，把城墙染成灰白色。</div>
+        <div>他在城外的官道上停下，回头看了很久。</div>
+      </div>
+      <div class="pbar"><i></i></div>
+      <!-- 鼠标贴近顶部时浮现的半透明工具条 -->
+      <div style="position:absolute;left:0;right:0;top:0;height:40px;background:rgba(244,244,244,.82);border-bottom:1px solid var(--g20);display:flex;align-items:center;gap:8px;padding:0 12px;opacity:.92">
+        <span class="ib q"><svg class="i16"><use href="#i-tree"/></svg></span>
+        <span class="ib q"><svg class="i16"><use href="#i-mark"/></svg></span>
+        <span class="ib q"><svg class="i16"><use href="#i-opt"/></svg></span>
+        <div class="mid" style="font-size:13px">云海志 · 第七章 谷雨</div>
+        <span class="ib q"><svg class="i16"><use href="#i-save"/></svg></span>
+        <span class="ib q"><svg class="i16"><use href="#i-left"/></svg></span>
+        <span class="ib q"><svg class="i16"><use href="#i-right"/></svg></span>
+        <span class="ib q"><svg class="i16"><use href="#i-expand"/></svg></span>
+      </div>
+    </div></div>
+      <div class="hint">画框注解：正文区 = 整窗（左右上下留白 48）· 顶部 40px 半透明工具条仅在指针进入顶部 24px 时浮现 · 进度条 2px 常驻</div>
+    </div>
+    <div class="spec">
+      <h4>结构</h4>
+      <ul>
+        <li>沉浸态：顶栏、阅读工具条、状态栏全部隐藏，正文区 = 整窗（留白 48）；<b>仅保留 2px 进度条</b>作为位置感知。</li>
+        <li>浮出工具条 40（layer-01 82% 不透明 + 下边框）：指针移到顶部 24px 区域内出现，移开 1.5s 后淡出；键盘聚焦时保持可见。</li>
+        <li>退出路径三条（与现状一致）：Esc、点击正文中部、工具条右端「退出沉浸」图标按钮。</li>
+      </ul>
+      <h4>交互</h4>
+      <ul>
+        <li>沉浸态手势模式语义不变：左 1/3 上一页、右 1/3 下一页、中部呼出工具条（若开启自动隐藏）。</li>
+        <li>键盘翻页在沉浸态照常可用；Esc 不是翻页键（现状已明确禁止 Esc 进翻页键表）。</li>
+        <li>「自动隐藏工具条」为新增开关（默认开），关闭后沉浸态顶部常驻浮出工具条。</li>
+      </ul>
+      <div class="note">无头截图/自动化验证时，沉浸态必须能断言「正文区 = 整窗」（现状门禁 <span class="k">NR-IMMERSIVE</span> 行即此口径）。新设计的自动隐藏不得改变该几何事实。</div>
+    </div>
+  </div>
+</figure>
+
+<!-- ============ S10 设置 ============ -->
+<figure class="card" id="s10">
+  <figcaption class="cap"><b>S10</b><span>设置（全局阅读设置）</span><em>表单化</em></figcaption>
+  <div class="duo">
+    <div class="framecol">
+      <div class="stage"><div class="screen">
+      <header class="tb">
+        <div class="brand"><svg class="i20"><use href="#i-book"/></svg>novel-reader</div>
+        <nav class="gnav"><a>书架</a><a>阅读</a><a class="on">设置</a></nav>
+        <div class="tb-act">
+          <span class="ibt"><svg class="i16"><use href="#i-theme"/></svg></span>
+          <span class="ibt"><svg class="i16"><use href="#i-help"/></svg></span>
+          <span class="ibt"><svg class="i16"><use href="#i-exit"/></svg></span>
+        </div>
+      </header>
+      <div style="padding:24px 24px 16px;display:flex;align-items:center;gap:16px;flex:none">
+        <div><div style="font-size:24px;font-weight:600">设置</div>
+          <div style="font-size:13px;color:var(--text-2);margin-top:4px">全局阅读设置；修改立即生效并保存到本地库（<span class="mono">library.db</span>）</div></div>
+      </div>
+      <div style="padding:0 24px;flex:1;overflow:hidden">
+        <div style="font-size:12px;font-weight:600;color:var(--text-2);letter-spacing:.04em;border-bottom:1px solid var(--g20);padding-bottom:6px">排版</div>
+        <div style="display:flex;align-items:center;gap:24px;padding:12px 0;border-bottom:1px solid var(--g20)">
+          <div style="width:200px"><div style="font-size:14px">字体族</div><div style="font-size:12px;color:var(--text-3)">正文与界面共用的中文字体</div></div>
+          <div class="sel" style="width:240px">Noto Sans CJK SC<svg class="i16" style="margin-left:auto"><use href="#i-down"/></svg></div>
+          <span style="font-size:12px;color:var(--text-3)">已安装 50 个系统中文字体</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:24px;padding:12px 0;border-bottom:1px solid var(--g20)">
+          <div style="width:200px"><div style="font-size:14px">字号</div><div style="font-size:12px;color:var(--text-3)">12 – 40 px</div></div>
+          <div style="display:flex;align-items:center;gap:12px;width:340px">
+            <span class="mono" style="font-size:12px;width:32px">12</span>
+            <span class="slider"><i style="left:26%"></i></span>
+            <span class="mono" style="font-size:12px;width:32px">40</span>
+          </div>
+          <div class="inp" style="width:96px;background:var(--field);justify-content:flex-end"><span class="mono" style="color:var(--text-1)">18</span><span style="color:var(--text-3)">px</span></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:24px;padding:12px 0;border-bottom:1px solid var(--g20)">
+          <div style="width:200px"><div style="font-size:14px">行距</div><div style="font-size:12px;color:var(--text-3)">倍数 1.0 – 2.4（行高 = 字号 × 倍数）</div></div>
+          <div style="display:flex;align-items:center;gap:12px;width:340px">
+            <span class="mono" style="font-size:12px;width:32px">1.0</span>
+            <span class="slider"><i style="left:48%"></i></span>
+            <span class="mono" style="font-size:12px;width:32px">2.4</span>
+          </div>
+          <div class="inp" style="width:96px;background:var(--field);justify-content:flex-end"><span class="mono" style="color:var(--text-1)">1.667</span></div>
+        </div>
+        <div style="font-size:12px;font-weight:600;color:var(--text-2);letter-spacing:.04em;border-bottom:1px solid var(--g20);padding:16px 0 6px">版式（桌面端暂未生效）</div>
+        <div style="display:flex;align-items:flex-start;gap:12px;margin:12px 0;border-left:3px solid var(--warn);background:var(--warn-10);padding:10px 12px;font-size:12.5px">
+          <svg class="i20" style="color:#8a6100;flex:none"><use href="#i-warn"/></svg>
+          <div>以下四项由共享核心保存，但<b>桌面端渲染不生效</b>：Slint 文本渲染不施加段间距与首行缩进，测量端为使「测量口径 = 渲染口径」将它们固定为 0。移动端与后续渲染后端可正常使用。</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:24px;padding:8px 0;border-bottom:1px solid var(--g20)">
+          <div style="width:200px;font-size:14px;color:var(--text-3)">段距</div>
+          <div style="display:flex;align-items:center;gap:12px;width:340px;opacity:.45"><span class="mono" style="font-size:12px;width:32px">0</span><span class="slider"><i style="left:0%"></i></span><span class="mono" style="font-size:12px;width:32px">48</span></div>
+          <div class="inp dis" style="width:96px;justify-content:flex-end"><span class="mono">0</span><span>px</span></div>
+          <span class="tag w">暂未生效</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:24px;padding:8px 0;border-bottom:1px solid var(--g20)">
+          <div style="width:200px;font-size:14px;color:var(--text-3)">首行缩进</div>
+          <div style="display:flex;align-items:center;gap:12px;width:340px;opacity:.45"><span class="mono" style="font-size:12px;width:32px">0</span><span class="slider"><i style="left:0%"></i></span><span class="mono" style="font-size:12px;width:32px">72</span></div>
+          <div class="inp dis" style="width:96px;justify-content:flex-end"><span class="mono">0</span><span>px</span></div>
+          <span class="tag w">暂未生效</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:24px;padding:8px 0;border-bottom:1px solid var(--g20)">
+          <div style="width:200px;font-size:14px;color:var(--text-3)">左右边距 / 上下边距</div>
+          <div style="display:flex;align-items:center;gap:12px"><div class="inp dis" style="width:88px;justify-content:flex-end"><span class="mono">32</span><span>px</span></div>
+            <div class="inp dis" style="width:88px;justify-content:flex-end"><span class="mono">28</span><span>px</span></div></div>
+          <span class="tag w">暂未生效</span>
+          <span style="font-size:12px;color:var(--text-3)">后续可映射到正文区内边距常量（需改版本式常量与分页口径）</span>
+        </div>
+      </div>
+      <div class="sbar">
+        <span class="grow">设置已保存 · 本地库 library.db</span>
+        <span class="mono">v0.1.0</span>
+      </div>
+    </div></div>
+      <div class="hint">画框注解：表单为「标签 + 说明（200）｜控件」两列；内容区可滚动（滚动条 8）；未生效项统一降级为禁用态 + 黄色 Tag，不再用橙色小字</div>
+    </div>
+    <div class="spec">
+      <h4>结构</h4>
+      <ul>
+        <li>页头：标题 + 一句「修改立即生效并保存到本地库」，替代现状那句「（已持久化到本地库）／（默认值；首次修改后落库）」的状态括号。</li>
+        <li>分组：<b>排版</b>（字体族 / 字号 / 行距）→ <b>版式（桌面端暂未生效）</b>→ <b>外观</b>（主题）→ <b>交互</b>（翻页模式、沉浸工具条自动隐藏）→ <b>数据</b>（书架记录、索引清理、数据库位置）。</li>
+        <li>控件映射：字号/行距 = Slider + 数值框（现状是「减小 / 增大」按钮对，长距离调整需点几十次）；主题/翻页模式 = RadioGroup；开关 = Switch；字体族 = Select。</li>
+        <li>未生效项：整行降级（标签 g50、控件禁用、右侧黄色 Tag「暂未生效」）+ 顶部一条说明，替代现状仅有的橙色 note。</li>
+      </ul>
+      <h4>交互</h4>
+      <ul>
+        <li>改动即时上报（等价现状 <span class="k">settings-change</span>），重排状态显示在状态栏（「正在重排…」→ 完成），不阻塞输入。</li>
+        <li>数值框可直接键入，失焦校验并夹紧到边界（12–40 / 1.0–2.4），非法输入恢复原值并给出内联提示。</li>
+        <li>「数据」分组动作见 S14（清理可重建索引）；移出书架见 S13。</li>
+      </ul>
+      <div class="note">设置行仍然由 Rust 投影（键 / 名称 / 当前值 / 说明 / 是否生效），界面不解释任何设置语义 —— 保持现状边界，只是把渲染换成 Slider/Switch/Radio/Select。</div>
+    </div>
+  </div>
+</figure>
+
+<!-- ============ S11 导入中 ============ -->
+<figure class="card" id="s11">
+  <figcaption class="cap"><b>S11</b><span>导入中</span><em>过渡态</em></figcaption>
+  <div class="duo">
+    <div class="framecol">
+      <div class="stage"><div class="screen">
+      <header class="tb">
+        <div class="brand"><svg class="i20"><use href="#i-book"/></svg>novel-reader</div>
+        <nav class="gnav"><a class="on">书架</a><a>阅读</a><a>设置</a></nav>
+        <div class="tb-act">
+          <span class="ibt"><svg class="i16"><use href="#i-theme"/></svg></span>
+          <span class="ibt"><svg class="i16"><use href="#i-help"/></svg></span>
+          <span class="ibt"><svg class="i16"><use href="#i-exit"/></svg></span>
+        </div>
+      </header>
+      <div style="flex:1;display:grid;place-items:center">
+        <div style="width:520px">
+          <div style="display:flex;align-items:center;gap:16px">
+            <svg class="i20" style="width:32px;height:32px;color:var(--p60)"><use href="#i-relink"/></svg>
+            <div>
+              <div style="font-size:20px;font-weight:600">正在导入…</div>
+              <div class="mono" style="font-size:12px;color:var(--text-3);margin-top:2px">/home/user/books/yunhaizhi.txt · 2.4 MB</div>
+            </div>
+          </div>
+          <div style="margin-top:24px">
+            <div style="height:2px;background:var(--g20)"><div style="height:2px;width:64%;background:var(--p60)"></div></div>
+            <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-2);margin-top:8px"><span>识别编码与长度校验</span><span class="mono">64%</span></div>
+          </div>
+          <div style="margin-top:24px;border-top:1px solid var(--g20);padding-top:12px;font-size:13px">
+            <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px"><svg class="i16" style="color:var(--ok)"><use href="#i-check"/></svg>读取文件头部与指纹</div>
+            <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px;font-weight:600"><svg class="i16" style="color:var(--p60)"><use href="#i-arrow"/></svg>识别编码与长度校验</div>
+            <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px;color:var(--text-3)"><svg class="i16"><use href="#i-arrow"/></svg>建立章节索引</div>
+            <div style="display:flex;gap:10px;align-items:center;color:var(--text-3)"><svg class="i16"><use href="#i-arrow"/></svg>生成首屏并加入书架</div>
+          </div>
+          <div style="margin-top:24px;display:flex;gap:12px;align-items:center">
+            <span class="btn sec">取消导入</span>
+            <span style="font-size:12px;color:var(--text-3)">取消不会留下不完整的书架记录</span>
+          </div>
+        </div>
+      </div>
+      <div class="sbar"><span class="grow">正在导入 · 可继续浏览书架</span><span class="mono">v0.1.0</span></div>
+    </div></div>
+      <div class="hint">画框注解：居中块宽 520 · 线性进度条 2px（长任务）或环形 32（短任务）· 步骤列表与当前步骤加粗 · 取消按钮为次级</div>
+    </div>
+    <div class="spec">
+      <h4>结构</h4>
+      <ul>
+        <li>标题 + 文件名（mono）+ 进度条与百分比 + 四步流程（已完成 = 绿色勾、当前 = 主色箭头 + 加粗、未开始 = 灰色）+ 取消。</li>
+        <li>现状是「标题 + 一句消息」的裸文本页；导入是唯一的重后台任务（<span class="k">JobChannel</span> 提交、结果经 <span class="k">bridge</span> 回 UI 线程），值得给出可见的进度结构。</li>
+      </ul>
+      <h4>交互</h4>
+      <ul>
+        <li>导入期间顶栏导航仍可用（用户可去设置页），状态栏显示「正在导入 · 可继续浏览」。</li>
+        <li>失败即转 S12 错误态并保留可读的原因；成功则回书架并高亮新导入的行（建议）。</li>
+        <li><b>取消导入属新增能力</b>：需要 Rust 侧支持取消（<span class="k">reading-ffi</span> 已存在取消语义的参考实现）。若本期不做，则去掉取消按钮并如实标注「导入完成后才能继续」。</li>
+      </ul>
+    </div>
+  </div>
+</figure>
+
+<!-- ============ S12 错误态 ============ -->
+<figure class="card" id="s12">
+  <figcaption class="cap"><b>S12</b><span>错误态</span><em>可读、可行动</em></figcaption>
+  <div class="duo">
+    <div class="framecol">
+      <div class="stage"><div class="screen">
+      <header class="tb">
+        <div class="brand"><svg class="i20"><use href="#i-book"/></svg>novel-reader</div>
+        <nav class="gnav"><a class="on">书架</a><a>阅读</a><a>设置</a></nav>
+        <div class="tb-act">
+          <span class="ibt"><svg class="i16"><use href="#i-theme"/></svg></span>
+          <span class="ibt"><svg class="i16"><use href="#i-help"/></svg></span>
+          <span class="ibt"><svg class="i16"><use href="#i-exit"/></svg></span>
+        </div>
+      </header>
+      <div style="flex:1;display:grid;place-items:center">
+        <div style="width:560px;text-align:center">
+          <svg class="i20" style="width:32px;height:32px;color:var(--err)"><use href="#i-err"/></svg>
+          <div style="font-size:20px;font-weight:600;margin-top:12px">无法导入该文件</div>
+          <div style="font-size:14px;color:var(--text-2);margin-top:8px">
+            所选文件不是可读取的普通文本（.txt）。本应用只支持普通 TXT；ZIP / EPUB / PDF 等格式不在范围内。
+          </div>
+          <div style="margin-top:20px;display:flex;gap:12px;justify-content:center">
+            <span class="btn pri lg">重新选择文件…</span>
+            <span class="btn gho lg">返回书架</span>
+          </div>
+          <div style="margin-top:24px;border:1px solid var(--g20);text-align:left">
+            <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;font-size:13px;background:var(--g10);border-bottom:1px solid var(--g20)">
+              <svg class="i16"><use href="#i-down"/></svg><b>技术详情</b><span style="color:var(--text-3)">供排查与反馈使用</span>
+            </div>
+            <div class="mono" style="font-size:12px;color:var(--text-2);padding:12px;line-height:1.7">
+              code = UnsupportedFormat<br>
+              path = /home/user/books/some-book.epub<br>
+              probe = 前 64 KiB 未通过 TXT 文本判定
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="sbar"><span class="grow">导入失败 · 未创建书架记录</span><span class="mono">v0.1.0</span></div>
+    </div></div>
+      <div class="hint">画框注解：错误块宽 560 · 一个主按钮 + 一个次按钮 · 技术详情默认折叠（点击展开）· 文案全部由 Rust 投影</div>
+    </div>
+    <div class="spec">
+      <h4>结构</h4>
+      <ul>
+        <li>错误图标 + 结论式标题（20/600）+ 可理解的原因（14）+ <b>两个出路按钮</b> + 可折叠「技术详情」（mono，含错误码与路径）。</li>
+        <li>必须明确状态事实：失败后「未创建书架记录」（不留脏数据），与 F6/NFR6 的「失败可恢复」一致。</li>
+      </ul>
+      <h4>交互</h4>
+      <ul>
+        <li>「重新选择文件…」= 再次打开系统文件选择器；「返回书架」= 回 S1/S3。</li>
+        <li>错误详情可复制（ghost 图标按钮，建议）：便于用户反馈。</li>
+        <li>文案纪律：不得暴露内部错误类型名/路径以外的实现细节；错误码可用于排查，但标题必须是用户语言。</li>
+      </ul>
+      <div class="note w">现状错误页只有 title + message 两句文本，没有出路按钮；用户只能自己点顶栏。这是「可行动性」缺口。</div>
+    </div>
+  </div>
+</figure>
+
+<!-- ============ S13 移出书架确认 ============ -->
+<figure class="card" id="s13">
+  <figcaption class="cap"><b>S13</b><span>移出书架 · 确认</span><em>数据安全（新增入口）</em></figcaption>
+  <div class="duo">
+    <div class="framecol">
+      <div class="stage"><div class="screen">
+      <header class="tb">
+        <div class="brand"><svg class="i20"><use href="#i-book"/></svg>novel-reader</div>
+        <nav class="gnav"><a class="on">书架</a><a>阅读</a><a>设置</a></nav>
+        <div class="tb-act">
+          <span class="ibt"><svg class="i16"><use href="#i-theme"/></svg></span>
+          <span class="ibt"><svg class="i16"><use href="#i-help"/></svg></span>
+          <span class="ibt"><svg class="i16"><use href="#i-exit"/></svg></span>
+        </div>
+      </header>
+      <div style="padding:24px 24px 16px;display:flex;align-items:center;gap:16px;flex:none">
+        <div style="display:flex;align-items:baseline;gap:12px"><span style="font-size:24px;font-weight:600">书架</span><span class="tag b">12 本</span></div>
+        <div style="margin-left:auto"><span class="btn pri"><svg class="i16"><use href="#i-import"/></svg>导入 TXT…</span></div>
+      </div>
+      <div style="height:40px;display:flex;align-items:center;gap:16px;padding:0 24px;background:var(--g10);border-top:1px solid var(--g20);border-bottom:1px solid var(--g20);font-size:12px;color:var(--text-2);flex:none">
+        <div style="flex:1">书名 / 文件</div><div style="width:120px">状态</div><div style="width:180px">进度</div><div style="width:110px">最近阅读</div><div style="width:80px"></div>
+      </div>
+      <div class="rows" style="flex:none">
+        <div class="r" style="height:48px;padding:0 24px;gap:16px">
+          <div style="flex:1"><div style="font-weight:600">云海志</div><div class="mono" style="font-size:11px;color:var(--text-3)">/home/user/books/yunhaizhi.txt · 2.4 MB</div></div>
+          <span class="tag ok" style="width:120px">可阅读</span>
+          <div style="width:180px;font-size:11px;color:var(--text-2)">第七章 · 42.3%</div>
+          <span class="mono" style="font-size:11px;color:var(--text-3);width:110px">09-30 21:12</span>
+          <div style="width:80px;display:flex;gap:4px;justify-content:flex-end"><span class="ib sm"><svg class="i16"><use href="#i-book"/></svg></span><span class="ib sm" style="border-color:var(--p60)"><svg class="i16"><use href="#i-more"/></svg></span></div>
+        </div>
+      </div>
+      <div style="flex:1"></div>
+      <div class="sbar"><span class="grow">书架：12 本</span><span class="mono">v0.1.0</span></div>
+      <div style="position:absolute;inset:0;background:rgba(22,22,22,.5);display:grid;place-items:center">
+        <div style="width:520px;background:#fff;padding:24px">
+          <div style="font-size:20px;font-weight:600">移出书架</div>
+          <div style="font-size:14px;color:var(--text-2);margin-top:10px">
+            「云海志」将不再出现在书架中。<b>原始 TXT 文件不会被修改或删除</b>；阅读进度与书签会保留，
+            再次导入同一文件即可恢复该记录。
+          </div>
+          <div style="margin-top:16px;display:flex;gap:10px;align-items:flex-start;font-size:13px">
+            <span class="swt" style="background:var(--g40)"><i style="right:16px;background:#fff"></i></span>
+            <div>同时删除该书的章节索引与分页缓存<div style="font-size:12px;color:var(--text-3)">可随时重建；不勾选则保留缓存以便快速恢复</div></div>
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:12px;margin-top:24px">
+            <span class="btn ter lg">取消</span><span class="btn dan lg">移出书架</span>
+          </div>
+          <div style="margin-top:16px;border-top:1px solid var(--g20);padding-top:12px;font-size:12px;color:var(--text-3)">
+            更强动作「彻底删除记录（含进度与书签）」在行级「更多」菜单中另设确认，不与本弹窗合并。
+          </div>
+        </div>
+      </div>
+    </div></div>
+      <div class="hint">画框注解：弹窗 520 · 破坏性动作用 Danger 按钮且右置 · 勾选项默认关闭 · 说明必须写明「不删除原始文件」</div>
+    </div>
+    <div class="spec">
+      <h4>为什么需要这个入口</h4>
+      <ul>
+        <li>存储层已有 <span class="k">remove_book_from_shelf</span>（软移除，status=removed）与 <span class="k">purge_book_record</span>（硬删除），但界面没有任何入口 —— 用户导错文件后无法清理。属本轮已授权的必要补全。</li>
+        <li>软移除与硬删除必须分开呈现：前者可恢复（再次导入同一文件），后者不可恢复且连带进度与书签。</li>
+      </ul>
+      <h4>交互与文案纪律</h4>
+      <ul>
+        <li>确认弹窗必须同时给出：对象（哪本书）、后果（不在书架中出现）、边界（不改原文件）、恢复路径（再次导入）。</li>
+        <li>「已移出」的记录默认不出现在书架（现状 <span class="k">is_on_shelf()</span> 的口径）；如需找回，在「更多 → 已移出记录」中查看（建议，二期）。</li>
+      </ul>
+    </div>
+  </div>
+</figure>
+
+<!-- ============ S14 清理索引确认 ============ -->
+<figure class="card" id="s14">
+  <figcaption class="cap"><b>S14</b><span>清理可重建索引 · 确认</span><em>«安全清理» 可见化</em></figcaption>
+  <div class="duo">
+    <div class="framecol">
+      <div class="stage"><div class="screen">
+      <header class="tb">
+        <div class="brand"><svg class="i20"><use href="#i-book"/></svg>novel-reader</div>
+        <nav class="gnav"><a>书架</a><a>阅读</a><a class="on">设置</a></nav>
+        <div class="tb-act">
+          <span class="ibt"><svg class="i16"><use href="#i-theme"/></svg></span>
+          <span class="ibt"><svg class="i16"><use href="#i-help"/></svg></span>
+          <span class="ibt"><svg class="i16"><use href="#i-exit"/></svg></span>
+        </div>
+      </header>
+      <div style="padding:24px 24px 16px;flex:none">
+        <div style="font-size:24px;font-weight:600">设置</div>
+        <div style="font-size:13px;color:var(--text-2);margin-top:4px">全局阅读设置；修改立即生效并保存到本地库（<span class="mono">library.db</span>）</div>
+      </div>
+      <div style="padding:0 24px;font-size:12px;font-weight:600;color:var(--text-2);letter-spacing:.04em;border-bottom:1px solid var(--g20);padding-bottom:6px">数据</div>
+      <div style="padding:12px 24px;display:flex;flex-direction:column;gap:10px;font-size:13px">
+        <div style="display:flex;gap:24px"><span style="width:200px;color:var(--text-2)">书架记录</span><span>12 本（已移出 1 本）</span></div>
+        <div style="display:flex;gap:24px"><span style="width:200px;color:var(--text-2)">数据库位置</span><span class="mono" style="color:var(--text-2)">/home/user/.local/share/novel-reader/library.db</span></div>
+        <div style="display:flex;gap:24px;align-items:center"><span style="width:200px;color:var(--text-2)">可重建数据</span><span class="btn sec">清理章节索引与分页缓存…</span></div>
+      </div>
+      <div style="flex:1"></div>
+      <div class="sbar"><span class="grow">设置 · 数据</span><span class="mono">v0.1.0</span></div>
+      <div style="position:absolute;inset:0;background:rgba(22,22,22,.5);display:grid;place-items:center">
+        <div style="width:560px;background:#fff;padding:24px">
+          <div style="font-size:20px;font-weight:600">清理可重建索引</div>
+          <div style="font-size:14px;color:var(--text-2);margin-top:10px">
+            将删除所有书籍的章节索引与分页缓存。清理后首次打开书籍会重建，原始 TXT 与阅读进度不受影响。
+          </div>
+          <div style="display:flex;gap:16px;margin-top:16px">
+            <div style="flex:1;border:1px solid var(--g20)">
+              <div style="padding:8px 12px;font-size:12px;font-weight:600;background:var(--err-10);color:var(--err);border-bottom:1px solid var(--g20)">将删除（可重建）</div>
+              <div style="padding:10px 12px;font-size:13px;display:flex;flex-direction:column;gap:6px">
+                <div style="display:flex;justify-content:space-between"><span>章节索引 chapters</span><span class="mono">1 284</span></div>
+                <div style="display:flex;justify-content:space-between"><span>分页记录 layout_records</span><span class="mono">96</span></div>
+              </div>
+            </div>
+            <div style="flex:1;border:1px solid var(--g20)">
+              <div style="padding:8px 12px;font-size:12px;font-weight:600;background:var(--ok-10);color:var(--ok);border-bottom:1px solid var(--g20)">将保留</div>
+              <div style="padding:10px 12px;font-size:13px;display:flex;flex-direction:column;gap:6px">
+                <div style="display:flex;justify-content:space-between"><span>书籍记录 books</span><span class="mono">12</span></div>
+                <div style="display:flex;justify-content:space-between"><span>来源 book_sources</span><span class="mono">12</span></div>
+                <div style="display:flex;justify-content:space-between"><span>阅读进度 reading_progress</span><span class="mono">9</span></div>
+                <div style="display:flex;justify-content:space-between"><span>书签 bookmarks</span><span class="mono">7</span></div>
+                <div style="display:flex;justify-content:space-between"><span>设置 reader_settings</span><span class="mono">1</span></div>
+              </div>
+            </div>
+          </div>
+          <div style="margin-top:12px;border-left:3px solid var(--warn);background:var(--warn-10);padding:8px 12px;font-size:12px">
+            建议先退出应用并复制一份 <span class="mono">library.db</span> 作为备份。
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:12px;margin-top:20px">
+            <span class="btn ter lg">取消</span><span class="btn dan lg">清理索引</span>
+          </div>
+        </div>
+      </div>
+    </div></div>
+      <div class="hint">画框注解：弹窗 560 · 「将删除 / 将保留」双栏对照（数字来自 storage 的 IndexClearReport）· 完成后 Toast 回报实际删除与保留条数</div>
+    </div>
+    <div class="spec">
+      <h4>为什么要把「删除什么」列出来</h4>
+      <ul>
+        <li>存储层 <span class="k">clear_rebuildable_index()</span> 返回 <span class="k">IndexClearReport</span>：删除 chapters / layout_records，保留 books / book_sources / reading_progress / bookmarks / reader_settings / meta。设计直接把这份报告变成确认信息，用户不必相信一句「安全清理」。</li>
+        <li>确认前显示「预计删除量」，完成后 Toast 显示「实际删除量 + 保留量」，构成前后闭环（也便于程序化验证）。</li>
+      </ul>
+      <h4>交互</h4>
+      <ul>
+        <li>清理为破坏性但可重建的动作 → 用 Danger 按钮 + 双栏对照 + 备份建议。</li>
+        <li>清理期间状态栏显示进度；完成后书架/阅读页的索引状态回到「需重建」，不得显示过期章节（现状已有「失效索引不得复用」的口径，保持不变）。</li>
+      </ul>
+    </div>
+  </div>
+</figure>
+
+<!-- ============ S15 快捷键说明 ============ -->
+<figure class="card" id="s15">
+  <figcaption class="cap"><b>S15</b><span>快捷键说明</span><em>可发现性</em></figcaption>
+  <div class="duo">
+    <div class="framecol">
+      <div class="stage"><div class="screen">
+      <header class="tb">
+        <div class="brand"><svg class="i20"><use href="#i-book"/></svg>novel-reader</div>
+        <nav class="gnav"><a>书架</a><a class="on">阅读</a><a>设置</a></nav>
+        <div class="tb-act">
+          <span class="ibt"><svg class="i16"><use href="#i-theme"/></svg></span>
+          <span class="ibt" style="background:var(--g80)"><svg class="i16"><use href="#i-help"/></svg></span>
+          <span class="ibt"><svg class="i16"><use href="#i-exit"/></svg></span>
+        </div>
+      </header>
+      <div class="tbar">
+        <span class="ib q"><svg class="i16"><use href="#i-tree"/></svg></span>
+        <span class="ib q"><svg class="i16"><use href="#i-mark"/></svg></span>
+        <span class="ib q"><svg class="i16"><use href="#i-opt"/></svg></span>
+        <div class="mid">云海志 · 第七章 谷雨</div>
+        <span class="ib q"><svg class="i16"><use href="#i-save"/></svg></span>
+        <span class="ib q"><svg class="i16"><use href="#i-expand"/></svg></span>
+        <span class="ib q"><svg class="i16"><use href="#i-up"/></svg></span>
+      </div>
+      <div style="flex:1;padding:32px 48px;font-size:18px;line-height:30px;color:var(--g30)">
+        <div>夜色压在城墙上，风从西边来。他把手里的灯举高了些，照见石阶上薄薄一层霜。</div>
+        <div>巷子很长，两壁的砖缝里长着不知名的草。</div>
+      </div>
+      <div class="pbar"><i></i></div>
+      <div class="sbar"><span class="grow">已保存进度 · 12:04</span><span>第七章 谷雨</span><span class="mono">42.3%</span>
+        <span class="ib sm"><svg class="i16"><use href="#i-left"/></svg></span><span class="ib sm"><svg class="i16"><use href="#i-right"/></svg></span></div>
+      <div style="position:absolute;inset:0;background:rgba(22,22,22,.5);display:grid;place-items:center">
+        <div style="width:560px;background:#fff;padding:24px">
+          <div style="display:flex;align-items:flex-start"><div style="font-size:20px;font-weight:600;flex:1">键盘操作</div><span class="ib" style="border-color:transparent"><svg class="i16"><use href="#i-x"/></svg></span></div>
+          <div style="font-size:13px;color:var(--text-2);margin-top:4px">只列出当前版本已实现的按键；标注「建议」的项在实现前不可用。</div>
+          <div style="margin-top:16px;font-size:13px">
+            <div style="display:flex;align-items:center;padding:8px 0;border-bottom:1px solid var(--g20)"><span style="flex:1">上一页</span><span class="mono" style="border:1px solid var(--g30);padding:1px 6px;margin-right:6px">PageUp</span><span class="mono" style="border:1px solid var(--g30);padding:1px 6px;margin-right:6px">↑</span><span class="mono" style="border:1px solid var(--g30);padding:1px 6px">←</span></div>
+            <div style="display:flex;align-items:center;padding:8px 0;border-bottom:1px solid var(--g20)"><span style="flex:1">下一页</span><span class="mono" style="border:1px solid var(--g30);padding:1px 6px;margin-right:6px">PageDown</span><span class="mono" style="border:1px solid var(--g30);padding:1px 6px;margin-right:6px">↓</span><span class="mono" style="border:1px solid var(--g30);padding:1px 6px">→</span></div>
+            <div style="display:flex;align-items:center;padding:8px 0;border-bottom:1px solid var(--g20)"><span style="flex:1">整页翻页（正文不出滚动条）</span><span class="mono" style="border:1px solid var(--g30);padding:1px 6px">鼠标滚轮</span></div>
+            <div style="display:flex;align-items:center;padding:8px 0;border-bottom:1px solid var(--g20)"><span style="flex:1">退出沉浸阅读</span><span class="mono" style="border:1px solid var(--g30);padding:1px 6px">Esc</span></div>
+            <div style="display:flex;align-items:center;padding:8px 0;border-bottom:1px solid var(--g20);color:var(--text-3)"><span style="flex:1">打开目录</span><span class="mono" style="border:1px solid var(--g30);padding:1px 6px">T</span><span class="tag w" style="margin-left:8px">建议</span></div>
+            <div style="display:flex;align-items:center;padding:8px 0;border-bottom:1px solid var(--g20);color:var(--text-3)"><span style="flex:1">打开书签</span><span class="mono" style="border:1px solid var(--g30);padding:1px 6px">B</span><span class="tag w" style="margin-left:8px">建议</span></div>
+            <div style="display:flex;align-items:center;padding:8px 0;border-bottom:1px solid var(--g20);color:var(--text-3)"><span style="flex:1">保存进度</span><span class="mono" style="border:1px solid var(--g30);padding:1px 6px">Ctrl+S</span><span class="tag w" style="margin-left:8px">建议</span></div>
+            <div style="display:flex;align-items:center;padding:8px 0;color:var(--text-3)"><span style="flex:1">沉浸阅读</span><span class="mono" style="border:1px solid var(--g30);padding:1px 6px">F11</span><span class="tag w" style="margin-left:8px">建议</span></div>
+          </div>
+          <div style="margin-top:16px;font-size:12px;color:var(--text-3)">输入框聚焦时，翻页键不生效（避免影响文字输入）。</div>
+          <div style="display:flex;justify-content:flex-end;margin-top:20px"><span class="btn pri lg">知道了</span></div>
+        </div>
+      </div>
+    </div></div>
+      <div class="hint">画框注解：弹窗 560 · 按键用等宽字体 + 1px 边框 · 未实现项灰色 + 「建议」Tag · 顶栏「?」图标按钮在任何页面都可呼出</div>
+    </div>
+    <div class="spec">
+      <h4>结构</h4>
+      <ul>
+        <li>单一入口：顶栏右侧「?」图标按钮（任意页面可呼出）。</li>
+        <li>两段式：<b>已实现</b>（正常显示）与<b>建议</b>（灰色 + 黄色 Tag），避免承诺不存在的按键。</li>
+        <li>已实现清单来自 <span class="k">input.rs</span>：PageUp / ↑ / ←（上一页）、PageDown / ↓ / →（下一页）、滚轮整页、Esc 退出沉浸。其余全部标「建议」。</li>
+      </ul>
+      <h4>交互</h4>
+      <ul>
+        <li>「知道了」/ Esc / 点击遮罩关闭。滚动与翻页键在弹窗打开时被屏蔽（与书签重命名输入框同一口径）。</li>
+        <li>tooltip 与快捷键面板必须同源：tooltip 文案若含快捷键，只在实现后才写。</li>
+      </ul>
+    </div>
+  </div>
+</figure>
+
+<!-- ============ S16 状态矩阵 ============ -->
+<figure class="card" id="s16">
+  <figcaption class="cap"><b>S16</b><span>状态矩阵（五态）</span><em>P4「一切状态可见」</em></figcaption>
+  <div class="duo" style="display:block">
+    <div style="overflow:auto">
+      <table style="min-width:900px">
+        <tr><th style="width:160px">控件</th><th>default</th><th>hover</th><th>focus（键盘）</th><th>selected / active</th><th>disabled</th></tr>
+        <tr>
+          <td>主按钮</td>
+          <td><span class="btn pri">导入 TXT…</span></td>
+          <td><span class="btn pri" style="background:var(--p70)">导入 TXT…</span></td>
+          <td><span class="btn pri" style="outline:2px solid var(--p60);outline-offset:2px">导入 TXT…</span></td>
+          <td><span class="btn pri" style="background:var(--p80)">导入 TXT…</span></td>
+          <td><span class="btn dis">导入 TXT…</span></td>
+        </tr>
+        <tr>
+          <td>次级 / 幽灵按钮</td>
+          <td><span class="btn sec">重新关联…</span></td>
+          <td><span class="btn sec" style="background:var(--p10)">重新关联…</span></td>
+          <td><span class="btn sec" style="outline:2px solid var(--p60);outline-offset:2px">重新关联…</span></td>
+          <td><span class="btn sec" style="background:var(--p20)">重新关联…</span></td>
+          <td><span class="btn dis">重新关联…</span></td>
+        </tr>
+        <tr>
+          <td>图标按钮</td>
+          <td><span class="ib"><svg class="i16"><use href="#i-tree"/></svg></span></td>
+          <td><span class="ib" style="background:var(--g10)"><svg class="i16"><use href="#i-tree"/></svg></span></td>
+          <td><span class="ib" style="outline:2px solid var(--p60);outline-offset:2px"><svg class="i16"><use href="#i-tree"/></svg></span></td>
+          <td><span class="ib" style="background:var(--p10);color:var(--p80);border-color:var(--p60)"><svg class="i16"><use href="#i-tree"/></svg></span></td>
+          <td><span class="ib" style="background:var(--g10);border-color:var(--g20);color:var(--text-dis)"><svg class="i16"><use href="#i-tree"/></svg></span></td>
+        </tr>
+        <tr>
+          <td>列表行</td>
+          <td><div style="border:1px solid var(--g20)"><div class="r" style="height:32px"><span class="t">第七章 谷雨</span></div></div></td>
+          <td><div style="border:1px solid var(--g20)"><div class="r" style="height:32px;background:var(--g10)"><span class="t">第七章 谷雨</span></div></div></td>
+          <td><div style="border:1px solid var(--g20)"><div class="r" style="height:32px;outline:2px solid var(--p60);outline-offset:-2px"><span class="t">第七章 谷雨</span></div></div></td>
+          <td><div style="border:1px solid var(--g20)"><div class="r on" style="height:32px"><span class="t">第七章 谷雨</span></div></div></td>
+          <td><div style="border:1px solid var(--g20)"><div class="r" style="height:32px;color:var(--text-dis)"><span class="t">第七章 谷雨</span></div></div></td>
+        </tr>
+        <tr>
+          <td>输入框</td>
+          <td><div class="inp" style="width:150px">搜索</div></td>
+          <td><div class="inp" style="width:150px;border-bottom-color:var(--text-1)">搜索</div></td>
+          <td><div class="inp" style="width:150px;border-bottom:2px solid var(--p60);color:var(--text-1)">搜索</div></td>
+          <td><div class="inp" style="width:150px;border-bottom:2px solid var(--p60);color:var(--text-1)">已输入内容</div></td>
+          <td><div class="inp dis" style="width:150px">不可用</div></td>
+        </tr>
+        <tr>
+          <td>单选 / 开关</td>
+          <td><span class="radio"></span> <span class="swt"><i></i></span></td>
+          <td><span class="radio" style="border-color:var(--p60)"></span> <span class="swt" style="background:var(--p70)"><i></i></span></td>
+          <td><span class="radio" style="outline:2px solid var(--p60);outline-offset:2px"></span></td>
+          <td><span class="radio on"></span> <span class="swt"><i></i></span></td>
+          <td><span class="radio" style="border-color:var(--g30)"></span> <span class="swt" style="background:var(--g20)"><i style="background:var(--g40)"></i></span></td>
+        </tr>
+      </table>
+    </div>
+    <div class="note" style="margin-top:16px">
+      <b>实现要点</b>：① 聚焦环必须用「2px 主色 + 1px 底色隔离」，保证在任意底色上都可见（Slint 中由外层 <span class="mono">Rectangle</span> 边框实现）；
+      ② hover 一律用层色（light: <span class="mono">#f4f4f4</span> / dark: <span class="mono">#393939</span>），不得改变文字颜色；
+      ③ 禁用态同时降低对比度与去掉交互，且必须有可见的原因（tooltip / 行内说明 / Tag）；
+      ④ 所有状态必须能被门禁断言：行/按钮的可访问名称与状态需投影为可读取的属性。
+    </div>
+  </div>
+</figure>
+
+</div><!-- /screens -->
+
+<!-- ============ 五、现状→新设计对照与落地约束 ============ -->
+<section class="sec" id="s17">
+  <h2>五、现状 → 新设计对照与落地约束</h2>
+  <h3>5.1 功能对照（现有能力一个不少）</h3>
+  <table>
+    <tr><th style="width:210px">现状能力（界面入口）</th><th style="width:300px">新设计的落点</th><th>变化说明</th></tr>
+    <tr><td>导入 TXT…（书架页按钮）</td><td>S1/S2/S3 页头主按钮</td><td>升级为全局唯一主按钮；新增空态内引导入口</td></tr>
+    <tr><td>书籍行「阅读」</td><td>S1 整行单击 / S2「继续阅读」</td><td>去掉行内按钮，整行即动作（等价 <span class="mono">NR_READER_BOOK</span> 入口）</td></tr>
+    <tr><td>书籍行「重新关联…」（失效时可用）</td><td>S1/S4 行尾图标按钮 + 页面级通知</td><td>增加「有多少本失效」的页面级可见性</td></tr>
+    <tr><td>顶栏导航 书架 / 阅读 / 设置</td><td>顶栏 UI Shell 导航项（底部 2px 选中条）</td><td>由 104×34 蓝色块改为导航项，主次清晰</td></tr>
+    <tr><td>阅读菜单条：目录 / 选项 / 书签 / 保存进度 / 沉浸阅读 / 收起菜单</td><td>S5 工具条 48px 图标按钮组</td><td>6 个同级蓝块 → 3+3 分组图标按钮 + 居中书名章节</td></tr>
+    <tr><td>底部状态栏信息（状态/章节/页码/进度/编码/重排/版本）</td><td>S5 状态栏 32px + 编码 Tag + 进度条</td><td>信息分级：状态左、读数右、机器数据用等宽；44px → 32px</td></tr>
+    <tr><td>底部状态栏动作（上一页/下一页/阅读菜单/目录/书签/保存进度/退出）</td><td>翻页 = 状态栏右侧图标按钮；工具条与顶栏承载其余</td><td>7 个平铺按钮 → 去重分层（同一动作只在一处出现）</td></tr>
+    <tr><td>目录面板（行 + 跳转 + 更早/更晚 + 细滚动条）</td><td>S6</td><td>「更早/更晚」按钮 → 滚轮 + 滚动条拖拽；行内跳转按钮 → 整行可点；新增章节搜索</td></tr>
+    <tr><td>书签面板（新增/更早/更晚/收起/重命名/选中/跳转/删除）</td><td>S7</td><td>「更早/更晚」→ 滚动；行内 3 个按钮 → 行尾悬浮图标；删除加内联确认</td></tr>
+    <tr><td>选项面板（编码选择 + 选用按钮）</td><td>S8</td><td>覆盖式列表 → 居中弹窗 + 单选 + 取消/应用</td></tr>
+    <tr><td>沉浸阅读（隐藏顶栏/底栏/菜单 + 右上角退出）</td><td>S9</td><td>新增工具条自动隐藏 + 进度条常驻；退出三路径保持不变</td></tr>
+    <tr><td>手势模式（左/右 1/3 翻页、中部呼出菜单）</td><td>S5 交互说明 + S9</td><td>语义不变；在设置页与快捷键面板中明示分区</td></tr>
+    <tr><td>键盘翻页 / 滚轮整页翻页</td><td>S5 + S15 快捷键面板</td><td>能力不变，新增可发现入口；只承诺已实现的按键</td></tr>
+    <tr><td>设置页 9 行（减小 / 增大 按钮对）</td><td>S10 表单（Slider / Radio / Switch / Select）</td><td>控件语义化；未生效 4 项统一降级并解释原因；新增「数据」分组</td></tr>
+    <tr><td>导入中 / 错误占位页</td><td>S11 / S12</td><td>只有标题+消息 → 进度结构 + 出路按钮 + 可折叠技术详情</td></tr>
+    <tr><td>状态/结果提示（progress-status 文案）</td><td>状态栏左区 + Toast</td><td>关键结果用 Toast（保存/删除/清理），常规状态留在状态栏</td></tr>
+  </table>
+
+  <h3>5.2 新增能力（本轮已授权进入基线）</h3>
+  <table>
+    <tr><th style="width:200px">能力</th><th style="width:160px">屏</th><th>依赖的既有后端 / 需要的改动</th></tr>
+    <tr><td>阅读进度条与跳转</td><td>S5</td><td>进度读数已有（字节千分比）；跳转需新增「按比例换算位置 → 跳转」入口，复用目录跳转的位置校验路径</td></tr>
+    <tr><td>书架搜索 / 排序 / 视图切换</td><td>S1/S2</td><td>纯投影层扩展：<span class="mono">ShelfRow</span> 增加路径/体积/状态码/最近打开时间；搜索与排序可由 Rust 侧完成（数据量小）</td></tr>
+    <tr><td>移出书架</td><td>S13</td><td><span class="mono">remove_book_from_shelf</span> 已存在；需新增 UI 回调与确认弹窗</td></tr>
+    <tr><td>清理可重建索引</td><td>S14</td><td><span class="mono">clear_rebuildable_index()</span> 已存在并返回 <span class="mono">IndexClearReport</span>；需新增 UI 入口与报告展示</td></tr>
+    <tr><td>快捷键说明面板</td><td>S15</td><td>纯界面 + 顶栏入口；建议键需 <span class="mono">input.rs</span> 扩展后才可从「建议」升为「已实现」</td></tr>
+    <tr><td>书籍卡片视图</td><td>S2</td><td>纯界面（封面占位本地派生）</td></tr>
+    <tr><td>面板内搜索（目录 / 书签）</td><td>S6/S7</td><td>Rust 侧过滤有界窗口；无存储改动</td></tr>
+    <tr><td>删除书签内联确认、Toast 反馈</td><td>S7/S14</td><td>纯界面</td></tr>
+  </table>
+
+  <h3>5.3 明确不做（保持 V1 边界）</h3>
+  <table>
+    <tr><th style="width:230px">不做项</th><th>理由</th></tr>
+    <tr><td>左右侧栏、连续滚动、全文搜索、背景图片、多级分类树</td><td>V1 范围外（<span class="mono">known-limitations.md</span> L5）；且口径 4 已确认保留覆盖式面板</td></tr>
+    <tr><td>书籍封面图片、网络元数据</td><td>离线、无遥测的产品边界；S2 仅用本地派生的色块占位</td></tr>
+    <tr><td>数据模型/表结构变更</td><td>本设计只用 <span class="mono">books</span>/<span class="mono">reading_progress</span>/<span class="mono">bookmarks</span>/<span class="mono">reader_settings</span> 与索引清理接口；如确需新增列，须单独走迁移规格</td></tr>
+  </table>
+
+  <h3>5.4 实现约束（Slint / 门禁，务必先读）</h3>
+  <table>
+    <tr><th style="width:230px">约束</th><th>落地要求</th></tr>
+    <tr><td>版式常量唯一来源</td><td>所有尺寸/字号/颜色常量进 <span class="mono">crates/desktop-app/src/layout.rs</span>；<span class="mono">app.slint</span> 只保留 <span class="mono">UiMetrics</span> 属性声明；新增常量需同步 <span class="mono">LayoutMetrics</span> 字段、<span class="mono">ui.rs::apply_layout_metrics</span>、<span class="mono">tests/layout_constants.rs</span></td></tr>
+    <tr><td>界面不得实现阅读语义</td><td><span class="mono">verify-desktop-scope.py [6]</span> 扫描 <span class="mono">.slint</span>：不得出现 <span class="mono">encoding</span>/<span class="mono">gbk</span>/<span class="mono">gb18030</span>/<span class="mono">bookmark</span>/<span class="mono">pagination</span> 等算法标记；编码/书签/章节语义一律由 Rust 投影为文本与行数据</td></tr>
+    <tr><td>可用控件集（Slint 1.17.1）</td><td>内置可用：Button / CheckBox / ComboBox / GroupBox / LineEdit / RadioGroup / ListView · StandardListView / ProgressIndicator / Slider / SpinBox / Spinner / Switch / TabWidget / TableView / ScrollView。**没有** IconButton / Tooltip / Tooltip 容器 / Notification / DataTable —— 这些都是自定义组件（本设计的图标按钮、tooltip、Toast、表格行、进度条均属自绘）</td></tr>
+    <tr><td>分页与渲染同口径</td><td>字号、行高、字距、正文区尺寸必须同源；正文渲染逐行、不换行、不加段距/缩进；本轮改动的正文留白（48/32）与可选行宽约束都必须回到同一常量集</td></tr>
+    <tr><td>可访问性与门禁对等</td><td>每个新交互入口都要有等价程序化驱动并写入对等性门禁（现状 <span class="mono">[8] 界面可达性</span> 的教训）；行/按钮/输入必须带 <span class="mono">accessible-label</span></td></tr>
+    <tr><td>验证链</td><td><span class="mono">cargo test -p desktop-app</span> → <span class="mono">smoke-desktop.sh --no-build</span> → <span class="mono">verify-desktop-input.py</span> → <span class="mono">verify-desktop-scope.py</span> → <span class="mono">verify-desktop-parity.py</span> → <span class="mono">verify-desktop-targets.py</span>（构件换代后刷新 <span class="mono">targets.json</span> 证据）</td></tr>
+    <tr><td>字体与许可</td><td>界面与正文均无衬线：IBM Plex Sans（OFL-1.1）+ Noto Sans CJK SC（OFL-1.1）；数字用 IBM Plex Mono。若随包分发需登记进第三方许可清单（Slint 同族的「需人工复核」许可族不受影响）</td></tr>
+    <tr><td>图标</td><td>本看板图标为自绘几何线框；正式实现建议采用 <span class="mono">@carbon/icons</span>（Apache-2.0，可随包）或继续自绘以零依赖。两种都需在许可清单登记</td></tr>
+  </table>
+
+  <h3>5.5 建议的实施顺序（供后续排期参考，本轮不实施）</h3>
+  <table>
+    <tr><th style="width:60px">阶段</th><th style="width:300px">内容</th><th>理由</th></tr>
+    <tr><td class="n">1</td><td>令牌层：扩展 <span class="mono">layout.rs</span> 常量（顶栏/工具条/状态栏/行高/进度条/圆角/字号）并投影到 UiMetrics</td><td>后续所有屏都依赖它；也是门禁最容易验证的一步</td></tr>
+    <tr><td class="n">2</td><td>组件层：按钮四型 + 图标按钮 + tooltip + Tag + 列表行 + 进度条 + 空态 + 通知（自定义组件，集中在 <span class="mono">app.slint</span> 或拆文件）</td><td>一次性消掉「全是蓝色块」的根因</td></tr>
+    <tr><td class="n">3</td><td>阅读页：顶栏 + 工具条 + 状态栏 + 进度条（不动分页口径）</td><td>核心屏，收益最大；几何事实不变，便于门禁对等</td></tr>
+    <tr><td class="n">4</td><td>面板：目录 / 书签 / 选项（含搜索、内联确认、弹窗化）</td><td>依赖组件层</td></tr>
+    <tr><td class="n">5</td><td>书架：表格视图 + 搜索/排序 + 行级菜单</td><td>需要投影扩展（路径/体积/时间）</td></tr>
+    <tr><td class="n">6</td><td>设置表单化 + 数据分组（清理索引、移出书架确认）</td><td>需要新增 UI 回调</td></tr>
+    <tr><td class="n">7</td><td>卡片视图 + 快捷键面板 + 沉浸自动隐藏 + 导入进度</td><td>增量体验项，可最后做</td></tr>
+  </table>
+
+  <div class="note">
+    <b>交付物</b>：本看板（<span class="mono">docs/design/novel-reader-desktop-redesign.html</span>）+
+    设计规格（<span class="mono">docs/design/novel-reader-desktop-redesign.md</span>，含令牌表、组件清单、逐屏规格、功能对照与落地约束）。
+    两者不含任何应用代码改动；实施需主人另行授权。
+  </div>
+</section>
+
+
+</div>
+</body>
+</html>
