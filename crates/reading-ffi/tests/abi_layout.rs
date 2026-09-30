@@ -35,7 +35,7 @@ pub const EXPECTED_SIZES: [(&str, usize); 17] = [
     ("nr_error_info", 32),
 ];
 
-fn rust_sizes() -> [(&'static str, usize); 16] {
+fn rust_sizes() -> [(&'static str, usize); 17] {
     [
         ("nr_buffer", size_of::<NrBuffer>()),
         ("nr_source_provider", size_of::<NrSourceProvider>()),

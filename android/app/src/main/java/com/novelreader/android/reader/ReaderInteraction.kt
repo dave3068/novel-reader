@@ -57,3 +57,29 @@ object ReaderInteraction {
         return if (travelX < 0f) ReaderSwipeDirection.NEXT_PAGE else ReaderSwipeDirection.PREVIOUS_PAGE
     }
 }
+
+/** 目录浮层在**当前章上方**保留的上下文行数。 */
+const val CHAPTER_LIST_CONTEXT = 2
+
+/**
+ * 目录浮层打开时的首个可见项（**纯函数**，边界由用例锁定）。
+ *
+ * 规则：
+ * - 定位到**当前章**，但上方保留 [CHAPTER_LIST_CONTEXT] 行作为上下文
+ *   （用户能看到自己「从哪一章读过来」，不至于让当前章贴在最顶边）；
+ * - 当前章缺失（未打开书籍）或章节总数为 0 ⇒ 返回 0；
+ * - 当前章越界（核心章节数变小）⇒ 钳制到最后一章，绝不产生非法下标。
+ *
+ * 真机缺陷背景：章节上千时若从第 1 项开始，用户必须手动翻很久才能找到当前位置。
+ */
+fun chapterListInitialIndex(
+    currentChapterIndex: Int?,
+    chapterCount: Int,
+    context: Int = CHAPTER_LIST_CONTEXT,
+): Int {
+    if (chapterCount <= 0 || currentChapterIndex == null) {
+        return 0
+    }
+    val clamped = currentChapterIndex.coerceIn(0, chapterCount - 1)
+    return (clamped - context).coerceAtLeast(0)
+}

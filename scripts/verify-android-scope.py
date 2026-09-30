@@ -561,6 +561,60 @@ def check_encoding_pipeline(files: dict[Path, str]) -> None:
         ok("[11] 反向对照：硬编码 UTF-8 解码的写法会被本检查判为失败")
 
 
+def check_resume_and_chapter_list(files: dict[Path, str]) -> None:
+    """[12] 退出即保存 + 目录自动定位到当前章。
+
+    这两项都是真机缺陷的回归门禁：
+    - 读到章中退出再入未继续原位置（桌面端已修，移动端此前只在翻页/切章时保存）；
+    - 目录从第 1 项开始显示，章节上千时找不到当前位置。
+    """
+    print("[12] 退出即保存（返回/后台）与目录自动定位到当前章")
+    vm = next((path for path in files if path.name == "ReaderViewModel.kt"), None)
+    activity = next((path for path in files if path.name == "MainActivity.kt"), None)
+    overlay = next((path for path in files if path.name == "ChapterListOverlay.kt"), None)
+    interaction = next((path for path in files if path.name == "ReaderInteraction.kt"), None)
+    if vm is None or overlay is None:
+        skip("[12] 未找到 ReaderViewModel.kt / ChapterListOverlay.kt（无从校验）")
+        return
+
+    issues: list[str] = []
+    vm_text = files[vm]
+    vm_lower = vm_text.lower()
+    if "fun onhostpaused(" not in vm_lower:
+        issues.append("缺少「退到后台即保存」的入口 onHostPaused（退出后重开会退回上次保存点）")
+    close_at = vm_lower.find("fun closebook(")
+    if close_at < 0:
+        issues.append("未找到 closeBook（返回书架路径无法校验）")
+    elif "persistpositionlocked(" not in vm_lower[close_at:close_at + 900]:
+        issues.append("closeBook 未在关闭前落盘当前位置（退出再入丢失章中位置）")
+    if "announce: boolean = true" not in vm_lower:
+        issues.append("persistPositionLocked 缺少 announce 开关（退出保存会覆盖界面状态文案）")
+
+    if activity is None:
+        issues.append("未找到 MainActivity.kt（无法确认宿主已接线）")
+    else:
+        act = files[activity].lower()
+        if "override fun onstop()" not in act or "onhostpaused()" not in act:
+            issues.append("MainActivity.onStop 未调用 onHostPaused（退到后台不落盘）")
+
+    overlay_lower = files[overlay].lower()
+    if "rememberlazyliststate(" not in overlay_lower:
+        issues.append("目录浮层未持有 LazyListState（无法自动滚动）")
+    if "scrolltoitem(" not in overlay_lower:
+        issues.append("目录浮层未滚动到当前章")
+    if "chapterlistinitialindex(" not in overlay_lower:
+        issues.append("目录浮层未使用 chapterListInitialIndex 计算首个可见项")
+    if "state = liststate" not in overlay_lower:
+        issues.append("LazyColumn 未绑定 listState（滚动状态未生效）")
+    if interaction is None or "fun chapterlistinitialindex(" not in files[interaction].lower():
+        issues.append("缺少纯函数 chapterListInitialIndex（目录定位边界不可测）")
+
+    if issues:
+        fail("[12] 退出保存/目录定位缺失：" + "; ".join(issues))
+    else:
+        ok("[12] 关闭与后台均落盘当前位置；目录浮层定位并高亮当前章（纯函数可测）")
+
+
 def check_positive_control() -> None:
     print("[6] 正向对照：扫描规则在内置 fixture 上必须命中（证明非空检查）")
     fixture = {
@@ -721,6 +775,7 @@ def main(argv: list[str] | None = None) -> int:
         check_host_context_initializers(files)
         check_reader_interaction(files)
         check_encoding_pipeline(files)
+        check_resume_and_chapter_list(files)
         check_positive_control()
 
     print("-" * 60)

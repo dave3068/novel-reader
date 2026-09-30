@@ -149,6 +149,17 @@ internal class ScriptedReaderAbi(
     var positionChapterIndex = 0L
     var positionOffset = 0L
 
+    /**
+     * `true` 时 `getPosition` 返回**最后一次 savePosition 的内容**（与真实核心同构）。
+     *
+     * 用于锁定「退出 → 再入是否继续原位置」这一链路；默认 `false`（沿用脚本化旋钮）。
+     */
+    var positionMirrorsSave = false
+
+    /** 最近一次保存的 `(chapterIndex, offset)`；未保存过为 `null`。 */
+    val lastSavedPosition: Pair<Long, Long>?
+        get() = savedPositions.lastOrNull()
+
     /** 索引重建返回值。 */
     var rebuildCode = NrErrors.NR_ERR_OK
 
@@ -406,14 +417,16 @@ internal class ScriptedReaderAbi(
             val slots = slotsFor(fingerprint)
             val buf = writer(NrPositionResult.STRUCT_SIZE)
             buf.putInt(0, NrPositionResult.STRUCT_SIZE)
-            buf.putInt(4, positionFound.toInt())
-            buf.putInt(8, positionChapterIndex.toInt())
-            buf.putInt(12, if (positionFound != 0L) 1 else 0)
-            buf.putInt(16, if (positionFound != 0L) 0 else 1)
+            val mirrored = if (positionMirrorsSave) savedPositions.lastOrNull() else null
+            buf.putInt(4, if (mirrored != null) 1 else positionFound.toInt())
+            buf.putInt(8, (mirrored?.first ?: positionChapterIndex).toInt())
+            val mirroredNow = if (positionMirrorsSave) savedPositions.lastOrNull() else null
+            buf.putInt(12, if (mirroredNow != null || positionFound != 0L) 1 else 0)
+            buf.putInt(16, if (mirroredNow != null || positionFound != 0L) 0 else 1)
             buf.putInt(20, 0)
             buf.putLong(24, bookId)
             buf.putLong(32, NrAbiConstants.NR_CONTENT_UNIT_SINGLE)
-            buf.putLong(40, positionOffset)
+            buf.putLong(40, mirrored?.second ?: positionOffset)
             buf.putLong(48, 1_700_000_000L)
             buf.putLong(56, slots[0])
             buf.putLong(64, slots[1])

@@ -856,8 +856,14 @@ impl Engine {
         let fingerprint = match &spec.nearby_fingerprint {
             Some(quote) => quote.clone(),
             None => {
-                let sample = generate_anchor(&open.source, spec.original_byte_offset)?;
-                sample.fingerprint.quote
+                // 非 UTF-8 文档**不生成引文**：引文是 UTF-8 文本，与原始源字节不可比对
+                // （搜索必然落空，反而把好位置拖去章首）。恢复时直接采用字节偏移，见 `load_position`。
+                if matches!(open.encoding, TextEncoding::Utf8 | TextEncoding::Utf8Bom) {
+                    let sample = generate_anchor(&open.source, spec.original_byte_offset)?;
+                    sample.fingerprint.quote
+                } else {
+                    String::new()
+                }
             }
         };
         let fingerprint = truncate_utf8(&fingerprint, MAX_FINGERPRINT_BYTES);
@@ -921,6 +927,35 @@ impl Engine {
             .is_some_and(|open| open.book_id == id);
         if is_open {
             let open = self.open_book.as_ref().ok_or_else(no_open_book)?;
+            // ⚠️ **非 UTF-8 文档直接采用保存偏移**（与桌面端 `restore_encoded` 同一规则）。
+            //
+            // 原因：锚点引文是 **UTF-8 文本**，而搜索是与**原始源字节**逐字节比较
+            // （`reading-index/src/anchor.rs`）。对 GBK/GB18030/Big5/UTF-16 文档，引文在源字节里
+            // 永远匹配不上；`generate_anchor` 的 `from_utf8` 也会失败从而存下**空引文**，
+            // 核心对「引文为空」一律回退章节开头 ⇒ 真机表现为
+            // **「UTF-8 文章能续读、GBK 文章每次回到章首」**（2026-09-30 用户实测）。
+            //
+            // 位置身份本就是**字节偏移**（与编码、排版均无关），且保存时核心已校验
+            // 「该偏移属于所请求的章节」，故直接采用是安全且正确的；只有越界才回退章首。
+            if !matches!(open.encoding, TextEncoding::Utf8 | TextEncoding::Utf8Bom) {
+                let total = open.total_bytes;
+                let chapter_start = open
+                    .index
+                    .chapter_start(stored_position.chapter_index)
+                    .unwrap_or(0)
+                    .min(total);
+                let in_range = stored_position.original_byte_offset >= chapter_start
+                    && stored_position.original_byte_offset <= total;
+                outcome.restored = false;
+                outcome.chapter_index = stored_position.chapter_index;
+                outcome.original_byte_offset = if in_range {
+                    stored_position.original_byte_offset
+                } else {
+                    chapter_start
+                };
+                outcome.fallback_to_chapter_start = !in_range;
+                return Ok(outcome);
+            }
             let search = AnchorSearch::new(DEFAULT_ANCHOR_RADIUS_BYTES);
             let restored = restore_position(&open.source, &open.index, &stored_position, &search)?;
             outcome.restored = true;

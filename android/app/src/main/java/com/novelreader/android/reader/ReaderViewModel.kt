@@ -337,9 +337,28 @@ runCatching { hiddenBooks?.load()?.let { hiddenBooksSet.addAll(it) } }
         }
     }
 
+    /**
+     * 宿主进入后台（`Activity.onStop`）。
+     *
+     * 与桌面端**同口径**：桌面端在窗口关闭时保存当前位置
+     * （`crates/desktop-app/src/ui.rs` 的 `save_current(..., "退出")`），
+     * 移动端此前只在翻页/切章/重排时保存 —— 于是「读到某章中部直接退出再入」
+     * 会退回上一次保存点（真机缺陷）。这里补上退出保存，且**不改写界面状态文案**。
+     */
+    fun onHostPaused() {
+        val state = _ui.value
+        val page = state.reader.page
+        if (!state.reader.isOpen || page == null) {
+            return
+        }
+        launchSerial { persistPositionLocked(page, announce = false) }
+    }
+
     /** 关闭当前书籍（核心 `nr_close_book`），回到书架页。 */
     fun closeBook() {
         launchSerial {
+            // 离开阅读器前先落盘当前位置（同上：与桌面端「退出即保存」同口径）。
+            _ui.value.reader.page?.let { persistPositionLocked(it, announce = false) }
             val bookId = _ui.value.reader.bookId
             if (bookId != null) {
                 try {
@@ -1683,7 +1702,7 @@ runCatching { hiddenBooks?.load()?.let { hiddenBooksSet.addAll(it) } }
      * 动作状态含页号、行数、字号、行高与偏移，是界面唯一的排版事实反馈，不能被「已保存」覆盖。
      * 只有显式保存入口（[savePositionNow]）在之后自行给出保存回显。
      */
-    private suspend fun persistPositionLocked(page: PageState) {
+    private suspend fun persistPositionLocked(page: PageState, announce: Boolean = true) {
         val state = _ui.value
         val bookId = state.reader.bookId ?: return
         val changed = try {
@@ -1712,7 +1731,7 @@ runCatching { hiddenBooks?.load()?.let { hiddenBooksSet.addAll(it) } }
             it.copy(
                 reader = it.reader.copy(lastSavedByteOffset = page.startByte),
                 shelf = it.shelf.copy(books = shelf.values.toList()),
-                status = if (changed) {
+                status = if (changed && announce) {
                     "已保存阅读位置（章 ${page.chapterIndex} · 偏移 ${page.startByte}）"
                 } else {
                     it.status

@@ -1217,3 +1217,106 @@ fn set_encoding_rescans_with_new_encoding_and_never_touches_the_file() {
     let after = std::fs::read(&book.path).expect("回读夹具");
     assert!(bytes == after, "手动指定编码绝不能写回原文件");
 }
+
+/// 用指定库路径建立引擎（模拟「同一台设备的同一次安装」）。
+fn create_engine_with_db(db_path: &str) -> u64 {
+    let config = engine_config(Some(db_path));
+    let mut handle = 0u64;
+    let code = unsafe { nr_engine_create(&config, &mut handle) };
+    assert_eq!(code, 0, "创建引擎必须成功");
+    handle
+}
+
+/// 取第 `index` 章的 `(start_byte, end_byte)`（条目在批次缓冲区里）。
+fn chapter_range(engine: u64, book_id: u64, index: u32) -> (u64, u64) {
+    let mut batch = NrChapterBatch::default();
+    assert_eq!(
+        unsafe { nr_get_chapters(engine, book_id, index, 1, &mut batch) },
+        0
+    );
+    assert_eq!(batch.count, 1);
+    let raw = unsafe { batch.bytes.as_slice() }.to_vec();
+    let range = (
+        u64::from_le_bytes(raw[8..16].try_into().unwrap()),
+        u64::from_le_bytes(raw[16..24].try_into().unwrap()),
+    );
+    unsafe { nr_release_buffer(&mut batch.bytes) };
+    range
+}
+
+/// 章内第二个换行符之后的偏移（换行是单字节字符 ⇒ 该偏移必为合法字符边界）。
+fn offset_after_second_newline(start: u64) -> u64 {
+    let path = "../../tests/fixtures/encoding/gbk.txt";
+    let bytes = std::fs::read(path).expect("GBK 夹具必须存在");
+    let window = &bytes[start as usize..(start as usize + 512).min(bytes.len())];
+    let mut seen = 0;
+    for (index, byte) in window.iter().enumerate() {
+        if *byte == b'\n' {
+            seen += 1;
+            if seen == 2 {
+                return start + index as u64 + 1;
+            }
+        }
+    }
+    start
+}
+
+/// **非 UTF-8（GBK）文档的位置续读**：章中保存 ⇒ 销毁引擎 ⇒ 同库重开 ⇒ 偏移原样复现。
+///
+/// 真机缺陷（2026-09-30 用户实测）：*UTF-8 文章能回到原位置，GBK 文章每次回到章首*。
+/// 成因：锚点引文是 **UTF-8 文本**，而搜索是与**原始源字节**逐字节比较 ⇒ 对 GBK 永远匹配不上
+/// （`generate_anchor` 的 `from_utf8` 也失败而存下空引文），核心对「引文为空」一律回退章首。
+/// 修复：非 UTF-8 直接采用保存偏移（与桌面端 `restore_encoded` 同规则），越界才回退章首。
+#[test]
+fn legacy_encoded_position_survives_engine_restart() {
+    let bytes = std::fs::read("../../tests/fixtures/encoding/gbk.txt").expect("GBK 夹具必须存在");
+    let book = TempBook::from_bytes(bytes);
+    let db_path = book.dir.join("resume.db").to_string_lossy().into_owned();
+
+    // ---- 第一次「会话」：打开并在**章中**保存（不带指纹，移动端即如此）----
+    let engine1 = create_engine_with_db(&db_path);
+    let opened1 = open_book(engine1, &book);
+    assert!(
+        opened1.encoding == 5 || opened1.encoding == 6,
+        "夹具必须是 GB18030/GBK，实际 {}",
+        opened1.encoding
+    );
+    let (start, end) = chapter_range(engine1, opened1.book_id, 1);
+    let offset = offset_after_second_newline(start);
+    assert!(offset > start && offset < end, "测试偏移必须落在第 2 章内部");
+
+    let position = NrPosition {
+        struct_size: std::mem::size_of::<NrPosition>() as u32,
+        chapter_index: 1,
+        book_id: opened1.book_id,
+        content_unit_id: CONTENT_UNIT_SINGLE as u64,
+        original_byte_offset: offset,
+        nearby_fingerprint_utf8: std::ptr::null(),
+        nearby_fingerprint_len: 0,
+    };
+    let mut changed = 0i32;
+    assert_eq!(
+        unsafe { nr_save_position(engine1, &position, &mut changed) },
+        0
+    );
+    assert_eq!(changed, 1, "首次保存必须写入");
+    assert_eq!(unsafe { nr_engine_destroy(engine1) }, 0, "模拟退出应用");
+
+    // ---- 第二次「会话」：同库重开同一文件 ⇒ 必须回到章中 ----
+    let engine2 = create_engine_with_db(&db_path);
+    let opened2 = open_book(engine2, &book);
+    let mut result = NrPositionResult::default();
+    assert_eq!(
+        unsafe { nr_get_position(engine2, opened2.book_id, &mut result) },
+        0
+    );
+    assert_eq!(result.found, 1, "重启后必须找到进度");
+    assert_eq!(result.chapter_index, 1, "必须仍在第 2 章");
+    assert_eq!(
+        result.original_byte_offset, offset,
+        "GBK 文档必须回到章中偏移（修复前会退回章首）"
+    );
+    assert_eq!(result.fallback_to_chapter_start, 0, "不得回退章首");
+    unsafe { nr_release_buffer(&mut result.nearby_fingerprint) };
+    assert_eq!(unsafe { nr_engine_destroy(engine2) }, 0);
+}
