@@ -1,0 +1,51 @@
+# novel-reader V1 桌面应用层（Rust + Slint；Linux X11 优先）。
+#
+# 工作区归属：本 crate 是**独立的嵌套 workspace**（自带 `[workspace]` 表）。
+# 原因：根 workspace 的成员集合被 `results/gates/gate-1-core.md` §2 冻结为
+# reading-core / reading-source / reading-index / reading-storage / reading-ffi，
+# 且 `scripts/verify-core-scope.py`（冻结 sha256 `69ab03db…`）会强制该集合，
+# 并禁止核心依赖树出现 `slint`。桌面 UI 依赖 Slint，因此不得进入核心依赖图。
+# 桌面侧通过 path 依赖直接调用冻结核心（Rust API），不经过 ABI。
+# 取舍与建议见 `results/dt1-desktop-skeleton.md`「工作区归属与命令口径」。
+
+[package]
+name = "desktop-app"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.98.0"
+publish = false
+description = "novel-reader V1 桌面应用层：Slint 状态投影 + 后台编排（UI 不含阅读业务）"
+
+[lib]
+name = "desktop_app"
+path = "src/lib.rs"
+
+[[bin]]
+name = "desktop-app"
+path = "src/main.rs"
+
+# 依赖策略与核心一致：一律精确锁定版本（`=X.Y.Z`），不使用浮动区间。
+[dependencies]
+slint = { version = "=1.17.1", default-features = true }
+reading-core = { version = "=0.1.0", path = "../reading-core" }
+reading-source = { version = "=0.1.0", path = "../reading-source" }
+reading-storage = { version = "=0.1.0", path = "../reading-storage" }
+
+# Windows 原生「打开文件」对话框（`GetOpenFileNameW`，comdlg32）。
+# 只在 Windows 目标编译：Linux 侧继续走 zenity/kdialog（本机基线）。
+# 版本精确锁定（仓库规则）：0.59.0 已在 Cargo.lock 中（随 slint 传递引入）。
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.59.0", features = [
+    "Win32_Foundation",
+    "Win32_UI_Controls",
+    "Win32_UI_Controls_Dialogs",
+] }
+
+# 独立的桌面 workspace 根（成员就是本包）。
+[workspace]
+
+[profile.release]
+opt-level = 3
+debug = false
+lto = true
+strip = true

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 应用主题：无需 ActionBar（Compose 自绘），状态栏由界面侧 edge-to-edge 处理。 -->
+<resources>
+    <style name="Theme.NovelReader" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>

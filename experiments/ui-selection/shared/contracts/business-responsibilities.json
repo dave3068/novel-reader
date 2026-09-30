@@ -1,0 +1,183 @@
+{
+  "version": 1,
+  "purpose": "共享业务职责清单与双 UI 边界规则（S-R7 / H-R3 / H-R5）。供 verify-hybrid-native-contract.py --check-android-layout --check-jni --check-no-business-duplication 消费。",
+  "shared_duties": [
+    {
+      "id": "bounded-window-read",
+      "description": "按原始字节偏移的有限窗口读取与 UTF-8 边界修正",
+      "rust_symbols": ["ReadingEngine::read_window", "nr_read_window", "fix_utf8_window"]
+    },
+    {
+      "id": "simulated-domain",
+      "description": "6 层/1000 类/10000 书/2000 历史的确定性模拟数据",
+      "rust_symbols": ["Library::generate", "nr_get_book_batch", "nr_get_chapter_batch"]
+    },
+    {
+      "id": "content-position",
+      "description": "阅读位置的保存、校验与恢复",
+      "rust_symbols": ["ReadingEngine::save_position", "nr_save_position"]
+    },
+    {
+      "id": "page-anchor",
+      "description": "分页锚点构造与跨页边界位置定位",
+      "rust_symbols": ["make_anchor", "locate_anchor"]
+    },
+    {
+      "id": "page-boundary-registry",
+      "description": "页面边界登记、查询与布局失效",
+      "rust_symbols": ["commit_page_boundary", "invalidate_layout", "nr_commit_page_boundary", "nr_invalidate_layout"]
+    },
+    {
+      "id": "pagination",
+      "description": "分页排版与页末合法 UTF-8 边界",
+      "rust_symbols": ["layout_page", "nr_layout_page"]
+    },
+    {
+      "id": "request-cancellation",
+      "description": "协作式取消与部分成功语义",
+      "rust_symbols": ["ReadingEngine::cancel_request", "nr_cancel_request"]
+    },
+    {
+      "id": "error-model",
+      "description": "统一错误码与消息模型",
+      "rust_symbols": ["ErrorCode", "NrError"]
+    },
+    {
+      "id": "events-metrics",
+      "description": "事件订阅、取消与测量指标",
+      "rust_symbols": ["ReadingEngine::subscribe", "nr_subscribe_events", "nr_get_metrics"]
+    }
+  ],
+  "kotlin_boundary": {
+    "jni_bridge_files": [
+      "app/src/main/java/com/novelreader/probe/core/NrCore.kt",
+      "app/src/main/java/com/novelreader/probe/core/NrEngine.kt"
+    ],
+    "allowed_kotlin_responsibilities": [
+      "UI 渲染与导航（Jetpack Compose）",
+      "调用公开 Android 文字排版 API（android.text.StaticLayout / TextLayout）",
+      "线程切换、协程与生命周期管理",
+      "SAF / ContentResolver 文件访问",
+      "JNI 参数编解码与错误码映射"
+    ],
+    "forbidden_anywhere": [
+      {
+        "id": "domain-generation",
+        "pattern": "(generateLibrary|generateBook|generateBookshelf|generateFixtures|simulateLibrary)\\s*\\(",
+        "reason": "模拟领域数据必须来自 Rust 共享库"
+      },
+      {
+        "id": "utf8-boundary-fix",
+        "pattern": "(fixUtf8|utf8BoundaryTrim|adjustUtf8Boundary|trimIncompleteUtf8|dropContinuationBytes)\\s*\\(",
+        "reason": "UTF-8 边界修正属于共享库"
+      },
+      {
+        "id": "anchor-logic",
+        "pattern": "(makeAnchor|locateAnchor|findAnchor|resolveAnchor)\\s*\\(",
+        "reason": "锚点构造与定位属于共享库"
+      },
+      {
+        "id": "page-boundary-registry-type",
+        "pattern": "(class|object)\\s+\\w*PageBoundary\\w*\\b",
+        "reason": "页面边界登记属于共享库，Kotlin 只调用 JNI"
+      },
+      {
+        "id": "error-model-copy",
+        "pattern": "enum\\s+class\\s+\\w*(ErrorCode|NrError)\\b",
+        "reason": "错误模型属于共享库，Kotlin 只映射 JNI 返回码"
+      },
+      {
+        "id": "cancellation-registry-type",
+        "pattern": "(class|object)\\s+\\w*Cancel(Token|Registry|Manager)\\b",
+        "reason": "取消语义属于共享库"
+      }
+    ],
+    "forbidden_outside_bridge": [
+      {
+        "id": "no-shared-entry-implementation",
+        "pattern": "fun\\s+(readWindow|openBook|layoutPage|savePosition|commitPageBoundary|invalidateLayout|cancelRequest|getBookBatch|getChapterBatch)\\s*\\(",
+        "reason": "共享业务入口只允许在 JNI 桥接文件以 external fun 声明"
+      }
+    ],
+    "required_evidence": [
+      {
+        "id": "compose-ui",
+        "path_glob": "app/src/main/java/**/ui/**/*.kt",
+        "pattern": "@Composable",
+        "reason": "H-R2：Jetpack Compose 实现 UI"
+      },
+      {
+        "id": "public-android-text-api",
+        "path_glob": "app/src/main/java/**/reader/*.kt",
+        "pattern": "(android\\.text\\.(StaticLayout|TextLayout|Layout)|TextLayout\\.Builder|StaticLayout\\.Builder)",
+        "reason": "H-R2：只能使用公开 Android 文字排版 API"
+      },
+      {
+        "id": "utf8-byte-mapping",
+        "path_glob": "app/src/main/java/**/reader/*.kt",
+        "pattern": "(Charsets\\.UTF_8|toByteArray\\()",
+        "reason": "H-R2：页末位置必须为 UTF-8 字节偏移并映射到共享库位置"
+      },
+      {
+        "id": "buffer-ownership",
+        "path_glob": "app/src/main/java/**/core/NrCore.kt",
+        "pattern": "nr_release_buffer|releaseBuffer",
+        "reason": "H-R3：跨边界缓冲必须显式释放"
+      },
+      {
+        "id": "request-cancellation",
+        "path_glob": "app/src/main/java/**/core/*.kt",
+        "pattern": "nr_cancel_request|cancel_request|cancelRequest",
+        "reason": "H-R3：取消入口"
+      },
+      {
+        "id": "exception-mapping",
+        "path_glob": "app/src/main/java/**/core/*.kt",
+        "pattern": "(NrException|NR_ERR_|ErrorCode)",
+        "reason": "H-R3：异常与错误码映射"
+      },
+      {
+        "id": "saf-entry",
+        "path_glob": "app/src/main/java/**/data/*.kt",
+        "pattern": "(ActivityResultContracts\\.(OpenDocument|OpenDocumentTree)|ACTION_OPEN_DOCUMENT|ContentResolver)",
+        "reason": "H-R7：SAF 文件访问入口"
+      },
+      {
+        "id": "lifecycle-restore",
+        "path_glob": "app/src/main/java/**/MainActivity.kt",
+        "pattern": "(LifecycleEventObserver|ON_STOP|ON_START|onSaveInstanceState|rememberSaveable|lifecycle)",
+        "reason": "H-R7：生命周期与后台恢复"
+      },
+      {
+        "id": "rotation-state",
+        "path_glob": "app/src/main/java/**/MainActivity.kt",
+        "pattern": "(rememberSaveable|onSaveInstanceState|configChanges|ViewModel)",
+        "reason": "H-R7：旋转后恢复"
+      },
+      {
+        "id": "thread-handoff",
+        "path_glob": "app/src/main/java/**/core/NrEngine.kt",
+        "pattern": "(withContext|Dispatchers\\.|LaunchedEffect|runBlocking|suspend)",
+        "reason": "H-R3：线程切换必须显式"
+      },
+      {
+        "id": "jni-declarations",
+        "path_glob": "app/src/main/java/**/core/NrCore.kt",
+        "pattern": "external fun",
+        "reason": "H-R3：薄 JNI 必须显式声明 external"
+      },
+      {
+        "id": "jni-c-implementation",
+        "path_glob": "jni/nr_jni.c",
+        "pattern": "JNIEXPORT",
+        "reason": "H-R3：JNI C 适配层必须存在并调用 C ABI"
+      },
+      {
+        "id": "jni-calls-c-abi",
+        "path_glob": "jni/nr_jni.c",
+        "pattern": "nr_engine_create|nr_read_window|nr_commit_page_boundary",
+        "reason": "H-R3：JNI 只调用共享 C ABI，不复制业务"
+      }
+    ]
+  }
+}

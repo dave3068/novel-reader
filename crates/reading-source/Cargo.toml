@@ -1,0 +1,13 @@
+[package]
+name = "reading-source"
+description = "TXT 有限窗口数据源、编码识别与文件指纹"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+name = "reading_source"
+
+[dependencies]
+encoding_rs = "=0.8.35"

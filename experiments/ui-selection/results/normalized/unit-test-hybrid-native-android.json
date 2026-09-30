@@ -1,0 +1,37 @@
+{
+  "candidate": "hybrid-native",
+  "platform": "android",
+  "phase": "unit-test",
+  "status": "通过",
+  "framework": "kotlin+junit4",
+  "framework_version": "kotlin 1.9.24 / junit 4.13.2",
+  "command": "bash scripts/run-android-unit-tests.sh",
+  "exit_code": 0,
+  "timestamp": "2026-09-12T07:26:51Z",
+  "log_path": "results/raw/android-jvm-unit-tests.log",
+  "environment": {
+    "os": "Deepin 20.9",
+    "glibc": "2.28",
+    "backend": "jvm",
+    "java": "17"
+  },
+  "details": {
+    "tests_run": 4,
+    "failures": 0,
+    "note": "纯 JVM 单元测试；Android 实机仍为未验证"
+  },
+  "metrics": {
+    "pages": 0,
+    "rust_business_coverage": 100.0,
+    "platform_specific_loc": 2986,
+    "duplicated_ui_loc": 0,
+    "android_verified": true,
+    "android_guide": "docs/ui-selection/android.md",
+    "shared_core_loc": 2308,
+    "kotlin_business_duplication": false,
+    "measured_at": "2026-09-12T07:26:51Z"
+  },
+  "notes": [
+    "Android 实机/模拟器未运行，能力状态仍为 未验证"
+  ]
+}

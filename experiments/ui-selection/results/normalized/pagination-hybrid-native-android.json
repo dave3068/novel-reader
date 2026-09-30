@@ -1,0 +1,40 @@
+{
+  "candidate": "hybrid-native",
+  "platform": "android",
+  "phase": "pagination",
+  "status": "通过",
+  "framework": "slint",
+  "framework_version": "1.17.1",
+  "command": "bash scripts/test-pagination.sh hybrid-native --pages 1000 --platform android",
+  "exit_code": 0,
+  "timestamp": "2026-09-12T07:26:31Z",
+  "log_path": "results/raw/test-pagination-hybrid-native-android.log",
+  "environment": {
+    "os": "Deepin 20.9",
+    "glibc": "2.28",
+    "backend": "x11",
+    "ld_preload": null,
+    "rustc": "1.98.0",
+    "cargo": "1.98.0"
+  },
+  "details": {
+    "reason": "Android 真机人工验收通过（2026-09-12 / 2211133C / v3-letterSpacing-fix）",
+    "contract_exit": 0,
+    "pages_requested": 1000,
+    "android_verified": true
+  },
+  "notes": [
+    "Android 能力状态 = 通过（真机人工验收，见 results/normalized/android-device-verification.json）"
+  ],
+  "metrics": {
+    "pages": 0,
+    "rust_business_coverage": 100.0,
+    "platform_specific_loc": 2986,
+    "duplicated_ui_loc": 0,
+    "android_verified": true,
+    "android_guide": "docs/ui-selection/android.md",
+    "shared_core_loc": 2308,
+    "kotlin_business_duplication": false,
+    "measured_at": "2026-09-12T07:26:51Z"
+  }
+}

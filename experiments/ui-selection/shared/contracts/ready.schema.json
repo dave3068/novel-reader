@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "桌面探针 ready.json（原子写入的就绪标记）",
+  "description": "smoke-linux.sh 等待候选原子写入该文件并逐字段校验；字段名与父级清单 ui_ready 保持一致。",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "candidate",
+    "platform",
+    "framework",
+    "framework_version",
+    "backend",
+    "renderer",
+    "pid",
+    "ui_ready",
+    "event_loop",
+    "pagination_status",
+    "pages",
+    "timestamp",
+    "core"
+  ],
+  "properties": {
+    "candidate": { "const": "hybrid-native" },
+    "platform": { "const": "desktop" },
+    "framework": { "const": "slint" },
+    "framework_version": { "type": "string", "minLength": 1 },
+    "backend": { "enum": ["x11", "wayland"] },
+    "renderer": { "enum": ["femtovg", "skia", "software"] },
+    "pid": { "type": "integer", "minimum": 1 },
+    "ui_ready": { "const": true },
+    "event_loop": { "enum": ["running", "exiting"] },
+    "pagination_status": { "enum": ["通过", "有条件通过", "不通过", "未验证"] },
+    "pages": { "type": "integer", "minimum": 0 },
+    "layout_id": { "type": "integer" },
+    "window": {
+      "type": "object",
+      "properties": {
+        "width": { "type": "integer" },
+        "height": { "type": "integer" }
+      }
+    },
+    "core": {
+      "type": "object",
+      "required": ["version", "abi_version", "abi_entries", "max_window"],
+      "properties": {
+        "version": { "type": "string" },
+        "abi_version": { "type": "integer" },
+        "abi_entries": { "type": "integer", "const": 11 },
+        "max_window": { "type": "integer" },
+        "opened_book": { "type": ["integer", "null"] }
+      }
+    },
+    "metrics": { "type": "object" },
+    "timestamp": { "type": "string" }
+  }
+}

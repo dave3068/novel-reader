@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ui-selection 结果记录 (normalized)",
+  "description": "五候选统一结果契约（S-R6 / design.md §6）。状态只能为 通过 / 有条件通过 / 不通过 / 未验证。",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "candidate",
+    "platform",
+    "phase",
+    "status",
+    "framework",
+    "command",
+    "exit_code",
+    "timestamp",
+    "environment"
+  ],
+  "properties": {
+    "candidate": { "enum": ["hybrid-native", "slint", "flutter", "compose", "qt"] },
+    "platform": { "enum": ["desktop", "android", "windows", "wayland"] },
+    "phase": {
+      "enum": ["pagination", "ui-contract", "build", "smoke", "diagnostic", "delivery"]
+    },
+    "status": { "enum": ["通过", "有条件通过", "不通过", "未验证"] },
+    "framework": { "type": "string" },
+    "framework_version": { "type": "string" },
+    "variant": { "type": "string" },
+    "command": { "type": "string" },
+    "exit_code": { "type": "integer" },
+    "timestamp": { "type": "string" },
+    "log_path": { "type": "string" },
+    "raw_path": { "type": "string" },
+    "environment": {
+      "type": "object",
+      "required": ["os", "glibc", "backend"],
+      "properties": {
+        "os": { "type": "string" },
+        "glibc": { "type": "string" },
+        "user_glibc": { "type": ["string", "null"] },
+        "backend": { "type": "string" },
+        "ld_preload": { "type": ["string", "null"] },
+        "rustc": { "type": "string" },
+        "cargo": { "type": "string" }
+      }
+    },
+    "metrics": { "$ref": "#/$defs/metrics" },
+    "details": { "type": "object" },
+    "notes": { "type": "array", "items": { "type": "string" } }
+  },
+  "$defs": {
+    "metrics": {
+      "type": "object",
+      "description": "hybrid-native 必须提供复用/平台专属/重复 UI 指标",
+      "properties": {
+        "shared_core_loc": { "type": "integer" },
+        "rust_business_coverage": { "type": "number", "minimum": 0, "maximum": 100 },
+        "platform_specific_loc": { "type": "integer" },
+        "duplicated_ui_loc": { "type": "integer" },
+        "android_verified": { "type": "boolean" },
+        "android_guide": { "type": "string" },
+        "kotlin_business_duplication": { "type": "boolean" },
+        "pages": { "type": "integer" },
+        "page_boundaries": { "type": "integer" }
+      }
+    }
+  }
+}

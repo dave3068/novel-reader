@@ -1,0 +1,20 @@
+{
+  "measured_at": "2026-09-12T07:26:51Z",
+  "method": "code_lines excl. blank/comment-only; coverage from business-responsibilities.json",
+  "shared_core_loc": 2308,
+  "shared_core_files": 12,
+  "shared_core_total_lines": 2916,
+  "shared_ffi_header_loc": 103,
+  "desktop_ui_loc": 549,
+  "desktop_rust_glue_loc": 1382,
+  "android_kotlin_loc": 930,
+  "android_jni_c_loc": 125,
+  "platform_specific_loc": 2986,
+  "duplicated_ui_loc": 0,
+  "rust_business_coverage": 100.0,
+  "duties_total": 9,
+  "duties_covered": 9,
+  "duties_missing": [],
+  "duplicated_ui_samples": [],
+  "reuse_ratio_shared_vs_platform": 43.6
+}

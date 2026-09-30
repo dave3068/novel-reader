@@ -1,0 +1,18 @@
+{
+  "candidate": "hybrid-native",
+  "platform": "desktop",
+  "phase": "pagination",
+  "status": "通过",
+  "framework": "slint",
+  "framework_version": "1.17.1",
+  "pages": 1000,
+  "backward_checked": 50,
+  "anchor_checked": 50,
+  "corpus_bytes": 1380250,
+  "layout_id": 13479548427441588952,
+  "reflow_layout_id": 3940341412620732266,
+  "read_calls": 2121,
+  "copied_bytes": 132492552,
+  "materialized_bytes": 132494747,
+  "max_window": 262144
+}

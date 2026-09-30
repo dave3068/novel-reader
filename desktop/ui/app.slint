@@ -1,0 +1,1347 @@
+//! novel-reader 桌面（Slint）UI —— 唯一的 UI 定义来源。
+//!
+//! 边界（`desktop/spec.md` DR2、`design.md` §2、DT1 禁止事项）：
+//!
+//! - 本文件只做「状态投影 + 交互事件转发」。编码识别、章节识别、分页边界、位置校验、
+//!   书签规则全部属于冻结核心 `reading-core`，UI 不得复制、也不得自行推断；
+//! - 版式常量（顶栏高度 / 底部栏高度 / 正文内边距 / 菜单高度 等）的**唯一来源**是
+//!   `crates/desktop-app/src/layout.rs`。下面的 `UiMetrics` 只有属性声明（默认 `0px`），
+//!   启动时由 Rust 的 `ui.rs::apply_layout_metrics` 注入真实数值；
+//! - 本文件任何位置都不得写死尺寸（一律走 `UiMetrics.*`），由
+//!   `scripts/verify-desktop-scope.py` 与 `tests/layout_constants.rs` 双重强制；
+//! - `Screens` 的序号与 Rust `app_state::Screen::index()` 一致，由 Rust 投影驱动，
+//!   界面自己不做页面语义判断；
+//! - 目录 / 书签面板只渲染 Rust 给的有界窗口（序号、标题、文案都由 Rust 生成），
+//!   界面不计算章节、不解析位置、不拼文案（DT4）。
+
+import { LineEdit } from "std-widgets.slint";
+
+export struct BookRow {
+    id: string,
+    title: string,
+    status: string,
+    progress: string,
+    needs-relink: bool,
+}
+
+// 目录一行（可显示字段；序号与当前章标记由 Rust 给出）。
+export struct TocRow {
+    sequence: string,
+    title: string,
+    current: bool,
+}
+
+// 书签一行（可显示字段；位置文案由 Rust 生成）。
+export struct MarkRow {
+    id: string,
+    title: string,
+    position-label: string,
+    current-chapter: bool,
+    selected: bool,
+}
+
+// 内容编码一行（名称与「当前」标记由 Rust 给出；界面不做编码语义）。
+export struct ChoiceRow {
+    name: string,
+    current: bool,
+}
+
+// 全局设置一行（键 / 名称 / 当前值 / 说明都由 Rust 生成）。
+export struct SettingsRow {
+    key: string,
+    label: string,
+    value: string,
+    note: string,
+    effective: bool,
+}
+
+// 版式常量投影入口（数值由 Rust 注入，此处只有声明）。
+export global UiMetrics {
+    in property <length> top-bar-height: 0px;
+    in property <length> bottom-bar-height: 0px;
+    in property <length> menu-height: 0px;
+    in property <length> content-padding-h: 0px;
+    in property <length> content-padding-v: 0px;
+    in property <length> nav-tab-width: 0px;
+    in property <length> nav-tab-height: 0px;
+    in property <length> default-window-width: 0px;
+    in property <length> default-window-height: 0px;
+    in property <length> title-font-size: 0px;
+    in property <length> body-font-size: 0px;
+    in property <length> caption-font-size: 0px;
+    in property <length> corner-radius: 0px;
+    // 窗口最小尺寸（窗口本身用 preferred-*，可缩放/可最大化）。
+    in property <length> min-window-width: 0px;
+    in property <length> min-window-height: 0px;
+    // 目录滚动条（宽度 / 右缘间距 / 滑块最小长度）。
+    in property <length> scrollbar-width: 0px;
+    in property <length> scrollbar-gutter: 0px;
+    in property <length> scrollbar-min-handle: 0px;
+    // 面板内行间距：不写死绝对尺寸，由单一来源（说明字号）派生。
+    out property <length> panel-row-gap: caption-font-size / 4;
+}
+
+// 页面序号（与 Rust `app_state::Screen` 对齐）。
+export global Screens {
+    out property <int> shelf: 0;
+    out property <int> reader: 1;
+    out property <int> settings: 2;
+    out property <int> importing: 3;
+    out property <int> error: 4;
+}
+
+// 顶栏导航按钮。
+component NavTab inherits Rectangle {
+    in property <string> caption: "";
+    in property <bool> active: false;
+    callback activated();
+
+    width: UiMetrics.nav-tab-width;
+    height: UiMetrics.nav-tab-height;
+    border-radius: UiMetrics.corner-radius;
+    background: active ? #1890ff : #d9d9d9;
+    accessible-role: button;
+    accessible-label: caption;
+
+    Text {
+        text: caption;
+        color: active ? #ffffff : #333333;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        font-size: UiMetrics.caption-font-size;
+    }
+
+    TouchArea {
+        clicked => {
+            root.activated();
+        }
+    }
+}
+
+// 通用动作按钮（可禁用；禁用时不触发回调）。
+component ActionButton inherits Rectangle {
+    in property <string> caption: "";
+    in property <bool> enabled: true;
+    callback activated();
+
+    width: UiMetrics.nav-tab-width;
+    height: UiMetrics.nav-tab-height;
+    border-radius: UiMetrics.corner-radius;
+    background: enabled ? #1890ff : #c8c8c8;
+    accessible-role: button;
+    accessible-label: caption;
+
+    Text {
+        text: caption;
+        color: enabled ? #ffffff : #f0f0f0;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        font-size: UiMetrics.caption-font-size;
+    }
+
+    TouchArea {
+        clicked => {
+            if (root.enabled) {
+                root.activated();
+            }
+        }
+    }
+}
+
+// 书架页：只显示 Rust 投影的行，不做任何导入/解析逻辑。
+//
+// 「导入 TXT…」与「重新关联…」都只上报意图（Rust 侧决定校验、指纹比对与错误文案）；
+// 是否显示重新关联入口由 Rust 投影的 `needs-relink` 决定。
+component ShelfPage inherits Rectangle {
+    in property <[BookRow]> rows: [];
+    in property <string> hint: "";
+    in property <bool> theme-dark: false;
+    callback import-txt();
+    callback relink-book(string);
+    /// 打开阅读：值为书籍 id（与启动驱动 `NR_READER_BOOK` 同一入口）。
+    callback open-book(string);
+
+    background: transparent;
+
+    VerticalLayout {
+        padding-left: UiMetrics.content-padding-h;
+        padding-right: UiMetrics.content-padding-h;
+        padding-top: UiMetrics.content-padding-v;
+        padding-bottom: UiMetrics.content-padding-v;
+        spacing: UiMetrics.caption-font-size;
+
+        HorizontalLayout {
+            spacing: UiMetrics.caption-font-size;
+            alignment: start;
+
+            ActionButton {
+                caption: "导入 TXT…";
+                activated => {
+                    root.import-txt();
+                }
+            }
+        }
+
+        Text {
+            text: root.hint;
+            font-size: UiMetrics.body-font-size;
+            color: root.theme-dark ? #b0b0b0 : #555555;
+            wrap: word-wrap;
+        }
+
+        for row in root.rows: Rectangle {
+            height: UiMetrics.bottom-bar-height;
+            background: root.theme-dark ? #2c2c2e : #ffffff;
+            border-radius: UiMetrics.corner-radius;
+
+            HorizontalLayout {
+                padding-left: UiMetrics.content-padding-h;
+                padding-right: UiMetrics.content-padding-h;
+                spacing: UiMetrics.content-padding-h;
+
+                Text {
+                    text: row.title;
+                    font-size: UiMetrics.body-font-size;
+                    color: root.theme-dark ? #f0f0f0 : #222222;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: row.status;
+                    font-size: UiMetrics.caption-font-size;
+                    color: #888888;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: row.progress;
+                    font-size: UiMetrics.caption-font-size;
+                    color: #888888;
+                    vertical-alignment: center;
+                }
+                ActionButton {
+                    caption: "阅读";
+                    activated => {
+                        root.open-book(row.id);
+                    }
+                }
+                ActionButton {
+                    caption: "重新关联…";
+                    enabled: row.needs-relink;
+                    activated => {
+                        root.relink-book(row.id);
+                    }
+                }
+            }
+        }
+    }
+}
+
+// 阅读页：正文区域几何与 Rust `LayoutMetrics::content_area` 同口径（同一份常量）。
+//
+// 正文渲染口径（DT3，DR3）：
+// - 逐行渲染：行数与行盒高度由 Rust 的测量结果唯一决定（`page-lines` / `line-pitch`），
+//   界面**不**自行换行、不叠加段距、不做首行缩进、不加字距；
+// - 行宽与正文区宽度相同，且每行都从行盒顶部起算，因此「一页的行数 × 行盒 ≤ 正文区高度」
+//   这条测量端不变量在渲染端同样成立：没有滚动条、没有半字裁切、底部也不留整行空白；
+// - 正文区 `clip: true`：即使出现异常长的行也只被裁掉右侧，绝不产生纵向溢出。
+//
+// 目录 / 书签 / 进度（DT4）：面板行与全部文案来自 Rust 的有界投影；手势模式下隐藏
+// 常驻翻页按钮条，正文左右区域点击翻页、中部点击呼出菜单。
+component ReaderPage inherits Rectangle {
+    in property <string> book-title: "";
+    in property <string> chapter-title: "";
+    in property <string> chapter-label: "";
+    in property <string> page-text: "";
+    in property <string> page-label: "";
+    in property <[string]> page-lines: [];
+    in property <length> line-pitch: 0px;
+    in property <length> body-font-size: 0px;
+    in property <string> body-font-family: "";
+    in property <bool> menu-open: false;
+    in property <bool> theme-dark: false;
+    in property <bool> gesture-mode: false;
+    in property <string> progress-status: "";
+    in property <bool> toc-open: false;
+    in property <[TocRow]> toc-rows: [];
+    // 目录滚动条比例：`toc-ratio` = 窗口起点在列表中的比例；`toc-handle-ratio` = 可视窗口占比。
+    in property <float> toc-ratio: 0;
+    in property <float> toc-handle-ratio: 0.2;
+    in property <bool> marks-open: false;
+    in property <[MarkRow]> mark-rows: [];
+    in property <int> mark-total: 0;
+    in property <string> rename-text: "";
+    // 信息区附加行 + 通用选项面板（具体语义全部由 Rust 投影为文本与行数据）。
+    in property <string> meta-label: "";
+    in property <bool> choice-open: false;
+    in property <[ChoiceRow]> choice-rows: [];
+    // 沉浸阅读（隐藏顶栏 / 底部状态栏 / 阅读菜单；正文区使用整个窗口）。
+    in property <bool> immersive: false;
+    callback toggle-menu();
+    callback immersive-toggle();
+    callback prev-page();
+    callback next-page();
+    callback save-progress();
+    callback toc-toggle();
+    callback toc-scroll(int);
+    callback chapter-jump(string);
+    /// 目录滚轮（`length` 增量，正数向下）。在目录面板内被消费，不触发正文翻页。
+    callback toc-wheel(length);
+    /// 目录滚动条定位（传入指针 y 与轨道高度两个长度；Rust 换算为比例）。
+    callback toc-seek(length, length);
+    callback choice-toggle();
+    callback choice-select(string);
+    callback marks-toggle();
+    callback marks-scroll(int);
+    callback mark-add();
+    callback mark-select(string);
+    callback mark-jump(string);
+    callback mark-rename(string);
+    callback mark-delete(string);
+    callback rename-text-edited(string);
+    // DT8：键盘 / 滚轮输入意图（只转发原始事件数据；「哪些键 / 哪个方向代表翻页」以及
+    // 「输入框聚焦时不翻页」的判定全部在 Rust `crate::input`，界面不做翻页语义）。
+    callback key-input(string, bool);
+    callback wheel-input(length, length);
+
+    background: transparent;
+
+    // ---- DT8：键盘翻页入口（真实按键通道）----
+    //
+    // 覆盖整个阅读页的 `FocusScope` 是 Slint 中窗口级键盘的唯一落地方式：
+    // `WindowEvent::KeyPressed` 只发给持有焦点的元素，因此这里既负责「拿焦点」
+    // （实例化时、点击正文区时、书签面板关闭时），也只做**事件转发**：
+    // 原始按键文本 + 「焦点是否不在本作用域上」（本页唯一其它可聚焦元素是书签重命名
+    // 输入框，所以该标志即「输入框聚焦」）。翻页意图与「输入框聚焦时不翻页」的规则
+    // 全部在 Rust `crate::input`，界面不复制任何翻页语义。
+    reader-keys := FocusScope {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+
+        init => {
+            self.focus();
+        }
+
+        key-pressed(event) => {
+            // 只上报「原始按键文本 + 焦点是否不在本作用域上」：
+            // 本页唯一的其它可聚焦元素是书签重命名输入框，因此该标志配合 Rust 侧的书签
+            // 面板状态即可判定「输入框聚焦」；是否翻页、是否屏蔽都由 Rust `crate::input`
+            // 决定，界面既不吃掉文本输入，也不复制任何翻页语义。
+            root.key-input(event.text, !self.has-focus);
+            reject
+        }
+
+        // 阅读菜单条：展开时高度为 UiMetrics.menu-height，收起时为 0px；沉浸阅读时恒为 0。
+        Rectangle {
+            x: 0;
+            y: 0;
+            width: parent.width;
+            height: root.immersive ? 0px : (root.menu-open ? UiMetrics.menu-height : 0px);
+            background: root.theme-dark ? #3a3a3c : #e6e6e6;
+            clip: true;
+
+            HorizontalLayout {
+                padding-left: UiMetrics.content-padding-h;
+                padding-right: UiMetrics.content-padding-h;
+                spacing: UiMetrics.caption-font-size;
+                alignment: start;
+
+                // 书名 + 当前章节（原先画在正文区顶部、与正文重叠；现统一在此常驻显示）。
+                // 占「剩余宽度」并可省略：文字再长也不得把菜单按钮推出窗口（真实缺陷）。
+                Text {
+                    text: root.book-title == "" ? root.chapter-label : root.book-title + " · " + root.chapter-label;
+                    font-size: UiMetrics.caption-font-size;
+                    color: root.theme-dark ? #f0f0f0 : #333333;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                }
+                ActionButton {
+                    caption: "目录";
+                    activated => {
+                        root.toc-toggle();
+                    }
+                }
+                ActionButton {
+                    caption: "选项";
+                    activated => {
+                        root.choice-toggle();
+                    }
+                }
+                ActionButton {
+                    caption: "书签";
+                    activated => {
+                        root.marks-toggle();
+                    }
+                }
+                ActionButton {
+                    caption: "保存进度";
+                    activated => {
+                        root.save-progress();
+                    }
+                }
+                ActionButton {
+                    caption: "沉浸阅读";
+                    activated => {
+                        root.immersive-toggle();
+                    }
+                }
+                ActionButton {
+                    caption: "收起菜单";
+                    activated => {
+                        root.toggle-menu();
+                    }
+                }
+            }
+        }
+
+        // 正文区域：x/width/height 与 Rust 侧同一常量集（不含顶栏/底部栏的局部坐标）。
+        // 沉浸阅读时菜单条不再占位（Rust 侧同口径：`LayoutMetrics::immersive()`）。
+        Rectangle {
+            x: UiMetrics.content-padding-h;
+            y: (root.immersive ? 0px : (root.menu-open ? UiMetrics.menu-height : 0px)) + UiMetrics.content-padding-v;
+            width: parent.width - 2 * UiMetrics.content-padding-h;
+            height: parent.height - (root.immersive ? 0px : (root.menu-open ? UiMetrics.menu-height : 0px)) - 2 * UiMetrics.content-padding-v;
+            background: root.theme-dark ? #1e1e20 : #ffffff;
+            border-radius: UiMetrics.corner-radius;
+            clip: true;
+
+            // 逐行渲染：第 i 行固定在 y = i × 行盒，行盒高度来自测量结果。
+            for line[index] in root.page-lines: Text {
+                x: 0;
+                y: index * root.line-pitch;
+                width: parent.width;
+                height: root.line-pitch;
+                text: line;
+                font-family: root.body-font-family;
+                font-size: root.body-font-size;
+                letter-spacing: 0px;
+                color: root.theme-dark ? #ececec : #222222;
+                horizontal-alignment: left;
+                vertical-alignment: center;
+                wrap: no-wrap;
+            }
+
+            // 正文区输入层：手势点击（DT4）+ 滚轮整页翻页（DT8）。
+            //
+            // - 手势模式：左 1/3 上一页、右 1/3 下一页、中部呼出/收起菜单（语义由 Rust 决定）；
+            // - 任意模式：滚轮只上报意图 —— DR3 要求正文不出现滚动条，因此滚轮映射为**整页翻页**
+            //   而不是滚动正文；
+            // - 点击顺便把键盘焦点交给阅读页的 FocusScope（键盘翻页入口，DT8）。
+            TouchArea {
+                x: 0;
+                y: 0;
+                width: parent.width;
+                height: parent.height;
+
+                clicked => {
+                    reader-keys.focus();
+                    if (root.gesture-mode) {
+                        if (self.mouse-x < self.width / 3) {
+                            root.prev-page();
+                        } else if (self.mouse-x > self.width * 2 / 3) {
+                            root.next-page();
+                        } else {
+                            // 中部：沉浸态下退出沉浸（菜单条不可见），否则呼出/收起菜单。
+                            if (root.immersive) {
+                                root.immersive-toggle();
+                            } else {
+                                root.toggle-menu();
+                            }
+                        }
+                    } else if (root.immersive) {
+                        // 按钮模式的沉浸态：顶栏/底栏/菜单都不可见，点正文即退出沉浸
+                        // （另有 Esc 键与右上角「退出沉浸」按钮，三条路径等价）。
+                        root.immersive-toggle();
+                    }
+                }
+
+                scroll-event(event) => {
+                    root.wheel-input(event.delta-x, event.delta-y);
+                    accept
+                }
+            }
+        }
+
+        // 正文区顶部不再绘制「书名 / 章节名」浮动小标题：它们的 y 与正文首行同位，
+        // 必然与正文重叠（2026-09-29 真实缺陷）。这两条信息已在菜单条与底部状态栏常驻显示，
+        // 故此处直接移除，而不是牺牲正文行空间。
+
+        // ---- 目录面板（覆盖正文区；只渲染 Rust 给的有界窗口）----
+        // 交互：滚轮滚动目录本身（不翻动正文）、右侧细滚动条点击/拖动按比例定位。
+        if (root.toc-open) : Rectangle {
+            x: UiMetrics.content-padding-h;
+            y: (root.menu-open ? UiMetrics.menu-height : 0px) + UiMetrics.content-padding-v;
+            width: parent.width - 2 * UiMetrics.content-padding-h;
+            height: parent.height - (root.menu-open ? UiMetrics.menu-height : 0px) - 2 * UiMetrics.content-padding-v;
+            background: root.theme-dark ? #26262a : #f7f7f9;
+            border-radius: UiMetrics.corner-radius;
+            clip: true;
+
+            // 滚轮层：位于目录内容**之下**（声明的先后即叠放顺序）——
+            // 这样行内「跳转」按钮照常可点，而滚轮事件在本层被消费，
+            // 不会再冒泡到正文区触发翻页（2026-09-30 真实缺陷）。
+            TouchArea {
+                x: 0;
+                y: 0;
+                width: parent.width;
+                height: parent.height;
+
+                scroll-event(event) => {
+                    // 长度类型直接交给 Rust（Rust 侧只取符号；界面不做数值换算）。
+                    root.toc-wheel(event.delta-y);
+                    accept
+                }
+            }
+
+            VerticalLayout {
+                padding-left: UiMetrics.content-padding-h;
+                padding-right: UiMetrics.content-padding-h * 2;
+                padding-top: UiMetrics.content-padding-v;
+                spacing: UiMetrics.panel-row-gap;
+
+                HorizontalLayout {
+                    spacing: UiMetrics.caption-font-size;
+                    alignment: start;
+                    Text {
+                        text: "目录";
+                        font-size: UiMetrics.body-font-size;
+                        color: root.theme-dark ? #f0f0f0 : #222222;
+                        vertical-alignment: center;
+                    }
+                    ActionButton {
+                        caption: "更早";
+                        activated => {
+                            root.toc-scroll(-1);
+                        }
+                    }
+                    ActionButton {
+                        caption: "更晚";
+                        activated => {
+                            root.toc-scroll(1);
+                        }
+                    }
+                    ActionButton {
+                        caption: "收起目录";
+                        activated => {
+                            root.toc-toggle();
+                        }
+                    }
+                }
+
+                for row in root.toc-rows: Rectangle {
+                    height: UiMetrics.nav-tab-height;
+                    background: row.current ? (root.theme-dark ? #3a3a3c : #d6e4ff) : transparent;
+                    // 可访问名称（AC-D4/DR4）：目录行必须在辅助技术层级里可被识别。
+                    accessible-role: list-item;
+                    accessible-label: row.title;
+
+                    HorizontalLayout {
+                        spacing: UiMetrics.caption-font-size;
+
+                        Text {
+                            text: row.title;
+                            font-size: UiMetrics.caption-font-size;
+                            color: row.current ? #1890ff : (root.theme-dark ? #d0d0d0 : #333333);
+                            vertical-alignment: center;
+                        }
+                        ActionButton {
+                            caption: "跳转";
+                            activated => {
+                                root.chapter-jump(row.sequence);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 细滚动条：点击轨道或拖动滑块即按比例定位（找偏后章节不必逐页翻）。
+            // 所有尺寸来自 UiMetrics（唯一来源：layout.rs），界面不书写像素常量。
+            Rectangle {
+                x: parent.width - UiMetrics.scrollbar-gutter;
+                y: UiMetrics.content-padding-v;
+                width: UiMetrics.scrollbar-width;
+                height: parent.height - 2 * UiMetrics.content-padding-v;
+                background: root.theme-dark ? #3a3a3c : #e4e4e7;
+                border-radius: UiMetrics.scrollbar-width / 2;
+
+                Rectangle {
+                    x: 0;
+                    width: parent.width;
+                    height: max(UiMetrics.scrollbar-min-handle, parent.height * root.toc-handle-ratio);
+                    y: (parent.height - self.height) * root.toc-ratio;
+                    background: #1890ff;
+                    border-radius: UiMetrics.scrollbar-width / 2;
+                }
+
+                TouchArea {
+                    clicked => {
+                        root.toc-seek(self.mouse-y, self.height);
+                    }
+                    moved => {
+                        if (self.pressed) {
+                            root.toc-seek(self.mouse-y, self.height);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 沉浸阅读：右上角常驻「退出沉浸」——顶栏与底部状态栏都被隐藏，这是唯一可见的界面出口
+        // （键盘翻页与手势在沉浸态照常可用；界面显隐由 Rust 的状态投影决定）。
+        if (root.immersive) : Rectangle {
+            x: parent.width - UiMetrics.nav-tab-width - UiMetrics.content-padding-h;
+            y: UiMetrics.caption-font-size;
+            opacity: 0.8;
+
+            ActionButton {
+                caption: "退出沉浸";
+                activated => {
+                    root.immersive-toggle();
+                }
+            }
+        }
+
+        // ---- 选项面板（覆盖正文区；只渲染 Rust 给的行）----
+        // 语义：点击「选用」= 转发给 Rust（Rust 侧落库、失效索引、重建目录与分页）；
+        // 界面不判定选项含义，只渲染投影结果。
+        if (root.choice-open) : Rectangle {
+            x: UiMetrics.content-padding-h;
+            y: (root.menu-open ? UiMetrics.menu-height : 0px) + UiMetrics.content-padding-v;
+            width: parent.width - 2 * UiMetrics.content-padding-h;
+            height: parent.height - (root.menu-open ? UiMetrics.menu-height : 0px) - 2 * UiMetrics.content-padding-v;
+            background: root.theme-dark ? #26262a : #f7f7f9;
+            border-radius: UiMetrics.corner-radius;
+            clip: true;
+
+            VerticalLayout {
+                padding-left: UiMetrics.content-padding-h;
+                padding-right: UiMetrics.content-padding-h;
+                padding-top: UiMetrics.content-padding-v;
+                spacing: UiMetrics.panel-row-gap;
+
+                HorizontalLayout {
+                    spacing: UiMetrics.caption-font-size;
+                    alignment: start;
+                    Text {
+                        text: "选项（当前：" + (root.meta-label == "" ? "未知" : root.meta-label) + "）";
+                        font-size: UiMetrics.body-font-size;
+                        color: root.theme-dark ? #f0f0f0 : #222222;
+                        vertical-alignment: center;
+                    }
+                    ActionButton {
+                        caption: "关闭";
+                        activated => {
+                            root.choice-toggle();
+                        }
+                    }
+                }
+
+                for row in root.choice-rows: Rectangle {
+                    height: UiMetrics.nav-tab-height;
+                    background: row.current ? (root.theme-dark ? #3a3a3c : #d6e4ff) : transparent;
+                    // 可访问名称（AC-D4/DR4）：编码行必须在辅助技术层级里可被识别。
+                    accessible-role: list-item;
+                    accessible-label: row.name;
+
+                    HorizontalLayout {
+                        spacing: UiMetrics.caption-font-size;
+
+                        Text {
+                            text: row.name;
+                            font-size: UiMetrics.caption-font-size;
+                            color: row.current ? #1890ff : (root.theme-dark ? #d0d0d0 : #333333);
+                            vertical-alignment: center;
+                        }
+                        ActionButton {
+                            caption: row.current ? "当前" : "选用";
+                            enabled: !row.current;
+                            activated => {
+                                root.choice-select(row.name);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ---- 书签面板（覆盖正文区；只渲染 Rust 给的有界窗口）----
+        if (root.marks-open) : Rectangle {
+            x: UiMetrics.content-padding-h;
+            y: (root.menu-open ? UiMetrics.menu-height : 0px) + UiMetrics.content-padding-v;
+            width: parent.width - 2 * UiMetrics.content-padding-h;
+            height: parent.height - (root.menu-open ? UiMetrics.menu-height : 0px) - 2 * UiMetrics.content-padding-v;
+            background: root.theme-dark ? #26262a : #f7f7f9;
+            border-radius: UiMetrics.corner-radius;
+            clip: true;
+
+            VerticalLayout {
+                padding-left: UiMetrics.content-padding-h;
+                padding-right: UiMetrics.content-padding-h;
+                padding-top: UiMetrics.content-padding-v;
+                spacing: UiMetrics.panel-row-gap;
+
+                HorizontalLayout {
+                    spacing: UiMetrics.caption-font-size;
+                    alignment: start;
+                    Text {
+                        text: "书签（\{root.mark-total}）";
+                        font-size: UiMetrics.body-font-size;
+                        color: root.theme-dark ? #f0f0f0 : #222222;
+                        vertical-alignment: center;
+                    }
+                    ActionButton {
+                        caption: "新增书签";
+                        activated => {
+                            root.mark-add();
+                        }
+                    }
+                    ActionButton {
+                        caption: "更早";
+                        activated => {
+                            root.marks-scroll(-1);
+                        }
+                    }
+                    ActionButton {
+                        caption: "更晚";
+                        activated => {
+                            root.marks-scroll(1);
+                        }
+                    }
+                    ActionButton {
+                        caption: "收起书签";
+                        activated => {
+                            root.marks-toggle();
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: UiMetrics.caption-font-size;
+
+                    rename-edit := LineEdit {
+                        width: parent.width - UiMetrics.nav-tab-width * 2;
+                        text: root.rename-text;
+                        placeholder-text: "选中书签后输入新名称";
+                        // 可访问名称（AC-D4/DR4）：输入框必须有可访问名称，而不是只有 placeholder。
+                        accessible-label: "书签名称";
+                        edited(text) => {
+                            root.rename-text-edited(text);
+                        }
+                    }
+                    ActionButton {
+                        caption: "重命名";
+                        activated => {
+                            root.mark-rename(root.rename-text);
+                        }
+                    }
+                }
+
+                for row in root.mark-rows: Rectangle {
+                    height: UiMetrics.nav-tab-height;
+                    background: row.selected ? (root.theme-dark ? #3a3a3c : #d6e4ff) : transparent;
+                    // 可访问名称（AC-D4/DR4）：书签行必须在辅助技术层级里可被识别。
+                    accessible-role: list-item;
+                    accessible-label: row.title;
+
+                    HorizontalLayout {
+                        spacing: UiMetrics.caption-font-size;
+
+                        Text {
+                            text: row.title;
+                            font-size: UiMetrics.caption-font-size;
+                            color: row.current-chapter ? #1890ff : (root.theme-dark ? #d0d0d0 : #333333);
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: row.position-label;
+                            font-size: UiMetrics.caption-font-size;
+                            color: #999999;
+                            vertical-alignment: center;
+                        }
+                        ActionButton {
+                            caption: "选中";
+                            activated => {
+                                root.mark-select(row.id);
+                            }
+                        }
+                        ActionButton {
+                            caption: "跳转";
+                            activated => {
+                                root.mark-jump(row.id);
+                            }
+                        }
+                        ActionButton {
+                            caption: "删除";
+                            activated => {
+                                root.mark-delete(row.id);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 进度状态（保存 / 恢复结果；有内容时才显示）。
+        Text {
+            x: UiMetrics.content-padding-h;
+            y: parent.height - UiMetrics.bottom-bar-height;
+            text: root.progress-status;
+            font-size: UiMetrics.caption-font-size;
+            color: #d46b08;
+            visible: root.progress-status != "";
+        }
+    }
+
+    // 书签面板关闭后把键盘焦点收回阅读页（面板里唯一可聚焦元素是重命名输入框，
+    // 关闭时焦点会随之丢失；不收回会让键盘翻页在下次点击正文前失效）。
+    changed marks-open => {
+        if (!self.marks-open) {
+            reader-keys.focus();
+        }
+    }
+}
+
+// 设置页：只显示 Rust 投影的全局设置行；改动只上报意图（键 + 步长），
+// 取值校验、毫单位换算与持久化全部在 `crate::settings`。
+component SettingsPage inherits Rectangle {
+    in property <[SettingsRow]> rows: [];
+    in property <string> interaction-mode: "";
+    in property <bool> persisted: false;
+    in property <bool> theme-dark: false;
+    callback change(string, int);
+
+    background: transparent;
+
+    VerticalLayout {
+        padding-left: UiMetrics.content-padding-h;
+        padding-right: UiMetrics.content-padding-h;
+        padding-top: UiMetrics.content-padding-v;
+        padding-bottom: UiMetrics.content-padding-v;
+        spacing: UiMetrics.panel-row-gap;
+
+        Text {
+            text: root.persisted ? "全局阅读设置（已持久化到本地库）" : "全局阅读设置（默认值；首次修改后落库）";
+            font-size: UiMetrics.caption-font-size;
+            color: #888888;
+        }
+
+        for row in root.rows: Rectangle {
+            height: UiMetrics.bottom-bar-height;
+            background: root.theme-dark ? #2c2c2e : #ffffff;
+            border-radius: UiMetrics.corner-radius;
+
+            HorizontalLayout {
+                padding-left: UiMetrics.content-padding-h;
+                padding-right: UiMetrics.content-padding-h;
+                spacing: UiMetrics.content-padding-h;
+
+                Text {
+                    text: row.label;
+                    font-size: UiMetrics.body-font-size;
+                    color: root.theme-dark ? #f0f0f0 : #222222;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: row.value;
+                    font-size: UiMetrics.body-font-size;
+                    color: #1890ff;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: row.effective ? "" : row.note;
+                    font-size: UiMetrics.caption-font-size;
+                    color: #d46b08;
+                    vertical-alignment: center;
+                }
+                ActionButton {
+                    caption: "减小";
+                    activated => {
+                        root.change(row.key, -1);
+                    }
+                }
+                ActionButton {
+                    caption: "增大";
+                    activated => {
+                        root.change(row.key, 1);
+                    }
+                }
+            }
+        }
+    }
+}
+
+// 过渡页（导入中 / 错误）：只显示 Rust 投影的标题与说明。
+component PlaceholderPage inherits Rectangle {
+    in property <string> title: "";
+    in property <string> message: "";
+    in property <bool> theme-dark: false;
+
+    background: transparent;
+
+    VerticalLayout {
+        padding-left: UiMetrics.content-padding-h;
+        padding-right: UiMetrics.content-padding-h;
+        padding-top: UiMetrics.content-padding-v;
+        spacing: UiMetrics.caption-font-size;
+
+        Text {
+            text: root.title;
+            font-size: UiMetrics.title-font-size;
+            color: root.theme-dark ? #f0f0f0 : #222222;
+        }
+        Text {
+            text: root.message;
+            font-size: UiMetrics.body-font-size;
+            color: root.theme-dark ? #b0b0b0 : #555555;
+            wrap: word-wrap;
+        }
+    }
+}
+
+export component AppWindow inherits Window {
+    title: "novel-reader";
+    // 用 `preferred-*` 而非固定 `width/height`：**固定尺寸会被 Slint 当作「不可缩放窗口」**
+    // （无法最大化、无法拖边框改大小 —— 2026-09-30 真实缺陷）。
+    // 窗口尺寸变化由 Rust 侧 `viewport-changed` → 重排处理：当前位置按**字节偏移**保持，
+    // 只改变每页容纳的内容长度，不需要计算总页数。
+    preferred-width: UiMetrics.default-window-width;
+    preferred-height: UiMetrics.default-window-height;
+    min-width: UiMetrics.min-window-width;
+    min-height: UiMetrics.min-window-height;
+    background: root.theme-dark ? #1c1c1e : #f2f3f5;
+
+    // ---- Rust → UI（只读投影；Rust 是唯一状态源）----
+    in property <int> current-screen: 0;
+    in property <string> page-title: "";
+    in property <string> status-text: "";
+    in property <string> app-version: "";
+    in property <bool> theme-dark: false;
+    in property <[BookRow]> book-rows: [];
+    in property <string> shelf-hint: "";
+    in property <string> reader-book-title: "";
+    in property <string> reader-chapter-title: "";
+    in property <string> reader-chapter-label: "";
+    in property <string> reader-page-text: "";
+    in property <[string]> reader-page-lines: [];
+    in property <length> reader-line-pitch: 0px;
+    in property <length> reader-body-font-size: 0px;
+    in property <string> reader-body-font-family: "";
+    in property <string> reader-page-label: "";
+    in property <bool> reader-menu-open: false;
+    // 重排状态（DT3B）：重排期间必须让用户看到「正在重排…」，文案由 Rust 提供。
+    in property <string> reader-reflow-status: "";
+    // DT4：进度状态 / 目录 / 书签 / 手势模式（全部由 Rust 投影）。
+    in property <string> reader-progress-status: "";
+    in property <bool> reader-gesture-mode: false;
+    in property <bool> reader-toc-open: false;
+    in property <[TocRow]> reader-toc-rows: [];
+    in property <float> reader-toc-ratio: 0;
+    in property <float> reader-toc-handle-ratio: 0.2;
+    in property <bool> reader-marks-open: false;
+    in property <[MarkRow]> reader-mark-rows: [];
+    in property <int> reader-mark-total: 0;
+    in property <string> reader-rename-text: "";
+    // 信息区附加行 + 通用选项面板（具体语义全部由 Rust 投影）。
+    in property <string> reader-meta-label: "";
+    in property <bool> reader-choice-open: false;
+    in property <[ChoiceRow]> reader-choice-rows: [];
+    // 沉浸阅读（隐藏顶栏 / 底部状态栏与阅读菜单，正文区使用整个窗口；状态由 Rust 持有）。
+    in property <bool> reader-immersive: false;
+    // 阅读进度读数（按字节位置，如 `42.3%`；页码不属于排版签名，故不作为进度）。
+    in property <string> reader-progress-percent: "";
+    // 真实字体度量（Slint 公开属性 `font-metrics`）：Rust 测量侧用它确定行盒下限，
+    // 保证「测量口径 = 渲染口径」而不是靠猜字号倍数。
+    out property <length> body-ascent: metrics-probe.font-metrics.ascent;
+    out property <length> body-descent: metrics-probe.font-metrics.descent;
+    in property <[SettingsRow]> settings-rows: [];
+    in property <string> settings-interaction-mode: "";
+    in property <bool> settings-persisted: false;
+    in property <string> placeholder-title: "";
+    in property <string> placeholder-message: "";
+
+    // ---- UI → Rust（只上报意图，页面语义由 Rust 决定）----
+    callback navigate(int);
+    callback reader-prev-page();
+    callback reader-next-page();
+    callback toggle-reader-menu();
+    callback settings-change(string, int);
+    callback import-txt();
+    callback relink-book(string);
+    // 书架行「阅读」：按书籍 id 打开阅读页（与 `NR_READER_BOOK` 同一函数）。
+    callback reader-open-book(string);
+    // DT4：进度 / 目录 / 书签入口（语义全部在 Rust：位置来自 ContentPosition）。
+    callback save-progress();
+    callback toc-toggle();
+    callback toc-scroll(int);
+    callback chapter-jump(string);
+    // 目录滚动条与滚轮（比例定位；滚轮在目录面板内消费，不翻正文）。
+    callback toc-wheel(length);
+    callback toc-seek(length, length);
+    callback marks-toggle();
+    callback marks-scroll(int);
+    callback mark-add();
+    callback mark-select(string);
+    callback mark-jump(string);
+    callback mark-rename(string);
+    callback mark-delete(string);
+    callback rename-text-edited(string);
+    callback choice-toggle();
+    callback choice-select(string);
+    callback immersive-toggle();
+    // DT8：键盘 / 滚轮输入（阅读页 `FocusScope.key-pressed` 与正文区 `scroll-event` 的落点）。
+    callback key-input(string, bool);
+    callback wheel-input(length, length);
+    // 窗口映射完成或尺寸变化（含 DPI 比例变化导致的逻辑尺寸变化）：
+    // Rust 侧据此在**取得真实尺寸之后**派生版式签名并重新分页。
+    callback viewport-changed(length, length);
+    callback quit-requested();
+
+    // 只在尺寸真的变化时上报（事件循环启动前的 0×0 不会触发）。
+    changed width => {
+        root.viewport-changed(root.width, root.height);
+    }
+    changed height => {
+        root.viewport-changed(root.width, root.height);
+    }
+
+    // 字体度量探针：与正文逐行 Text 使用完全相同的字体属性，位置在窗口之外（不可见）。
+    // 它不是装饰元素，而是「测量口径 = 渲染口径」的运行时依据（Slint 公开 API）。
+    metrics-probe := Text {
+        x: 0 - root.width;
+        y: 0 - root.height;
+        width: root.width;
+        height: root.reader-body-font-size;
+        text: "M";
+        font-family: root.reader-body-font-family;
+        font-size: root.reader-body-font-size;
+    }
+
+    // 顶栏：高度来自 UiMetrics.top-bar-height。沉浸阅读时整条隐藏（正文区占满窗口）。
+    Rectangle {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: UiMetrics.top-bar-height;
+        visible: !root.reader-immersive;
+        background: root.theme-dark ? #2c2c2e : #ffffff;
+
+        HorizontalLayout {
+            padding-left: UiMetrics.content-padding-h;
+            padding-right: UiMetrics.content-padding-h;
+            spacing: UiMetrics.caption-font-size;
+            alignment: start;
+
+            // 标题占「剩余宽度」并可省略：长标题不得把右侧导航按钮挤出窗口（2026-09-29 真实缺陷）。
+            Rectangle {
+                horizontal-stretch: 1;
+                min-width: 0px;
+                clip: true;
+                background: transparent;
+
+                Text {
+                    text: root.page-title;
+                    font-size: UiMetrics.title-font-size;
+                    color: root.theme-dark ? #f0f0f0 : #222222;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    width: 100%;
+                }
+            }
+            NavTab {
+                caption: "书架";
+                active: root.current-screen == Screens.shelf;
+                activated => {
+                    root.navigate(Screens.shelf);
+                }
+            }
+            NavTab {
+                caption: "阅读";
+                active: root.current-screen == Screens.reader;
+                activated => {
+                    root.navigate(Screens.reader);
+                }
+            }
+            NavTab {
+                caption: "设置";
+                active: root.current-screen == Screens.settings;
+                activated => {
+                    root.navigate(Screens.settings);
+                }
+            }
+        }
+    }
+
+    // 书架页。
+    if (root.current-screen == Screens.shelf) : ShelfPage {
+        x: 0;
+        y: UiMetrics.top-bar-height;
+        width: parent.width;
+        height: parent.height - UiMetrics.top-bar-height - UiMetrics.bottom-bar-height;
+        rows: root.book-rows;
+        hint: root.shelf-hint;
+        theme-dark: root.theme-dark;
+        import-txt => {
+            root.import-txt();
+        }
+        relink-book(book-id) => {
+            root.relink-book(book-id);
+        }
+        open-book(book-id) => {
+            root.reader-open-book(book-id);
+        }
+    }
+
+    // 阅读页。
+    if (root.current-screen == Screens.reader) : ReaderPage {
+        x: 0;
+        y: root.reader-immersive ? 0px : UiMetrics.top-bar-height;
+        width: parent.width;
+        height: root.reader-immersive ? parent.height : parent.height - UiMetrics.top-bar-height - UiMetrics.bottom-bar-height;
+        immersive: root.reader-immersive;
+        immersive-toggle => {
+            root.immersive-toggle();
+        }
+        book-title: root.reader-book-title;
+        chapter-title: root.reader-chapter-title;
+        chapter-label: root.reader-chapter-label;
+        page-text: root.reader-page-text;
+        page-lines: root.reader-page-lines;
+        line-pitch: root.reader-line-pitch;
+        body-font-size: root.reader-body-font-size;
+        body-font-family: root.reader-body-font-family;
+        page-label: root.reader-page-label;
+        menu-open: root.reader-menu-open;
+        theme-dark: root.theme-dark;
+        gesture-mode: root.reader-gesture-mode;
+        progress-status: root.reader-progress-status;
+        toc-open: root.reader-toc-open;
+        toc-rows: root.reader-toc-rows;
+        toc-ratio: root.reader-toc-ratio;
+        toc-handle-ratio: root.reader-toc-handle-ratio;
+        toc-wheel(delta) => {
+            root.toc-wheel(delta);
+        }
+        toc-seek(pointer-y, track-height) => {
+            root.toc-seek(pointer-y, track-height);
+        }
+        marks-open: root.reader-marks-open;
+        mark-rows: root.reader-mark-rows;
+        mark-total: root.reader-mark-total;
+        rename-text: root.reader-rename-text;
+        meta-label: root.reader-meta-label;
+        choice-open: root.reader-choice-open;
+        choice-rows: root.reader-choice-rows;
+        choice-toggle => {
+            root.choice-toggle();
+        }
+        choice-select(name) => {
+            root.choice-select(name);
+        }
+        toggle-menu => {
+            root.toggle-reader-menu();
+        }
+        prev-page => {
+            root.reader-prev-page();
+        }
+        next-page => {
+            root.reader-next-page();
+        }
+        save-progress => {
+            root.save-progress();
+        }
+        toc-toggle => {
+            root.toc-toggle();
+        }
+        toc-scroll(delta) => {
+            root.toc-scroll(delta);
+        }
+        chapter-jump(sequence) => {
+            root.chapter-jump(sequence);
+        }
+        marks-toggle => {
+            root.marks-toggle();
+        }
+        marks-scroll(delta) => {
+            root.marks-scroll(delta);
+        }
+        mark-add => {
+            root.mark-add();
+        }
+        mark-select(id) => {
+            root.mark-select(id);
+        }
+        mark-jump(id) => {
+            root.mark-jump(id);
+        }
+        mark-rename(name) => {
+            root.mark-rename(name);
+        }
+        mark-delete(id) => {
+            root.mark-delete(id);
+        }
+        rename-text-edited(text) => {
+            root.rename-text-edited(text);
+        }
+        key-input(text, text-input-focused) => {
+            root.key-input(text, text-input-focused);
+        }
+        wheel-input(delta-x, delta-y) => {
+            root.wheel-input(delta-x, delta-y);
+        }
+    }
+
+    // 设置页。
+    if (root.current-screen == Screens.settings) : SettingsPage {
+        x: 0;
+        y: UiMetrics.top-bar-height;
+        width: parent.width;
+        height: parent.height - UiMetrics.top-bar-height - UiMetrics.bottom-bar-height;
+        rows: root.settings-rows;
+        interaction-mode: root.settings-interaction-mode;
+        persisted: root.settings-persisted;
+        theme-dark: root.theme-dark;
+        change(key, delta) => {
+            root.settings-change(key, delta);
+        }
+    }
+
+    // 过渡页（导入中 / 错误）。
+    if (root.current-screen == Screens.importing || root.current-screen == Screens.error) : PlaceholderPage {
+        x: 0;
+        y: UiMetrics.top-bar-height;
+        width: parent.width;
+        height: parent.height - UiMetrics.top-bar-height - UiMetrics.bottom-bar-height;
+        title: root.placeholder-title;
+        message: root.placeholder-message;
+        theme-dark: root.theme-dark;
+    }
+
+    // 底部状态栏：高度来自 UiMetrics.bottom-bar-height。沉浸阅读时整条隐藏。
+    Rectangle {
+        x: 0;
+        y: parent.height - UiMetrics.bottom-bar-height;
+        width: parent.width;
+        height: UiMetrics.bottom-bar-height;
+        visible: !root.reader-immersive;
+        background: root.theme-dark ? #2c2c2e : #e6e6e6;
+
+        HorizontalLayout {
+            padding-left: UiMetrics.content-padding-h;
+            padding-right: UiMetrics.content-padding-h;
+            spacing: UiMetrics.caption-font-size;
+            alignment: start;
+
+            // 信息区占「剩余宽度」并在必要时裁切/省略：信息再多也不得把右侧按钮挤出窗口
+            // （2026-09-29 真实缺陷：状态/章节/页码等串成一行，按钮被顶到窗口外无法点击）。
+            Rectangle {
+                horizontal-stretch: 1;
+                min-width: 0px;
+                clip: true;
+                background: transparent;
+
+                HorizontalLayout {
+                    spacing: UiMetrics.caption-font-size;
+                    alignment: start;
+
+                    Text {
+                        text: root.status-text;
+                        font-size: UiMetrics.caption-font-size;
+                        color: root.theme-dark ? #d0d0d0 : #333333;
+                        vertical-alignment: center;
+                        // 状态文本最先让位（其余信息保持自然宽度，超出部分由外层裁切）。
+                        horizontal-stretch: 1;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: root.reader-chapter-label;
+                        font-size: UiMetrics.caption-font-size;
+                        color: #888888;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: root.reader-page-label;
+                        font-size: UiMetrics.caption-font-size;
+                        color: #888888;
+                        vertical-alignment: center;
+                    }
+                    // 阅读进度（按字节位置；与「第 N 页」并列显示，切章/改字号都不会退回 0）。
+                    Text {
+                        text: root.reader-progress-percent;
+                        font-size: UiMetrics.caption-font-size;
+                        color: #888888;
+                        vertical-alignment: center;
+                        visible: root.reader-progress-percent != "";
+                    }
+                    // 信息区附加行（Rust 投影的文本，如「编码 GBK（手动）」；界面不解释其含义）。
+                    Text {
+                        text: root.reader-meta-label;
+                        font-size: UiMetrics.caption-font-size;
+                        color: #888888;
+                        vertical-alignment: center;
+                        visible: root.reader-meta-label != "";
+                    }
+                    // 重排状态（DT3B）：有内容时才显示，避免常态占用状态栏。
+                    Text {
+                        text: root.reader-reflow-status;
+                        font-size: UiMetrics.caption-font-size;
+                        color: #d46b08;
+                        vertical-alignment: center;
+                        visible: root.reader-reflow-status != "";
+                    }
+                    Text {
+                        text: root.app-version;
+                        font-size: UiMetrics.caption-font-size;
+                        color: #888888;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+            // 手势模式下隐藏常驻翻页按钮条（正文左右区域点击翻页）。
+            ActionButton {
+                caption: "上一页";
+                visible: !root.reader-gesture-mode;
+                activated => {
+                    root.reader-prev-page();
+                }
+            }
+            ActionButton {
+                caption: "下一页";
+                visible: !root.reader-gesture-mode;
+                activated => {
+                    root.reader-next-page();
+                }
+            }
+            ActionButton {
+                caption: "阅读菜单";
+                activated => {
+                    root.toggle-reader-menu();
+                }
+            }
+            ActionButton {
+                caption: "目录";
+                activated => {
+                    root.toc-toggle();
+                }
+            }
+            ActionButton {
+                caption: "书签";
+                activated => {
+                    root.marks-toggle();
+                }
+            }
+            ActionButton {
+                caption: "保存进度";
+                activated => {
+                    root.save-progress();
+                }
+            }
+            ActionButton {
+                caption: "退出";
+                activated => {
+                    root.quit-requested();
+                }
+            }
+        }
+    }
+}

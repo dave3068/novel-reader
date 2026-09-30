@@ -1,0 +1,15 @@
+[package]
+name = "reading-core"
+description = "TXT 阅读共享核心：阅读会话、位置语义、进度/书签语义与统一错误模型"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+name = "reading_core"
+
+[dependencies]
+reading-index = { workspace = true }
+reading-source = { workspace = true }
+reading-storage = { workspace = true }

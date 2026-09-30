@@ -1,0 +1,51 @@
+# ===== 构建产物（编译产物与中间产物不入库）=====
+target/
+build/
+dist/
+.gradle/
+.kotlin/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+node_modules/
+
+# 二进制与中间链接产物
+*.apk
+*.aar
+*.ap_
+*.dex
+*.class
+*.jar
+*.o
+*.a
+*.so
+*.rlib
+*.rmeta
+*.exe
+*.dll
+*.dylib
+*.pdb
+
+# JNI 预编译库（由 scripts/build-android-libs.sh 生成，不手工维护二进制）
+jniLibs/
+
+# ===== 运行 / 验证中间产物 =====
+/tmp/
+/results/
+
+# ===== IDE 与本地配置 =====
+.idea/
+*.iml
+.vscode/
+local.properties
+.DS_Store
+Thumbs.db
+
+# ===== 编辑器临时文件 =====
+*~
+*.swp
+*.swo
+
+# ===== 例外：必须入库的二进制（测试夹具 / Gradle Wrapper）=====
+!tests/fixtures/**
+!android/gradle/wrapper/gradle-wrapper.jar

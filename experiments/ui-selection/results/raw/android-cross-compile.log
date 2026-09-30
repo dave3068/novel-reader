@@ -1,0 +1,18 @@
+# Android NDK 交叉编译 + JNI 链接证据
+# date: 2026-09-10T04:22:42Z
+# Rust 1.98.0   NDK 27.3.13750724   API level 31
+
+## cargo build --release --target aarch64-linux-android   -> exit 0
+-rw-r--r-- 2 jwj jwj 24088004 9月  10 12:22 shared/rust-reading-core/target/aarch64-linux-android/release/librust_reading_core.a
+## cargo build --release --target x86_64-linux-android    -> exit 0
+-rw-r--r-- 2 jwj jwj 23689120 9月  10 12:22 shared/rust-reading-core/target/x86_64-linux-android/release/librust_reading_core.a
+
+## JNI .so（静态链接共享库，自包含）
+$CC -shared -fPIC -o libnr_jni.so jni/nr_jni.c -I shared/ffi/include -Wl,--whole-archive librust_reading_core.a -Wl,--no-whole-archive -llog -lm -ldl
+exit: 0
+JNI 导出方法数: 12
+内联的 nr_* 入口数: 19
+未定义符号（除 libc）: 1
+  Class:                             ELF64
+  Type:                              DYN (Shared object file)
+  Machine:                           AArch64

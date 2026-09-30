@@ -1,0 +1,24 @@
+[package]
+name = "desktop-slint-probe"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "优先候选桌面端：直接 Rust API + Slint UI（技术验证用）"
+
+[lib]
+name = "desktop_slint_probe"
+path = "src/lib.rs"
+
+[[bin]]
+name = "desktop-slint-probe"
+path = "src/main.rs"
+
+[dependencies]
+slint = { version = "=1.17.1", default-features = true }
+rust-reading-core = { path = "../../shared/rust-reading-core" }
+
+[profile.release]
+opt-level = 3
+debug = false
+lto = true
+strip = true

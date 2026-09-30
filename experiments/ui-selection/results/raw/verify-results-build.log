@@ -1,0 +1,5 @@
+# verify-results.py phase=build candidates=hybrid-native
+# normalized 目录: ${NR_PROJECT_DIR}/experiments/ui-selection/results/normalized
+[PASS] hybrid-native/desktop: status=通过 coverage=100.0 platform_loc=2986 dup_ui_loc=0 android_verified=True guide=docs/ui-selection/android.md
+[PASS] hybrid-native/android: status=通过 coverage=100.0 platform_loc=2986 dup_ui_loc=0 android_verified=True guide=docs/ui-selection/android.md
+## 结果 status=通过 pass=2 fail=0

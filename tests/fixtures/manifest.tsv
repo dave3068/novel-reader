@@ -1,0 +1,13 @@
+# novel-reader fixtures manifest
+# profile=smoke seed=20260912
+# default_window_bytes=65536 max_window_bytes=262144 fingerprint_sample_bytes=4096
+# name	bytes	sha256	kind	details
+ascii-short.txt	20	70ea2f9a493bfafb858a387e43151b81b037e31f41f9d035d91cf8b7bb6ef0b9	ascii	-
+empty.txt	0	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855	empty	-
+utf8-bom.txt	38	faae2f1a4d5edfc833704588e5b1c47c65585776a20d852e251a9b9a5005e5ce	bom-utf8	bom_len=3
+utf8-boundary-probe.txt	8218	14a4fd47faf7d15c1498d4ee4ba9b5c2235ac60c7b49854bc55280637b4ceaf1	boundary-probe	char_start=4096;char_len=3;ascii_prefix=4096;second_char_start=4099;second_char_len=3;four_byte_start=4117;four_byte_len=4
+utf8-crlf.txt	1518	b8cc4f2f51961bf957b5cb295f60fccfc12b712566fa433e13be6bccd6e06b7f	crlf	-
+utf8-four-byte.txt	76	c83d5b184ac8a6ef1ae08b2925613ec9105b0fb3d6c7544f033f54c09b308cde	four-byte	four_byte_len=4
+utf8-long-line.txt	133120	c19ab8c0c3837e5675ebea1c0993242e1be067d33483533e58c581aa10f4810e	long-line	line_bytes=133119;newline_count=1
+utf8-mixed-lines.txt	3205	a9404afc1f1cf7dea0de755e08005c4c080105af2b09cef00f47bc6c6ff4bd60	text	-
+utf8-truncated-tail.txt	14	a80958deb27ad9ec72392d69eabefeb5b0fc063fc78740c6305dfe38ab34a444	truncated-tail	kept_bytes_of_last_char=2

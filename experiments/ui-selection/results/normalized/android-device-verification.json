@@ -1,0 +1,50 @@
+{
+  "candidate": "hybrid-native",
+  "platform": "android",
+  "verified": true,
+  "verified_by": "用户手动真机复测（人工验收，规格 H-AC2 manual-advisory）",
+  "verified_at": "2026-09-12",
+  "device": {
+    "model": "2211133C",
+    "os": "MIUI V816 / Android 16",
+    "abi": "arm64-v8a"
+  },
+  "apk": "dist/android-native-arm64-v8a-debug.apk",
+  "apk_build_marker": "v3-letterSpacing-fix",
+  "covered": [
+    "安装与启动",
+    "正文中文显示",
+    "分页（页内无滚动条）",
+    "小字号(12)末行无裁切",
+    "底部导航三页切换",
+    "书架列表与进入书籍",
+    "上一页/下一页按钮",
+    "正文左/右点击手势",
+    "设置页字号切换与重排",
+    "夜间模式切换",
+    "SAF 打开文件并显示正文",
+    "阅读页系统返回",
+    "状态栏不遮挡、上方留白可接受"
+  ],
+  "not_covered": [
+    "屏幕旋转",
+    "后台恢复",
+    "JNI 取消",
+    "自动化 instrumentation 用例（该 MIUI 机型阻断 adb 静默安装与 input 注入）"
+  ],
+  "evidence": [
+    "docs/ui-selection/android.md §5 真机实测记录（三轮，含逐项根因与修复）",
+    "uiautomator 层级转储（控件边界/可见性）",
+    "monkey 触控注入通路验证（旧版空回调不可能产生该状态变化）"
+  ],
+  "metrics": {
+    "shared_core_loc": 2308,
+    "rust_business_coverage": 100.0,
+    "platform_specific_loc": 2986,
+    "duplicated_ui_loc": 0,
+    "android_verified": true,
+    "android_guide": "docs/ui-selection/android.md",
+    "kotlin_business_duplication": false,
+    "measured_at": "2026-09-12T07:26:51Z"
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "candidate": "hybrid-native",
+  "platform": "android",
+  "phase": "build",
+  "status": "通过",
+  "framework": "gradle+AGP+Kotlin+Compose",
+  "framework_version": "Gradle 8.11.1 / AGP 8.10.1 / Kotlin 2.0.21",
+  "variant": "debug+release",
+  "command": "bash scripts/build-apk.sh --release",
+  "exit_code": 0,
+  "timestamp": "2026-09-11T02:36:59Z",
+  "log_path": "results/raw/build-apk.log",
+  "environment": {
+    "os": "Deepin 20.9",
+    "glibc": "2.28",
+    "backend": "n/a",
+    "java": "17.0.12",
+    "android_sdk": "platforms;android-36",
+    "build_tools": "36.0.0",
+    "ndk": "27.3.13750724"
+  },
+  "details": {
+    "debug_apk": "dist/android-native-arm64-v8a-debug.apk",
+    "debug_apk_bytes": 23705238,
+    "debug_apk_signed": true,
+    "debug_apk_package": "com.novelreader.probe.debug",
+    "debug_apk_signer": "CN=Android Debug",
+    "release_apk": "dist/android-native-arm64-v8a-release-unsigned.apk",
+    "release_apk_bytes": 19372169,
+    "release_apk_signed": false,
+    "abis": [
+      "arm64-v8a"
+    ],
+    "jni_lib_unstripped_bytes": 7158272,
+    "jni_lib_stripped_bytes": 1419320,
+    "jni_exports": 12,
+    "unit_tests": {
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "task": ":app:testDebugUnitTest"
+    },
+    "device_verified": false
+  },
+  "metrics": {
+    "pages": 0,
+    "rust_business_coverage": 100.0,
+    "platform_specific_loc": 2986,
+    "duplicated_ui_loc": 0,
+    "android_verified": true,
+    "android_guide": "docs/ui-selection/android.md",
+    "shared_core_loc": 2308,
+    "kotlin_business_duplication": false,
+    "measured_at": "2026-09-12T07:26:51Z"
+  },
+  "notes": [
+    "APK 已构建并通过 apksigner 校验（debug）",
+    "Android 真机安装与 UI 验收仍未验证（规格内延期）"
+  ]
+}

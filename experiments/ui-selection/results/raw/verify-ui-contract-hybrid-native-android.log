@@ -1,0 +1,6 @@
+# android Kotlin 文件 13 个，含 @Composable 的 4 个
+[PASS] Android SAF 文件访问 入口存在
+[PASS] Android 系统返回/导航 入口存在
+[PASS] Android 旋转恢复 入口存在
+[PASS] Android 生命周期/后台恢复 入口存在
+[PASS] Android JNI 取消 入口存在

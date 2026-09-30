@@ -1,0 +1,21 @@
+# build-android-libs.sh  2026-09-12T06:22:39Z
+# NDK: /opt/dev-tools/android-sdk/ndk/27.3.13750724   API: 31   ABIs: arm64-v8a
+
+== [arm64-v8a] cargo build --release --target aarch64-linux-android
+   Compiling rust-reading-core v0.1.0 (${NR_PROJECT_DIR}/experiments/ui-selection/shared/rust-reading-core)
+warning: method `current_book` is never used
+   --> src/engine.rs:341:8
+    |
+190 | impl ReadingEngine {
+    | ------------------ method in this implementation
+...
+341 |     fn current_book(&self) -> NrResult<&Book> {
+    |        ^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `rust-reading-core` (lib) generated 1 warning
+    Finished `release` profile [optimized] target(s) in 2.49s
+== [arm64-v8a] JNI 链接（静态链接共享库，自包含）
+[PASS] arm64-v8a → ${NR_PROJECT_DIR}/experiments/ui-selection/hybrid-native-probe/android-native/app/src/main/jniLibs/arm64-v8a/libnr_jni.so (7162992 B, JNI 导出 13, 非 libc 未定义符号 1)
+

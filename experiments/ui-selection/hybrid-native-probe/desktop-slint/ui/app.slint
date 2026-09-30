@@ -1,0 +1,610 @@
+//! novel-reader 技术验证探针 —— 三页面 UI（书架 / 阅读 / 配置）
+//!
+//! 该文件是 Slint 的唯一权威 UI 定义；`src/ui.rs` 通过 `slint!` 宏以
+//! `export { ... } from "../ui/app.slint"` 引入，只有一个来源，不存在副本。
+//!
+//! 页面只负责渲染与本端交互；所有阅读业务（窗口读取、分页、位置、锚点、
+//! 缓存失效、取消、错误、指标）均来自共享 Rust 库 `rust-reading-core`。
+
+import { Button, LineEdit, ListView, ScrollView, Slider } from "std-widgets.slint";
+
+export struct BookRow {
+    id: string,
+    title: string,
+    author: string,
+    meta: string,
+}
+
+export struct CategoryRow {
+    id: string,
+    name: string,
+    level: int,
+    meta: string,
+}
+
+export struct ChapterRow {
+    index: int,
+    title: string,
+}
+
+component TabButton inherits Rectangle {
+    in property <string> caption: "";
+    in property <bool> active: false;
+    callback activated();
+
+    width: 108px;
+    height: 32px;
+    border-radius: 4px;
+    background: active ? #1890ff : #d9d9d9;
+
+    Text {
+        text: caption;
+        color: active ? white : black;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        font-size: 14px;
+    }
+
+    TouchArea {
+        clicked => {
+            activated();
+        }
+    }
+}
+
+component FieldRow inherits Rectangle {
+    in property <string> caption: "";
+    in property <string> value: "";
+    in property <color> text-color: #222222;
+    height: 30px;
+    background: transparent;
+
+    HorizontalLayout {
+        spacing: 8px;
+        Text {
+            text: caption;
+            width: 96px;
+            color: text-color;
+            vertical-alignment: center;
+            font-size: 14px;
+        }
+        Text {
+            text: value;
+            color: text-color;
+            vertical-alignment: center;
+            font-size: 14px;
+        }
+    }
+}
+
+export component AppWindow inherits Window {
+    title: "novel-reader 技术验证探针 (Rust + Slint)";
+    width: 1080px;
+    height: 720px;
+    background: theme-dark ? #1c1c1e : #f2f3f5;
+
+    // ---- 页面与外观状态 ----
+    in-out property <int> current-page: 0;
+    in-out property <bool> theme-dark: false;
+    in-out property <int> background-mode: 0;
+    in-out property <int> font-size: 18;
+    in-out property <int> line-spacing-x10: 14;
+    in-out property <int> page-margin: 24;
+    in-out property <bool> reader-menu-open: false;
+    in-out property <string> search-text: "";
+
+    // ---- Rust → UI 只读数据 ----
+    in property <string> status-text: "";
+    in property <string> crumb-text: "";
+    in property <string> metrics-text: "";
+    in property <string> book-title: "";
+    in property <string> chapter-title: "";
+    in property <string> page-text: "";
+    in property <string> page-label: "";
+    in property <string> progress-text: "";
+    in property <string> engine-text: "";
+    in property <[BookRow]> book-rows: [];
+    in property <[CategoryRow]> category-rows: [];
+    in property <[ChapterRow]> chapter-rows: [];
+
+    // ---- UI → Rust ----
+    callback search-submitted(string);
+    callback open-category(string);
+    callback open-book(string);
+    callback reader-prev();
+    callback reader-next();
+    callback reader-toggle-menu();
+    callback reader-save();
+    callback chapter-selected(int);
+    callback settings-change(string, int);
+    callback settings-apply();
+    callback settings-reset();
+    callback shelf-up();
+
+    property <color> fg: theme-dark ? #e8e8e8 : #222222;
+    property <color> muted: theme-dark ? #9a9a9a : #666666;
+    property <brush> panel: theme-dark ? #262628 : #ffffff;
+    // 阅读区配色必须同时响应「主题（日/夜）」与「背景模式（白/米黄/绿）」。
+    // 此前的缺陷：只按 background-mode 取色，导致切夜间模式时阅读区仍是白底黑字。
+    property <brush> reader-bg: theme-dark
+        ? ((background-mode == 0) ? #1c1c1e : ((background-mode == 1) ? #2b2620 : #1d2a1d))
+        : ((background-mode == 0) ? #ffffff : ((background-mode == 1) ? #f6efdc : #d8e8d0));
+    property <color> reader-fg: theme-dark
+        ? ((background-mode == 2) ? #cfe3cf : #d6d6d6)
+        : ((background-mode == 2) ? #1b3a1b : #202020);
+
+    VerticalLayout {
+        spacing: 0px;
+
+        // ================= 顶栏 =================
+        Rectangle {
+            height: 52px;
+            background: panel;
+
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                spacing: 8px;
+                alignment: start;
+
+                Text {
+                    text: "novel-reader 技术验证探针";
+                    color: root.fg;
+                    vertical-alignment: center;
+                    font-size: 15px;
+                    font-weight: 600;
+                    width: 220px;
+                }
+
+                TabButton {
+                    caption: "书架";
+                    active: root.current-page == 0;
+                    activated => {
+                        root.current-page = 0;
+                    }
+                }
+                TabButton {
+                    caption: "阅读";
+                    active: root.current-page == 1;
+                    activated => {
+                        root.current-page = 1;
+                    }
+                }
+                TabButton {
+                    caption: "配置";
+                    active: root.current-page == 2;
+                    activated => {
+                        root.current-page = 2;
+                    }
+                }
+
+                Rectangle { width: 12px; background: transparent; }
+                Text {
+                    text: root.status-text;
+                    color: root.muted;
+                    vertical-alignment: center;
+                    font-size: 13px;
+                    horizontal-stretch: 1;
+                }
+            }
+        }
+
+        // ================= 书架页 =================
+        if root.current-page == 0 : HorizontalLayout {
+            spacing: 1px;
+
+            // 左侧：6 层分类树
+            Rectangle {
+                width: 300px;
+                background: panel;
+
+                VerticalLayout {
+                    spacing: 0px;
+                    Rectangle {
+                        height: 40px;
+                        background: transparent;
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            spacing: 6px;
+                            Text {
+                                text: "分类目录";
+                                color: root.fg;
+                                vertical-alignment: center;
+                                font-weight: 600;
+                            }
+                            Button {
+                                text: "上一级";
+                                width: 72px;
+                                clicked => {
+                                    root.shelf-up();
+                                }
+                            }
+                        }
+                    }
+                    VerticalLayout {
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        Text {
+                            text: root.crumb-text;
+                            color: root.muted;
+                            font-size: 12px;
+                            wrap: word-wrap;
+                            height: 34px;
+                        }
+                    }
+                    ListView {
+                        for row in root.category-rows : Rectangle {
+                            height: 40px;
+                            background: transparent;
+                            HorizontalLayout {
+                                padding-left: 14px;
+                                Text {
+                                    text: row.name + "  (" + row.meta + ")";
+                                    color: root.fg;
+                                    vertical-alignment: center;
+                                    font-size: 14px;
+                                }
+                            }
+                            TouchArea {
+                                clicked => {
+                                    root.open-category(row.id);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 右侧：书籍列表（虚拟化）
+            Rectangle {
+                background: panel;
+
+                VerticalLayout {
+                    spacing: 0px;
+                    Rectangle {
+                        height: 48px;
+                        background: transparent;
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            spacing: 8px;
+                            LineEdit {
+                                text <=> root.search-text;
+                                width: 320px;
+                                placeholder-text: "按书名或作者搜索";
+                                accepted => {
+                                    root.search-submitted(root.search-text);
+                                }
+                            }
+                            Button {
+                                text: "搜索";
+                                width: 76px;
+                                clicked => {
+                                    root.search-submitted(root.search-text);
+                                }
+                            }
+                            Button {
+                                text: "清空";
+                                width: 76px;
+                                clicked => {
+                                    root.search-text = "";
+                                    root.search-submitted("");
+                                }
+                            }
+                            Text {
+                                text: "共 " + root.book-rows.length + " 本（当前列表）";
+                                color: root.muted;
+                                vertical-alignment: center;
+                                font-size: 13px;
+                                horizontal-stretch: 1;
+                            }
+                        }
+                    }
+                    ListView {
+                        for row in root.book-rows : Rectangle {
+                            height: 58px;
+                            background: transparent;
+                            VerticalLayout {
+                                padding-left: 14px;
+                                spacing: 2px;
+                                Text {
+                                    text: row.title;
+                                    color: root.fg;
+                                    font-size: 15px;
+                                }
+                                Text {
+                                    text: row.author + " · " + row.meta;
+                                    color: root.muted;
+                                    font-size: 12px;
+                                }
+                            }
+                            TouchArea {
+                                clicked => {
+                                    root.open-book(row.id);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ================= 阅读页 =================
+        if root.current-page == 1 : Rectangle {
+            background: root.reader-bg;
+
+            VerticalLayout {
+                spacing: 0px;
+
+                Rectangle {
+                    height: 44px;
+                    background: root.theme-dark ? #262628 : #ffffff;
+                    HorizontalLayout {
+                        padding-left: 12px;
+                        padding-right: 12px;
+                        spacing: 10px;
+                        Text {
+                            text: root.book-title;
+                            color: root.fg;
+                            vertical-alignment: center;
+                            font-size: 14px;
+                            font-weight: 600;
+                        }
+                        Text {
+                            text: root.chapter-title;
+                            color: root.muted;
+                            vertical-alignment: center;
+                            font-size: 13px;
+                            horizontal-stretch: 1;
+                        }
+                        Text {
+                            text: root.page-label;
+                            color: root.muted;
+                            vertical-alignment: center;
+                            font-size: 13px;
+                        }
+                        Button {
+                            text: "菜单";
+                            width: 72px;
+                            clicked => {
+                                root.reader-toggle-menu();
+                            }
+                        }
+                    }
+                }
+
+                // 正文区域：文本来自共享库分页结果（页边距由布局 padding 提供）
+                VerticalLayout {
+                    vertical-stretch: 1;
+                    padding-left: root.page-margin * 1px;
+                    padding-right: root.page-margin * 1px;
+                    padding-top: 12px;
+                    Text {
+                        text: root.page-text;
+                        color: root.reader-fg;
+                        font-size: root.font-size * 1px;
+                        wrap: word-wrap;
+                        vertical-stretch: 1;
+                    }
+                }
+
+                // 设置浮层（阅读内菜单）
+                if root.reader-menu-open : Rectangle {
+                    height: 116px;
+                    background: root.theme-dark ? #303032 : #fafafa;
+                    VerticalLayout {
+                        padding: 10px;
+                        spacing: 6px;
+                        FieldRow { caption: "字号"; value: root.font-size + " px"; text-color: root.fg; }
+                        Slider {
+                            minimum: 12;
+                            maximum: 34;
+                            value: root.font-size;
+                            changed => {
+                                root.settings-change("font-size", self.value);
+                            }
+                        }
+                        FieldRow { caption: "行距"; value: (root.line-spacing-x10 / 10) + ""; text-color: root.fg; }
+                        Slider {
+                            minimum: 10;
+                            maximum: 24;
+                            value: root.line-spacing-x10;
+                            changed => {
+                                root.settings-change("line-spacing-x10", self.value);
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    height: 52px;
+                    background: root.theme-dark ? #262628 : #ffffff;
+                    HorizontalLayout {
+                        padding-left: 12px;
+                        padding-right: 12px;
+                        spacing: 8px;
+                        alignment: center;
+                        Button {
+                            text: "上一页";
+                            width: 92px;
+                            clicked => {
+                                root.reader-prev();
+                            }
+                        }
+                        Button {
+                            text: "下一页";
+                            width: 92px;
+                            clicked => {
+                                root.reader-next();
+                            }
+                        }
+                        Button {
+                            text: "保存位置";
+                            width: 100px;
+                            clicked => {
+                                root.reader-save();
+                            }
+                        }
+                        Text {
+                            text: root.progress-text;
+                            color: root.muted;
+                            vertical-alignment: center;
+                            font-size: 13px;
+                            horizontal-stretch: 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        // ================= 配置页 =================
+        if root.current-page == 2 : Rectangle {
+            background: panel;
+            ScrollView {
+            VerticalLayout {
+                padding: 16px;
+                spacing: 10px;
+
+                Text {
+                    text: "排版与外观配置";
+                    color: root.fg;
+                    font-size: 16px;
+                    font-weight: 600;
+                }
+                Text {
+                    text: "改动会立即写入共享库的排版配置并调用 invalidate_layout 失效页面边界缓存；生效后重新分页。";
+                    color: root.muted;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+
+                FieldRow { caption: "字号(px)"; value: root.font-size + ""; text-color: root.fg; }
+                Slider {
+                    minimum: 12;
+                    maximum: 34;
+                    value: root.font-size;
+                    changed => {
+                        root.settings-change("font-size", self.value);
+                    }
+                }
+
+                FieldRow { caption: "行距(x10)"; value: root.line-spacing-x10 + ""; text-color: root.fg; }
+                Slider {
+                    minimum: 10;
+                    maximum: 24;
+                    value: root.line-spacing-x10;
+                    changed => {
+                        root.settings-change("line-spacing-x10", self.value);
+                    }
+                }
+
+                FieldRow { caption: "页边距(px)"; value: root.page-margin + ""; text-color: root.fg; }
+                Slider {
+                    minimum: 8;
+                    maximum: 64;
+                    value: root.page-margin;
+                    changed => {
+                        root.settings-change("page-margin", self.value);
+                    }
+                }
+
+                FieldRow { caption: "背景模式"; value: root.background-mode + " (0 白 / 1 米黄 / 2 护眼绿)"; text-color: root.fg; }
+                HorizontalLayout {
+                    spacing: 8px;
+                    Button {
+                        text: "白色";
+                        clicked => {
+                            root.settings-change("background-mode", 0);
+                        }
+                    }
+                    Button {
+                        text: "米黄";
+                        clicked => {
+                            root.settings-change("background-mode", 1);
+                        }
+                    }
+                    Button {
+                        text: "护眼绿";
+                        clicked => {
+                            root.settings-change("background-mode", 2);
+                        }
+                    }
+                    Button {
+                        text: "日间/夜间";
+                        clicked => {
+                            root.settings-change("theme", root.theme-dark ? 0 : 1);
+                        }
+                    }
+                }
+
+                Rectangle { height: 8px; background: transparent; }
+                HorizontalLayout {
+                    spacing: 8px;
+                    Button {
+                        text: "生效并重新分页";
+                        clicked => {
+                            root.settings-apply();
+                        }
+                    }
+                    Button {
+                        text: "恢复默认";
+                        clicked => {
+                            root.settings-reset();
+                        }
+                    }
+                }
+
+                Rectangle { height: 12px; background: transparent; }
+                Text {
+                    text: "共享库指标";
+                    color: root.fg;
+                    font-size: 14px;
+                    font-weight: 600;
+                }
+                Text {
+                    text: root.metrics-text;
+                    color: root.muted;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+                Text {
+                    text: root.engine-text;
+                    color: root.muted;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+
+                Rectangle { height: 12px; background: transparent; }
+                Text {
+                    text: "章节列表（当前书籍）";
+                    color: root.fg;
+                    font-size: 14px;
+                    font-weight: 600;
+                }
+                ListView {
+                    height: 220px;
+                    for row in root.chapter-rows : Rectangle {
+                        height: 32px;
+                        background: transparent;
+                        HorizontalLayout {
+                            padding-left: 8px;
+                            Text {
+                                text: row.title;
+                                color: root.fg;
+                                vertical-alignment: center;
+                                font-size: 13px;
+                            }
+                        }
+                        TouchArea {
+                            clicked => {
+                                root.chapter-selected(row.index);
+                            }
+                        }
+                    }
+                }
+            }
+            }
+        }
+    }
+}
