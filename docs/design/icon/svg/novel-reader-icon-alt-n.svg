@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="512" height="512" role="img" aria-labelledby="nr-alt-t">
+  <title id="nr-alt-t">novel-reader</title>
+  <desc id="nr-alt-d">novel-reader：本地 TXT 小说阅读器。蓝色书封上的白色合书与书签。</desc>
+  <defs><clipPath id="nr-alt-tile"><rect width="32" height="32" rx="7.2"/></clipPath></defs>
+  <g clip-path="url(#nr-alt-tile)">
+    <rect x="0" y="0" width="4.4" height="32" fill="#69b1ff"/>
+    <g fill="#ffffff">
+      <rect x="9" y="6.2" width="4.8" height="19.6"/>
+      <rect x="22.2" y="6.2" width="4.8" height="19.6"/>
+      <path d="M13.8 6.2H18.4L27 25.8H22.4Z"/>
+    </g>
+  </g>
+</svg>

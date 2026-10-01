@@ -411,6 +411,7 @@ pub fn apply_palette(ui: &AppWindow, dark: bool) {
             "focus" => globals.set_focus(color),
             "header" => globals.set_header(color),
             "header-text" => globals.set_header_text(color),
+            "header-hover" => globals.set_header_hover(color),
             "support-success" => globals.set_support_success(color),
             "success-soft" => globals.set_success_soft(color),
             "support-warning" => globals.set_support_warning(color),
@@ -583,6 +584,7 @@ pub fn apply_snapshot(ui: &AppWindow, snapshot: &UiSnapshot) {
     ui.set_shelf_view(snapshot.shelf.view);
     ui.set_shelf_search(snapshot.shelf.search.as_str().into());
     ui.set_shelf_sort_value(snapshot.shelf.sort_label.as_str().into());
+    ui.set_shelf_sort_current(snapshot.shelf.sort_index);
     ui.set_shelf_count(snapshot.shelf.count_label.as_str().into());
     ui.set_shelf_notice(snapshot.shelf.notice);
     ui.set_shelf_notice_title(snapshot.shelf.notice_title.as_str().into());
@@ -3233,6 +3235,25 @@ pub fn run() -> Result<(), slint::PlatformError> {
             });
             if let Err(error) = settings::save_shelf_view(&db_path, view, import::now_unix()) {
                 set_status_text(&ui, &state, "书架视图", &error.message());
+            }
+        }
+    });
+    ui.on_shelf_sort_set({
+        let state = Arc::clone(&state);
+        let db_path = db_path.clone();
+        let weak = ui.as_weak();
+        move |index| {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let sort = {
+                let mut guard = lock(&state);
+                guard.set_shelf_sort(index);
+                guard.shelf_sort()
+            };
+            refresh(&ui, &state);
+            if let Err(error) = settings::save_shelf_sort(&db_path, sort, import::now_unix()) {
+                set_status_text(&ui, &state, "书架排序", &error.message());
             }
         }
     });

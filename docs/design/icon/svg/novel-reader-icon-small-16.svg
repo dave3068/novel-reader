@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="512" height="512" role="img" aria-labelledby="nr-s16-t">
+  <title id="nr-s16-t">novel-reader</title>
+  <desc id="nr-s16-d">novel-reader：本地 TXT 小说阅读器。蓝色书封上的白色合书与书签。</desc>
+  <rect width="32" height="32" rx="7.2" fill="#1890ff"/>
+  <rect x="6" y="8" width="20" height="16" fill="#ffffff"/><rect x="6" y="8" width="4" height="16" fill="#69b1ff"/><path fill="#ffffff" d="M14 8H20V28L17 26.4 14 28Z"/>
+</svg>
