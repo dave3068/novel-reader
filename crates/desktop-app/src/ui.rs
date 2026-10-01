@@ -625,6 +625,8 @@ pub fn apply_snapshot(ui: &AppWindow, snapshot: &UiSnapshot) {
     ui.set_settings_rows(ModelRc::new(VecModel::from(settings_rows)));
     ui.set_settings_note(snapshot.settings.note.as_str().into());
     ui.set_settings_content_height(snapshot.settings.content_height as f32);
+    ui.set_settings_scroll_y(snapshot.settings.scroll_y as f32);
+    ui.set_settings_viewport_height(snapshot.settings.viewport_height as f32);
     ui.set_settings_data_path(snapshot.settings.data_path.as_str().into());
 
     // ---- 导入 / 错误 ----
@@ -2000,6 +2002,21 @@ fn open_reader(
     Some(session)
 }
 
+/// 设置页视口高度（像素）：窗口逻辑高度减去页头高度。
+fn settings_viewport_height(ui: &AppWindow) -> u32 {
+    let size = ui.window().size();
+    let scale = {
+        let factor = ui.window().scale_factor();
+        if factor > 0.0 {
+            factor
+        } else {
+            1.0
+        }
+    };
+    let height = (size.height as f32 / scale).round() as u32;
+    height.saturating_sub(layout::PAGE_HEADER_HEIGHT)
+}
+
 /// 只更新状态栏文案（不触碰页面内容）。
 fn set_status_text(ui: &AppWindow, state: &Arc<Mutex<AppState>>, prefix: &str, message: &str) {
     mutate_and_refresh(ui, state, |guard| {
@@ -2093,6 +2110,16 @@ pub fn run() -> Result<(), slint::PlatformError> {
             {
                 let mut slot = lock(&font_slot);
                 *slot = font;
+            }
+            // 设置页滚动受窗口尺寸影响：窗口变化时更新视口高度并夹紧滚动位置。
+            {
+                let viewport_height = height.max(0.0) as u32 - layout::PAGE_HEADER_HEIGHT;
+                let mut guard = lock(&state);
+                guard.set_settings_viewport(viewport_height);
+            }
+            {
+                let snapshot = lock(&state).project();
+                apply_snapshot(&ui, &snapshot);
             }
             let mut guard = lock(&reader);
             let Some(session) = guard.as_mut() else {
@@ -2778,6 +2805,37 @@ pub fn run() -> Result<(), slint::PlatformError> {
     });
 
     // ---- 设置 ----
+    // 设置页滚动：三条入口（滚轮 / 键盘 / 滚动条拖动）都走这里（Rust 计算 + 夹紧）。
+    let settings_scroll_entry = {
+        let state = Arc::clone(&state);
+        let weak = ui.as_weak();
+        move |delta: Option<i64>, ratio: Option<f64>| {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let viewport = settings_viewport_height(&ui);
+            mutate_and_refresh(&ui, &state, |guard| {
+                guard.set_settings_viewport(viewport);
+                match (delta, ratio) {
+                    (Some(delta), _) => guard.scroll_settings_by(delta),
+                    (None, Some(ratio)) => guard.scroll_settings_to(ratio),
+                    _ => {}
+                }
+            });
+        }
+    };
+    ui.on_settings_scroll_by({
+        let entry = settings_scroll_entry.clone();
+        move |delta| {
+            entry(Some(delta as i64), None);
+        }
+    });
+    ui.on_settings_scroll_to({
+        let entry = settings_scroll_entry.clone();
+        move |ratio| {
+            entry(None, Some(f64::from(ratio)));
+        }
+    });
     ui.on_settings_cycle({
         let state = Arc::clone(&state);
         let reader = Arc::clone(&reader);
@@ -3287,8 +3345,10 @@ pub fn run() -> Result<(), slint::PlatformError> {
             let Some(ui) = weak.upgrade() else {
                 return;
             };
+            // 「…」按钮切换显隐：再次点击同一行即收起。
+            let same = lock(&state).shelf_menu_index() == index;
             mutate_and_refresh(&ui, &state, |guard| {
-                guard.set_shelf_menu_index(index);
+                guard.set_shelf_menu_index(if same { -1 } else { index });
             });
         }
     });

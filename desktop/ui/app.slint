@@ -432,11 +432,13 @@ component TextButton inherits Rectangle {
     in property <string> caption: "";
     in property <bool> enabled: true;
     in property <bool> compact: false;
+    // 左右内边距（紧凑条里可调小，如卡片菜单条）。
+    in property <length> padding-x: UiMetrics.space-16;
     callback activated();
 
-    // 宽度按文字自然宽 + 左右内边距 16（Carbon 口径）；必须显式声明，
+    // 宽度按文字自然宽 + 左右内边距；必须显式声明，
     // 否则作为纯 Rectangle 会展开铺满父级（会遮住同一页头里的其他控件）。
-    width: max(UiMetrics.space-48, label.preferred-width + UiMetrics.space-32);
+    width: max(UiMetrics.space-48, label.preferred-width + 2 * root.padding-x);
     height: root.compact ? UiMetrics.button-height-compact : UiMetrics.button-height;
     background: !root.enabled ? Skin.disabled-bg : (area.has-hover ? (variant == 0 ? Skin.primary-hover : (variant == 3 ? Skin.error-soft : (variant == 1 ? Skin.primary-soft : Skin.layer-01))) : (variant == 0 ? Skin.primary : (variant == 3 ? Skin.error-soft : (variant == 2 ? transparent : Skin.layer-02))));
     border-width: UiMetrics.hairline;
@@ -1297,6 +1299,9 @@ component RenameDialog inherits Rectangle {
 // 行级菜单条（内联在**当前模式**的列表项下方；破坏性动作已分离）。
 component RowMenuStrip inherits Rectangle {
     callback picked(string);
+    // 紧凑模式（卡片视图）：宽度与卡片一致、按钮更紧凑、不显示「关闭」按钮
+    // —— 显隐由所在卡片的「…」按钮切换。
+    in property <bool> dense: false;
 
     height: UiMetrics.list-row-height;
     background: Skin.layer-02;
@@ -1304,10 +1309,10 @@ component RowMenuStrip inherits Rectangle {
     border-color: Skin.primary-border;
 
                 HorizontalLayout {
-                    x: UiMetrics.space-16;
+                    x: root.dense ? UiMetrics.space-8 : UiMetrics.space-16;
                     y: 0;
-                    width: parent.width - 2 * UiMetrics.space-16;
-                    spacing: UiMetrics.space-8;
+                    width: parent.width - 2 * self.x;
+                    spacing: root.dense ? UiMetrics.space-4 : UiMetrics.space-8;
                     alignment: start;
 
                     Text {
@@ -1319,6 +1324,7 @@ component RowMenuStrip inherits Rectangle {
                     }
                     TextButton {
                         variant: 1;
+                        padding-x: root.dense ? UiMetrics.space-8 : UiMetrics.space-16;
                         compact: true;
                         caption: "重新关联";
                         activated => {
@@ -1327,6 +1333,7 @@ component RowMenuStrip inherits Rectangle {
                     }
                     TextButton {
                         variant: 1;
+                        padding-x: root.dense ? UiMetrics.space-8 : UiMetrics.space-16;
                         compact: true;
                         caption: "重命名";
                         activated => {
@@ -1335,6 +1342,7 @@ component RowMenuStrip inherits Rectangle {
                     }
                     TextButton {
                         variant: 3;
+                        padding-x: root.dense ? UiMetrics.space-8 : UiMetrics.space-16;
                         compact: true;
                         caption: "移出";
                         activated => {
@@ -1343,6 +1351,7 @@ component RowMenuStrip inherits Rectangle {
                     }
                     TextButton {
                         variant: 3;
+                        padding-x: root.dense ? UiMetrics.space-8 : UiMetrics.space-16;
                         compact: true;
                         caption: "彻底删除";
                         activated => {
@@ -1351,7 +1360,9 @@ component RowMenuStrip inherits Rectangle {
                     }
                     TextButton {
                         variant: 2;
+                        padding-x: root.dense ? UiMetrics.space-8 : UiMetrics.space-16;
                         compact: true;
+                        visible: !root.dense;
                         caption: "关闭";
                         activated => {
                             root.picked("close");
@@ -1515,7 +1526,9 @@ component ShelfPage inherits Rectangle {
                 x: 0;
                 y: UiMetrics.table-header-height + i * UiMetrics.table-row-height + (root.menu-index >= 0 && i > root.menu-index ? UiMetrics.list-row-height : 0px);
                 row-area := TouchArea {
-                    double-clicked => {
+                    // 单击行体即打开阅读；行内按钮声明在其之后（上层），
+                    // 因此点「…」/「继续阅读」不会误触（真实缺陷回归）。
+                    clicked => {
                         root.open-book(row.id);
                     }
                 }
@@ -1657,6 +1670,7 @@ component ShelfPage inherits Rectangle {
                     x: min(0px, root.cards-menu-max-x - self.width - (i - Math.floor(i / root.card-columns) * root.card-columns) * (UiMetrics.card-width + root.card-gap));
                     y: UiMetrics.card-height + UiMetrics.space-4;
                     width: min(UiMetrics.card-width, root.cards-menu-max-x);
+                    dense: true;
                     picked(action) => {
                         if (action == "close") {
                             root.row-menu(-2);
@@ -1666,7 +1680,8 @@ component ShelfPage inherits Rectangle {
                     }
                 }
                 card-area := TouchArea {
-                    double-clicked => {
+                    // 单击卡片体即打开阅读；卡片内按钮在上层，不会被抢。
+                    clicked => {
                         root.open-book(row.id);
                     }
                 }
@@ -2801,6 +2816,11 @@ component ReaderPage inherits Rectangle {
 component SettingsPage inherits Rectangle {
     // 表单内容高度（像素；Rust 投影，与行高口径一致）。
     in property <length> content-height: 0px;
+    // 滚动偏移与视口高度（Rust 持有）。
+    in property <length> scroll-y: 0px;
+    in property <length> viewport-height: 0px;
+    callback scroll-by(length);
+    callback scroll-to(float);
     in property <[SettingsRow]> rows: [];
     in property <string> note: "";
     in property <string> data-path: "";
@@ -2846,18 +2866,29 @@ component SettingsPage inherits Rectangle {
     // 键盘翻动（PageUp/PageDown/↑/↓/Home/End）；滚轮与拖动由 Flickable 负责。
     // 设置内容视口：Flickable 负责**滚轮与拖动**（原生行为），内容为**绝对定位行**
     // （每行 y/height 由 Rust 投影），不使用布局引擎 —— 滚动时控件不会错位。
-    settings-view := Flickable {
+    settings-view := Rectangle {
         x: 0;
         y: UiMetrics.page-header-height;
         width: parent.width;
         height: parent.height - UiMetrics.page-header-height;
-        viewport-width: self.width;
-        viewport-height: max(self.height, root.content-height);
-        interactive: self.viewport-height > self.height;
+        background: transparent;
+        clip: true;
+
+        // 滚轮（下层；不遮挡行内控件的点击）。
+        settings-wheel := TouchArea {
+            x: 0;
+            y: 0;
+            width: parent.width;
+            height: parent.height;
+            scroll-event(event) => {
+                root.scroll-by(event.delta-y);
+                accept
+            }
+        }
 
         settings-layout := Rectangle {
             x: UiMetrics.space-16;
-            y: 0;
+            y: 0px - root.scroll-y;
             width: parent.width - 2 * UiMetrics.space-16;
             height: max(root.content-height, parent.height);
             background: transparent;
@@ -3063,22 +3094,22 @@ component SettingsPage inherits Rectangle {
 
         key-pressed(event) => {
             if (event.text == Key.PageDown) {
-                settings-view.viewport-y = min(settings-view.viewport-height - settings-view.height, settings-view.viewport-y + settings-view.height - UiMetrics.list-row-height);
+                root.scroll-by(self.height - UiMetrics.list-row-height);
                 accept
             } else if (event.text == Key.PageUp) {
-                settings-view.viewport-y = max(0px, settings-view.viewport-y - settings-view.height + UiMetrics.list-row-height);
+                root.scroll-by(UiMetrics.list-row-height - self.height);
                 accept
             } else if (event.text == Key.DownArrow) {
-                settings-view.viewport-y = min(settings-view.viewport-height - settings-view.height, settings-view.viewport-y + UiMetrics.list-row-height);
+                root.scroll-by(UiMetrics.list-row-height);
                 accept
             } else if (event.text == Key.UpArrow) {
-                settings-view.viewport-y = max(0px, settings-view.viewport-y - UiMetrics.list-row-height);
+                root.scroll-by(0px - UiMetrics.list-row-height);
                 accept
             } else if (event.text == Key.Home) {
-                settings-view.viewport-y = 0px;
+                root.scroll-by(0px - root.content-height);
                 accept
             } else if (event.text == Key.End) {
-                settings-view.viewport-y = settings-view.viewport-height - settings-view.height;
+                root.scroll-by(root.content-height);
                 accept
             } else {
                 reject
@@ -3086,15 +3117,15 @@ component SettingsPage inherits Rectangle {
         }
     }
 
-    // 设置区滚动条（自绘：拖动/点击直接改 Flickable 的 viewport-y）。
+    // 设置区滚动条（自绘：拖动/点击 → 回调 Rust 计算并夹紧滚动位置）。
     ScrollBar {
         x: parent.width - UiMetrics.scrollbar-gutter;
         y: UiMetrics.page-header-height;
         height: parent.height - UiMetrics.page-header-height;
-        ratio: settings-view.viewport-y / max(UiMetrics.hairline, settings-view.viewport-height - settings-view.height);
-        handle-ratio: min(1, settings-view.height / max(UiMetrics.hairline, settings-view.viewport-height));
+        ratio: root.scroll-y / max(UiMetrics.hairline, root.content-height - root.viewport-height);
+        handle-ratio: min(1, root.viewport-height / max(UiMetrics.hairline, root.content-height));
         seek(ratio) => {
-            settings-view.viewport-y = max(0px, ratio * (settings-view.viewport-height - settings-view.height));
+            root.scroll-to(ratio);
         }
     }
 
@@ -3394,6 +3425,9 @@ export component AppWindow inherits Window {
     in property <string> settings-data-path: "";
     // 设置页表单内容高度（像素；由 Rust 按行高口径求和投影）。
     in property <length> settings-content-height: 0px;
+    // 设置页滚动偏移与视口高度（Rust 持有；拖动/键盘/滚轮都经 Rust 计算并夹紧）。
+    in property <length> settings-scroll-y: 0px;
+    in property <length> settings-viewport-height: 0px;
     // 导入 / 错误
     in property <string> import-file: "";
     in property <string> import-size: "";
@@ -3450,6 +3484,8 @@ export component AppWindow inherits Window {
     callback shelf-view-set(int);
     callback shelf-sort-cycle();
     callback shelf-sort-set(int);
+    callback settings-scroll-by(length);
+    callback settings-scroll-to(float);
     callback shelf-open-book(string);
     callback shelf-row-menu(int);
     callback shelf-row-action(string, string);
@@ -3776,6 +3812,14 @@ export component AppWindow inherits Window {
         note: root.settings-note;
         data-path: root.settings-data-path;
         content-height: root.settings-content-height;
+        scroll-y: root.settings-scroll-y;
+        viewport-height: root.settings-viewport-height;
+        scroll-by(delta) => {
+            root.settings-scroll-by(delta);
+        }
+        scroll-to(ratio) => {
+            root.settings-scroll-to(ratio);
+        }
         cycle(key) => {
             root.settings-cycle(key);
         }
