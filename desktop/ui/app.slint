@@ -3107,7 +3107,9 @@ component SettingsPage inherits Rectangle {
         }
     }
     if root.select-open : Rectangle {
-        x: root.control-x;
+        // 字段位于内容容器内（容器整体左移 space-16），下拉层是页面直属子元素，
+        // 因此必须补上这 16 像素，否则左右与字段错开（真实缺陷回归）。
+        x: UiMetrics.space-16 + root.control-x;
         y: UiMetrics.page-header-height + root.select-y - root.scroll-y;
         width: UiMetrics.search-field-width;
         height: root.select-options.length * UiMetrics.list-row-height + 2 * UiMetrics.space-4;
