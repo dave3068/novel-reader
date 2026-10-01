@@ -1320,8 +1320,9 @@ component RowMenuStrip inherits Rectangle {
                     spacing: root.dense ? UiMetrics.space-4 : UiMetrics.space-8;
                     alignment: start;
 
-                    Text {
-                        visible: !root.dense;
+                    // 条件存在（不是 visible:false）——不可见元素在布局里仍会占位，
+                    // 会让按钮无法真正顶到左侧（真实缺陷回归）。
+                    if !root.dense : Text {
                         text: "行操作";
                         font-size: UiMetrics.caption-font-size;
                         color: Skin.text-placeholder;

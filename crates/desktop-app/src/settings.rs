@@ -465,6 +465,8 @@ impl GlobalSettings {
                 "暗黑".to_string(),
             ],
             KEY_INTERACTION_MODE => vec!["按钮翻页".to_string(), "手势翻页".to_string()],
+            // 字体族：下拉候选 = 本机可用字体（与书架「排序」下拉同一交互口径）。
+            KEY_FONT_FAMILY => FONT_FAMILIES.iter().map(|name| name.to_string()).collect(),
             _ => Vec::new(),
         }
     }
@@ -478,6 +480,10 @@ impl GlobalSettings {
                 _ => 0,
             },
             KEY_INTERACTION_MODE => i32::from(self.gesture_mode()),
+            KEY_FONT_FAMILY => FONT_FAMILIES
+                .iter()
+                .position(|name| *name == self.reader.font_family)
+                .map_or(0, |index| index as i32),
             _ => 0,
         }
     }
@@ -500,6 +506,14 @@ impl GlobalSettings {
                     MODE_BUTTONS
                 }
                 .to_string();
+            }
+            KEY_FONT_FAMILY => {
+                let Some(name) = FONT_FAMILIES.get(index.max(0) as usize) else {
+                    return Err(SettingsError::UnknownField {
+                        key: key.to_string(),
+                    });
+                };
+                self.reader.font_family = (*name).to_string();
             }
             _ => {
                 return Err(SettingsError::UnknownField {
