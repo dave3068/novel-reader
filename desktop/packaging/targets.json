@@ -251,11 +251,11 @@
         "kind": "gate-result-json",
         "path": "results/desktop/smoke-desktop.json",
         "gate": "smoke-desktop",
-        "run_id": "20261001T045713Z",
+        "run_id": "20261001T053041Z",
         "result": "PASS",
         "backend": "x11",
         "display": ":0",
-        "binary_sha256": "185b0979af0415b107bebe4bf45037d8e29afce1343a13a1f239259e9a264c4a",
+        "binary_sha256": "c67767c002a9ca95606712ae6c71bb0ae7bcc39efa3572faff81e67bafd8d21d",
         "summary": "12/12 检查通过（窗口 1200x800、首屏 page_index=0/lines=22、章节 8、无残留进程/窗口）；另有对等性门禁 verify-desktop-parity.py 23/23（results/desktop/parity.json）与输入入口门禁 verify-desktop-input.py 19/19（results/dt8-logs/）",
         "evidence_doc": "results/dt5-desktop-gates.md"
       },

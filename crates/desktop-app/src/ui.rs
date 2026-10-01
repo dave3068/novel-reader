@@ -655,7 +655,7 @@ pub fn apply_snapshot(ui: &AppWindow, snapshot: &UiSnapshot) {
             "NR-STATE screen={} index={} rows={} menu_open={} theme_dark={} row_status={} \
              chapter={} chapters={} toc_rows={} toc_open={} toc_matches={} marks={} marks_open={} mark_sel={} \
              gesture={} progress={} settings={} encoding={} dialog={} toast={} shelf_view={} shelf_sort={} \
-             shelf_search={} status={}",
+             shelf_search={} settings_h={} status={}",
             snapshot.screen.slint_name(),
             snapshot.screen.index(),
             snapshot.shelf.rows.len(),
@@ -679,6 +679,7 @@ pub fn apply_snapshot(ui: &AppWindow, snapshot: &UiSnapshot) {
             snapshot.shelf.view,
             snapshot.shelf.sort_label.replace(' ', "_"),
             snapshot.shelf.search.replace(' ', "_"),
+            snapshot.settings.content_height,
             snapshot.status_text
         );
         println!("{line}");
