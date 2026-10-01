@@ -427,6 +427,10 @@ pub struct SettingsView {
     pub data_path: String,
     /// 表单内容高度（像素；滚动视口用，Rust 与 Slint 同口径）。
     pub content_height: u32,
+    /// 设置页滚动偏移（像素；Rust 持有，界面只读投影）。
+    pub scroll_y: u32,
+    /// 设置页视口高度（像素；Rust 按窗口尺寸计算）。
+    pub viewport_height: u32,
     /// 主题（`system` / `light` / `dark`）。
     pub theme: String,
     /// 交互模式（`buttons` / `gesture`）。
@@ -1220,6 +1224,44 @@ impl AppState {
     /// Toast 动作标识。
     pub fn toast_action(&self) -> &str {
         &self.toast.action
+    }
+
+    /// 设置页最大滚动偏移（内容高度 - 视口高度；不足一屏时为 0）。
+    pub fn settings_scroll_max(&self) -> u32 {
+        self.settings
+            .content_height
+            .saturating_sub(self.settings.viewport_height)
+    }
+
+    /// 设置页滚动偏移（像素）。
+    pub fn settings_scroll(&self) -> u32 {
+        self.settings.scroll_y
+    }
+
+    /// 设置页视口高度（像素）。
+    pub fn settings_viewport(&self) -> u32 {
+        self.settings.viewport_height
+    }
+
+    /// 设定视口高度（窗口变化时由编排层更新，并夹紧滚动位置）。
+    pub fn set_settings_viewport(&mut self, viewport_height: u32) {
+        self.settings.viewport_height = viewport_height;
+        let max = self.settings_scroll_max();
+        self.settings.scroll_y = self.settings.scroll_y.min(max);
+    }
+
+    /// 按像素增量滚动（滚轮 / 键盘共用；正数向下）。
+    pub fn scroll_settings_by(&mut self, delta: i64) {
+        let max = self.settings_scroll_max() as i64;
+        let next = (self.settings.scroll_y as i64 + delta).clamp(0, max);
+        self.settings.scroll_y = next as u32;
+    }
+
+    /// 按比例滚动（滚动条拖动；`ratio` ∈ [0,1]）。
+    pub fn scroll_settings_to(&mut self, ratio: f64) {
+        let max = self.settings_scroll_max() as f64;
+        let next = (ratio.clamp(0.0, 1.0) * max).round();
+        self.settings.scroll_y = next as u32;
     }
 
     /// 投影导入页字段。

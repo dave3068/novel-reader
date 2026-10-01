@@ -991,6 +991,8 @@ pub fn view_for(db_path: &Path, settings: &GlobalSettings) -> crate::app_state::
     let rows = display_rows(settings, &db_path.display().to_string(), counts);
     crate::app_state::SettingsView {
         content_height: content_height(&rows),
+        scroll_y: 0,
+        viewport_height: 0,
         rows,
         note: "修改立即生效并保存到本地库（library.db）".to_string(),
         data_path: db_path.display().to_string(),
