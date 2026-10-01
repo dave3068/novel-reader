@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 自适应图标（Android 8.0+ / API 26+）：
+     背景为纯色（@color/ic_launcher_background = #1890ff，与桌面端同色），
+     前景为 108dp 画布图形（内容收在 66dp 安全圈内，任意遮罩下主体不被裁），
+     单色层供 Android 13+ 主题图标使用（系统只取 alpha 并着色）。
+     图标源：docs/design/icon/（设计事实来源）。 -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+    <monochrome android:drawable="@mipmap/ic_launcher_monochrome" />
+</adaptive-icon>

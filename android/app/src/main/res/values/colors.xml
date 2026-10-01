@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 应用图标配色：与桌面端设计系统 Primary 一致（docs/design/icon/README.md）。 -->
+<resources>
+    <color name="ic_launcher_background">#1890ff</color>
+</resources>

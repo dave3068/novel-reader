@@ -945,11 +945,32 @@ fn field_range(key: &str) -> Option<NumericRange> {
     }
 }
 
+/// 设置页内容高度（像素）：与 `app.slint` 的行高公式**逐项一致**。
+///
+/// 行高口径（`.slint`）：分组标题 48；数值滑杆行 48 + 24；其余单行 48 + 8；
+/// 行间距 8；末尾留白 24。Rust 侧显式求和可避免依赖布局 `preferred-height`
+/// 的运行时行为（曾导致「无内容可滚」：滚动条拖不动、滚轮无效）。
+pub fn content_height(rows: &[SettingsRowView]) -> u32 {
+    // 布局为「每行之前一个 8 像素间距」+ 末尾 24 像素留白（与 `.slint` 的 spacing/尾部占位一致）。
+    let mut total: u32 = 0;
+    for row in rows {
+        total += 8;
+        total += match row.kind {
+            5 => 48,
+            1 => 48 + 24,
+            _ => 48 + 8,
+        };
+    }
+    total + 24
+}
+
 /// 组装设置页投影（含数据行；供启动期与设置变更共用）。
 pub fn view_for(db_path: &Path, settings: &GlobalSettings) -> crate::app_state::SettingsView {
     let counts = storage_counts(db_path);
+    let rows = display_rows(settings, &db_path.display().to_string(), counts);
     crate::app_state::SettingsView {
-        rows: display_rows(settings, &db_path.display().to_string(), counts),
+        content_height: content_height(&rows),
+        rows,
         note: "修改立即生效并保存到本地库（library.db）".to_string(),
         data_path: db_path.display().to_string(),
         theme: settings.reader().theme.clone(),

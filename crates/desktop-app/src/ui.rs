@@ -622,6 +622,7 @@ pub fn apply_snapshot(ui: &AppWindow, snapshot: &UiSnapshot) {
         .collect();
     ui.set_settings_rows(ModelRc::new(VecModel::from(settings_rows)));
     ui.set_settings_note(snapshot.settings.note.as_str().into());
+    ui.set_settings_content_height(snapshot.settings.content_height as f32);
     ui.set_settings_data_path(snapshot.settings.data_path.as_str().into());
 
     // ---- 导入 / 错误 ----

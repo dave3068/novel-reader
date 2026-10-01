@@ -425,6 +425,8 @@ pub struct SettingsView {
     pub note: String,
     /// 数据库位置（mono）。
     pub data_path: String,
+    /// 表单内容高度（像素；滚动视口用，Rust 与 Slint 同口径）。
+    pub content_height: u32,
     /// 主题（`system` / `light` / `dark`）。
     pub theme: String,
     /// 交互模式（`buttons` / `gesture`）。

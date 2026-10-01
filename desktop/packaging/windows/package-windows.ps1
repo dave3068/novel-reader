@@ -40,6 +40,9 @@ Set-StrictMode -Version Latest
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $AppManifest = Join-Path $RepoRoot 'crates\desktop-app\Cargo.toml'
 $DepsDoc = Join-Path $RepoRoot 'docs\desktop\platform-requirements.md'
+# 应用图标（设计事实来源：docs\design\icon\novel-reader.ico）；随包分发，
+# exe 内嵌图标需 rc.exe 资源编译，属未实测项（见 targets.json 的 windows-x86_64）。
+$IconSrc = Join-Path $RepoRoot 'docs\design\icon\novel-reader.ico'
 
 # 目标三元组 → 发布目录名里的架构段
 $ArchSegment = switch ($Target) {
@@ -162,6 +165,13 @@ $null = New-Item -ItemType Directory -Force -Path (Join-Path $ReleaseDir 'dlls')
 
 Copy-Item -LiteralPath $BuiltExe -Destination (Join-Path $ReleaseDir 'novel-reader.exe') -Force
 
+if (Test-Path -LiteralPath $IconSrc) {
+    Copy-Item -LiteralPath $IconSrc -Destination (Join-Path $ReleaseDir 'novel-reader.ico') -Force
+    Write-Host "[2b] 应用图标：novel-reader.ico 已随包分发"
+} else {
+    Write-Warning "缺少 $IconSrc，未随包分发图标"
+}
+
 # ---------------------------------------------------------------------------
 # [3] 启动包装（把 dlls\ 加入 PATH，原样转发参数）
 # ---------------------------------------------------------------------------
@@ -213,6 +223,7 @@ novel-reader $Version — Windows $ArchSegment（$Target）
 
 * 数据目录：%LOCALAPPDATA%\novel-reader\library.db（可用 NR_DB_PATH 环境变量覆盖）；
 * 随包 DLL 位于 dlls\，启动包装会自动加入 PATH；
+* 应用图标：novel-reader.ico（随包分发，可用于快捷方式；exe 内嵌图标本轮未做）；
 * 依赖与系统要求见 docs\platform-requirements.md。
 
 完整性校验（PowerShell）

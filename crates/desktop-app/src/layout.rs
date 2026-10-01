@@ -140,7 +140,7 @@ pub const COLUMN_PROGRESS_WIDTH: u32 = 180;
 /// 书架「最近阅读」列宽（像素）。
 pub const COLUMN_RECENT_WIDTH: u32 = 110;
 /// 书架「操作」列宽（像素）。
-pub const COLUMN_ACTIONS_WIDTH: u32 = 80;
+pub const COLUMN_ACTIONS_WIDTH: u32 = 120;
 /// 页头高度（像素；标题 + 计数 Tag + 工具区）。
 pub const PAGE_HEADER_HEIGHT: u32 = 80;
 /// 面板头高度（像素）。

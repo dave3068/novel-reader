@@ -24,6 +24,8 @@ BUILD_DIR="$REPO_ROOT/crates/desktop-app/target/$TARGET/release"
 BUILT_EXE="$BUILD_DIR/desktop-app.exe"
 MINGW_PREFIX="${NR_MINGW_PREFIX:-/opt/dev-tools/mingw}"
 DEPS_DOC="$REPO_ROOT/docs/desktop/platform-requirements.md"
+# 应用图标（设计事实来源：docs/design/icon/novel-reader.ico）
+ICON_SRC="$REPO_ROOT/docs/design/icon/novel-reader.ico"
 
 OUT_ROOT="$REPO_ROOT/dist"
 DO_BUILD=1
@@ -88,6 +90,16 @@ echo "[2] 组装发布目录：$RELEASE_DIR"
 mkdir -p "$RELEASE_DIR/dlls" "$RELEASE_DIR/docs"
 cp -f "$BUILT_EXE" "$RELEASE_DIR/novel-reader.exe"
 
+# ---- [2b] 应用图标（随包分发 .ico；快捷方式/资源管理器可选用）----
+# 说明：exe 内嵌图标需要资源编译（MSVC rc.exe / mingw windres），本实验脚本不做，
+# 因此这里只分发 .ico 文件；未实测项登记在 targets.json 的 windows-x86_64。
+if [[ -f "$ICON_SRC" ]]; then
+  cp -f "$ICON_SRC" "$RELEASE_DIR/novel-reader.ico"
+  echo "[2b] 应用图标：novel-reader.ico（$(stat -c %s "$RELEASE_DIR/novel-reader.ico") 字节）"
+else
+  echo "WARN 缺少图标 $ICON_SRC，未随包分发图标" >&2
+fi
+
 # ---- [3] 随包 DLL（mingw 运行时；本机实测通常只有系统 DLL，故允许为空）----
 missing_dlls=()
 for dll in libgcc_s_seh-1.dll libwinpthread-1.dll libstdc++-6.dll; do
@@ -127,6 +139,7 @@ novel-reader $VERSION — Windows x86_64（$TARGET，**实验性交叉编译**�
 
 * 数据目录：%LOCALAPPDATA%\\novel-reader\\library.db（可用 NR_DB_PATH 覆盖）；
 * 随包 DLL 位于 dlls\\，启动包装会自动加入 PATH；
+* 应用图标：novel-reader.ico（随包分发，可用于快捷方式；exe 内嵌图标本轮未做）；
 * 依赖与系统要求见 docs\\platform-requirements.md。
 TXT
 iconv -f UTF-8 -t UTF-8 "$readme_tmp" > "$RELEASE_DIR/docs/README.txt"

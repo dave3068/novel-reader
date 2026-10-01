@@ -33,9 +33,11 @@
 ```text
 # Linux（X11 或 Wayland 同结构，目录名以会话结尾）
 novel-reader-0.1.0-linux-x86_64-x11/
-├── bin/novel-reader                  # Release 二进制
+├── bin/novel-reader                  # Release 二进制（图标已编译期内嵌，窗口标题栏/任务栏可见）
 ├── bin/novel-reader.sh               # 启动包装（定位发布目录、按需 FONTCONFIG_FILE/LD_LIBRARY_PATH）
 ├── share/applications/novel-reader.desktop
+├── share/icons/hicolor/{16x16,32x32,48x48,64x64,128x128,256x256}/apps/novel-reader.png
+├── share/icons/hicolor/scalable/apps/novel-reader.svg
 ├── share/doc/novel-reader/README.md
 ├── share/doc/novel-reader/platform-requirements.md
 ├── share/doc/novel-reader/runtime-libraries.txt   # 打包机 ldd 实测 soname 清单
@@ -47,6 +49,7 @@ novel-reader-0.1.0-linux-x86_64-x11/
 # Windows
 novel-reader-0.1.0-windows-x86_64/
 ├── novel-reader.exe
+├── novel-reader.ico                  # 应用图标（随包分发；exe 内嵌图标未做，属未实测项）
 ├── start-novel-reader.cmd            # 把 dlls\ 加入 PATH 后启动
 ├── dlls/                             # 随包 DLL（VC++ 运行库；-StaticCrt 时可为空）
 ├── [fonts/]                          # 仅 -BundleFont
@@ -55,6 +58,10 @@ novel-reader-0.1.0-windows-x86_64/
 ├── VERSION
 └── MANIFEST.sha256
 ```
+
+**应用图标口径**：图标二进制不在打包脚本内维护，一律取自设计事实来源 `docs/design/icon/`
+（Linux 取 `png/` 与 `svg/novel-reader-icon.svg`，Windows 取 `novel-reader.ico`）；缺项时脚本在开头即
+`exit 2`。`.desktop` 写 `Icon=novel-reader`（不带扩展名），由桌面环境按 hicolor 主题挑选尺寸。
 
 `targets.json` 中每个布局项带 `required` 标记：脚本落盘后逐项自检，缺项即失败（exit 1）。
 
