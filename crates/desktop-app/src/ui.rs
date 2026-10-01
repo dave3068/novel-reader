@@ -627,6 +627,18 @@ pub fn apply_snapshot(ui: &AppWindow, snapshot: &UiSnapshot) {
     ui.set_settings_content_height(snapshot.settings.content_height as f32);
     ui.set_settings_scroll_y(snapshot.settings.scroll_y as f32);
     ui.set_settings_viewport_height(snapshot.settings.viewport_height as f32);
+    ui.set_settings_select_open(snapshot.settings.select_open);
+    ui.set_settings_select_y(snapshot.settings.select_y as f32);
+    ui.set_settings_select_key(snapshot.settings.select_key.as_str().into());
+    ui.set_settings_select_index(snapshot.settings.select_index);
+    ui.set_settings_select_options(ModelRc::new(VecModel::from(
+        snapshot
+            .settings
+            .select_options
+            .iter()
+            .map(|option| option.as_str().into())
+            .collect::<Vec<_>>(),
+    )));
     ui.set_settings_data_path(snapshot.settings.data_path.as_str().into());
 
     // ---- 导入 / 错误 ----
@@ -2824,6 +2836,31 @@ pub fn run() -> Result<(), slint::PlatformError> {
             });
         }
     };
+    // 设置页下拉框：点击字段展开/收起（与书架排序下拉同一交互）。
+    ui.on_settings_select_toggle({
+        let state = Arc::clone(&state);
+        let weak = ui.as_weak();
+        move |key| {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            mutate_and_refresh(&ui, &state, |guard| {
+                guard.toggle_settings_select(key.as_str());
+            });
+        }
+    });
+    ui.on_settings_select_close({
+        let state = Arc::clone(&state);
+        let weak = ui.as_weak();
+        move || {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            mutate_and_refresh(&ui, &state, |guard| {
+                guard.close_settings_select();
+            });
+        }
+    });
     ui.on_settings_scroll_by({
         let entry = settings_scroll_entry.clone();
         move |delta| {

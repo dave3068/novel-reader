@@ -431,6 +431,16 @@ pub struct SettingsView {
     pub scroll_y: u32,
     /// 设置页视口高度（像素；Rust 按窗口尺寸计算）。
     pub viewport_height: u32,
+    /// 下拉框是否展开（选择型字段，如「字体族」）。
+    pub select_open: bool,
+    /// 下拉框纵向锚点（内容坐标；= 行 y + 行高 + 4）。
+    pub select_y: u32,
+    /// 展开中的字段键（未展开为空串）。
+    pub select_key: String,
+    /// 下拉框当前选中项下标。
+    pub select_index: i32,
+    /// 下拉框选项列表。
+    pub select_options: Vec<String>,
     /// 主题（`system` / `light` / `dark`）。
     pub theme: String,
     /// 交互模式（`buttons` / `gesture`）。
@@ -1231,6 +1241,37 @@ impl AppState {
         self.settings
             .content_height
             .saturating_sub(self.settings.viewport_height)
+    }
+
+    /// 展开/收起设置页下拉框（同一字段再次触发即收起）。
+    ///
+    /// 下拉列表与书架排序下拉同一交互口径：点击字段展开、高亮当前项、
+    /// 点选生效并收起、点其他处收起。
+    pub fn toggle_settings_select(&mut self, key: &str) {
+        if self.settings.select_open && self.settings.select_key == key {
+            self.close_settings_select();
+            return;
+        }
+        let Some(row) = self
+            .settings
+            .rows
+            .iter()
+            .find(|row| row.key == key && row.kind == 0)
+        else {
+            return;
+        };
+        self.settings.select_open = true;
+        self.settings.select_key = key.to_string();
+        self.settings.select_y = row.offset_y + row.row_height + 4;
+        self.settings.select_index = row.current_index;
+        self.settings.select_options = row.options.clone();
+    }
+
+    /// 收起设置页下拉框。
+    pub fn close_settings_select(&mut self) {
+        self.settings.select_open = false;
+        self.settings.select_key.clear();
+        self.settings.select_options.clear();
     }
 
     /// 设置页滚动偏移（像素）。
