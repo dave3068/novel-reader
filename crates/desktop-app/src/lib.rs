@@ -41,17 +41,19 @@ pub mod progress;
 pub mod reflow;
 pub mod settings;
 pub mod shelf;
+pub mod shelf_ops;
 pub mod source_status;
 pub mod ui;
 
 pub use app_state::{
-    AppState, ApplyOutcome, BackgroundPayload, BackgroundResult, ReaderView, Screen, SettingsView,
-    ShelfRequest, ShelfRow, TocRow, UiSnapshot,
+    AppState, ApplyOutcome, BackgroundPayload, BackgroundResult, ChoiceRow, DialogView, ErrorView,
+    ImportView, MarkRow, ReaderView, Screen, SettingsView, ShelfRequest, ShelfRow, ShelfView,
+    ShortcutEntryView, StepRowView, TocRow, UiSnapshot,
 };
 pub use bookmarks::{
     add as add_bookmark, default_title as default_mark_title, list as list_bookmarks,
     remove as remove_bookmark, rename as rename_bookmark, target as mark_target, MarkError,
-    MarkRow, MarkTarget, MARKS_PER_PAGE,
+    MarkTarget, MARKS_PER_PAGE,
 };
 pub use bridge::{JobChannel, UiBridge, UiExecutor};
 pub use chapters::{
@@ -69,10 +71,15 @@ pub use progress::{
     SavedPosition,
 };
 pub use settings::{
-    load as load_settings, save as save_settings, FieldKind, GlobalSettings, SettingsError,
-    SettingsField, SettingsItem as SettingsFieldItem, SettingsOrigin, SETTINGS_FIELDS,
+    load as load_settings, save as save_settings, display_rows as settings_display_rows,
+    view_for as settings_view_for, FieldKind, GlobalSettings, SettingsError, SettingsField,
+    SettingsOrigin, SettingsRowView, SETTINGS_FIELDS,
 };
 pub use shelf::{default_db_path, load_shelf, shelf_job};
+pub use shelf_ops::{
+    clear_index, counts as shelf_counts, index_clear_preview, purge_book, relink_all, remove_book,
+    rename_book, IndexClearPreview,
+};
 pub use source_status::{
     relink_flow, shelf_job_with_source_check, SourceCheck, SourceState, DEFAULT_RELINK_DECISION,
     LABEL_MISSING, LABEL_NEEDS_REINDEX,

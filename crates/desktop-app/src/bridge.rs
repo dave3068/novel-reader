@@ -191,9 +191,20 @@ mod tests {
                     rows: vec![ShelfRow {
                         id: "42".to_string(),
                         title: "真实书".to_string(),
+                        initial: "真".to_string(),
+                        meta: "/tmp/42.txt · 1.0 KB".to_string(),
                         status: "ok".to_string(),
+                        status_tone: 2,
                         progress: "第 1 章".to_string(),
+                        percent: 0,
+                        recent: String::new(),
+                        needs_relink: false,
+                        can_open: true,
+                        recent_epoch: 0,
+                        created_epoch: 0,
                     }],
+                    total_count: 1,
+                    removed_count: 0,
                     settings: Box::new(SettingsView::default()),
                     status_text: "书架已加载".to_string(),
                 },
@@ -214,8 +225,8 @@ mod tests {
             1,
             "后台结果必须经执行器回到 UI 线程并投影一次"
         );
-        assert_eq!(snapshots[0].shelf_rows.len(), 1);
-        assert_eq!(snapshots[0].shelf_rows[0].id, "42");
+        assert_eq!(snapshots[0].shelf.rows.len(), 1);
+        assert_eq!(snapshots[0].shelf.rows[0].id, "42");
         assert_eq!(snapshots[0].status_text, "书架已加载");
         assert_eq!(bridge.counters().0, 1);
     }

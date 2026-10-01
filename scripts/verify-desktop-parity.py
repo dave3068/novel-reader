@@ -127,10 +127,11 @@ def check_encoding_static(desktop_src: dict[str, str]) -> None:
         issues.append("界面缺少编码显示 / 手动选择入口")
     # 界面侧必须用**通用槽位**（信息区附加行 + 通用选项面板）承载投影结果：
     # `.slint` 内不得出现阅读语义标记（由 verify-desktop-scope.py [6] 强制）。
-    if "meta-label" not in app_slint or "choice-rows" not in app_slint:
-        issues.append("Slint 侧缺少信息区附加行 / 通用选项面板属性")
-    if "root.reader-meta-label" not in app_slint:
-        issues.append("信息区未渲染编码等附加信息（reader-meta-label）")
+    # v0.2.0：信息区附加槽位更名为通用 `status-meta`（状态栏 Tag），选项面板仍为 `choice-rows`。
+    if "status-meta" not in app_slint or "choice-rows" not in app_slint:
+        issues.append("Slint 侧缺少信息区附加行（status-meta）/ 通用选项面板属性（choice-rows）")
+    if "root.status-meta" not in app_slint:
+        issues.append("信息区未渲染编码等附加信息（通用槽位 status-meta）")
     if issues:
         fail("[1] 编码贯通静态要素缺失：" + "; ".join(issues))
     else:
@@ -186,7 +187,11 @@ def check_prev_page_static(desktop_src: dict[str, str]) -> None:
     issues = []
     if 'caption: "上一页"' not in app_slint:
         issues.append("阅读页缺少「上一页」按钮")
-    prev_block = re.search(r'ActionButton\s*\{\s*caption:\s*"上一页";(.*?)\}', app_slint, re.S)
+    prev_block = re.search(
+        r'(?:ActionButton|IconButton|TextButton)\s*\{\s*(?:[^}]*?)caption:\s*"上一页";(.*?)\}',
+        app_slint,
+        re.S,
+    )
     if prev_block is None:
         issues.append("无法定位「上一页」按钮块（判据失效）")
     elif "enabled:" in prev_block.group(1):
@@ -198,11 +203,16 @@ def check_prev_page_static(desktop_src: dict[str, str]) -> None:
     else:
         ok("[3] 「上一页」无 enabled 绑定（不置灰）且实现为按位置回退")
 
-    bad_sample = """ActionButton {
+    bad_sample = """IconButton {
     caption: "上一页";
     enabled: reader.can-go-previous;
+    shape: Icons.rewind;
 }"""
-    match = re.search(r'ActionButton\s*\{\s*caption:\s*"上一页";(.*?)\}', bad_sample, re.S)
+    match = re.search(
+        r'(?:ActionButton|IconButton|TextButton)\s*\{\s*(?:[^}]*?)caption:\s*"上一页";(.*?)\}',
+        bad_sample,
+        re.S,
+    )
     if match is not None and "enabled:" in match.group(1):
         ok("[3] 反向对照：带 enabled 绑定的「上一页」会被判为失败")
     else:
@@ -264,10 +274,19 @@ def check_immersive_runtime(binary: pathlib.Path) -> None:
             f"[5] 常规 viewport={normal_last['viewport']}/{normal_last['lines_per_page']} 行 → "
             f"沉浸 viewport={immersed_last['viewport']}/{immersed_last['lines_per_page']} 行"
         )
-    if immersed_last["viewport"] != "1080x720":
-        fail(f"[5] 沉浸态正文区未占满窗口（viewport={immersed_last['viewport']}，期望 1080x720）")
+    # v0.2.0：`window=` 为窗口逻辑尺寸、`region=` 为正文区（含留白，即窗口减装饰）。
+    if immersed_last.get("region") != immersed_last.get("window"):
+        fail(
+            "[5] 沉浸态正文区未占满窗口"
+            f"（region={immersed_last.get('region')} window={immersed_last.get('window')}）"
+        )
+    elif normal_last.get("region") == normal_last.get("window"):
+        fail(f"[5] 常规态正文区本应小于整窗（region={normal_last.get('region')}）")
     else:
-        ok("[5] 沉浸态正文区 = 1080x720（整窗）")
+        ok(
+            f"[5] 沉浸态正文区 = 整窗 {immersed_last.get('window')}"
+            f"（常规态 {normal_last.get('region')}）"
+        )
 
 
 def check_prev_page_runtime(binary: pathlib.Path) -> None:
@@ -333,11 +352,11 @@ def check_ui_reachability_static(desktop_src: dict[str, str]) -> None:
         issues.append("书架行缺少「阅读」按钮（点了进不去阅读页）")
     if "callback open-book(string);" not in app_slint:
         issues.append("书架页缺少 open-book 回调")
-    if "ui.on_reader_open_book" not in ui:
-        issues.append("书架「阅读」按钮未接线到 open_reader")
+    if "ui.on_shelf_open_book" not in ui:
+        issues.append("书架「阅读」入口未接线到 open_reader_from_shelf")
     # (b) 书架结果必须携带**完整**设置投影（否则设置页被刷空）。
-    if "SettingsView::from_global" not in shelf:
-        issues.append("书架结果未使用完整设置投影（SettingsView::from_global）")
+    if "settings::view_for(" not in shelf:
+        issues.append("书架结果未使用完整设置投影（settings::view_for）")
     # (c) Windows：原生文件对话框 + GUI 子系统（控制台窗口）。
     if "pick_with_windows_dialog" not in import_src or "GetOpenFileNameW" not in import_src:
         issues.append("Windows 缺少原生文件对话框（GetOpenFileNameW）")
@@ -358,7 +377,7 @@ def check_ui_reachability_static(desktop_src: dict[str, str]) -> None:
     }
     verdicts = [
         'caption: "阅读"' not in samples["书架无阅读按钮"],
-        "SettingsView::from_global" not in samples["设置投影不完整"],
+        "settings::view_for(" not in samples["设置投影不完整"],
         "GetOpenFileNameW" not in samples["Windows 无原生对话框"],
     ]
     if all(verdicts):
@@ -432,12 +451,15 @@ def check_immersive_exit_runtime(binary: pathlib.Path) -> None:
         fail(f"[10] Esc 未退出沉浸（最后的 NR-IMMERSIVE immersive={last.get('immersive')}）")
     elif not page_list or page_list[-1].get("immersive") != "0":
         fail("[10] 退出沉浸后 NR-PAGE 仍标注 immersive=1")
-    elif page_list[-1].get("viewport") != "1016x564":
-        fail(f"[10] 退出沉浸后正文区未回到常规尺寸（{page_list[-1].get('viewport')}）")
+    elif page_list[-1].get("region") == page_list[-1].get("window"):
+        fail(
+            "[10] 退出沉浸后正文区仍是整窗（装饰未恢复）"
+            f"（region={page_list[-1].get('region')}）"
+        )
     else:
         ok(
             f"[10] Esc 退出沉浸：NR-IMMERSIVE immersive={last.get('immersive')}，"
-            f"正文区回到 {page_list[-1].get('viewport')}"
+            f"正文区回到 {page_list[-1].get('region')}（< 整窗 {page_list[-1].get('window')}）"
         )
 
 
@@ -460,7 +482,7 @@ def check_window_and_toc_static(desktop_src: dict[str, str]) -> None:
     # (b) 目录：滚轮在面板内消费 + 比例定位。
     if "toc-wheel(event.delta-y)" not in app_slint:
         issues.append("目录面板未消费滚轮（滚轮会翻动正文）")
-    if "toc-seek(self.mouse-y, self.height)" not in app_slint:
+    if "root.toc-seek(" not in app_slint or "ScrollBar {" not in app_slint:
         issues.append("目录缺少滚动条比例定位")
     if "ui.on_toc_wheel" not in ui or "ui.on_toc_seek" not in ui:
         issues.append("目录滚轮/滚动条未接线到 Rust")

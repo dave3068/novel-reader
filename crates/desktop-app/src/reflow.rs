@@ -394,8 +394,12 @@ pub fn layout_signature(
                 mapped: viewport.mapped,
             })?;
     let settings = settings.clone().clamped_font_size_milli();
+    // O1 方案 A（设计 §5 S5）：正文列最大宽 = 40 × 字号并居中；断行宽度用**列宽**，
+    // 高度仍用正文区高度。测量与渲染同口径（渲染端从投影获得同一列的几何）。
+    let font_size_px = (settings.font_size_milli / 1_000).max(1);
+    let column = metrics.text_column(&area, font_size_px);
     let signature = LayoutSignature {
-        viewport_width: area.width,
+        viewport_width: column.width,
         viewport_height: area.height,
         direction: reading_core::TextDirection::Horizontal,
         font_family: settings.font_family.clone(),
@@ -1114,7 +1118,9 @@ mod tests {
             false,
         )
         .expect("映射后可派生签名");
-        assert_eq!(signature.viewport_width, area.width);
+        // 1080 宽窗口：正文列被限宽到 40 × 18px = 720（O1 方案 A）。
+        let expected = metrics.text_column(&area, 18);
+        assert_eq!(signature.viewport_width, expected.width);
         assert_eq!(signature.viewport_height, area.height);
         assert!(signature.validate().is_ok(), "签名必须通过核心校验");
 
@@ -1247,7 +1253,7 @@ mod tests {
         assert!(open.changed, "展开菜单改变正文区域高度 → 必须重排");
         assert_eq!(open.reason, ReflowReason::ViewportChanged);
         assert_eq!(
-            open.typography.content_height_milli + crate::layout::MENU_HEIGHT * 1_000,
+            open.typography.content_height_milli + crate::layout::TOOLBAR_HEIGHT * 1_000,
             closed.typography.content_height_milli
         );
 

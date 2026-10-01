@@ -1,43 +1,59 @@
-//! novel-reader 桌面（Slint）UI —— 唯一的 UI 定义来源。
+//! novel-reader 桌面（Slint）UI —— 唯一的 UI 定义来源（v0.2.0 IBM 重设计）。
 //!
-//! 边界（`desktop/spec.md` DR2、`design.md` §2、DT1 禁止事项）：
+//! 设计依据：`docs/design/novel-reader-desktop-redesign.md`（S1–S16 逐屏规格、令牌、组件库）。
+//!
+//! 边界（`desktop/spec.md` DR2、`design.md` §2）：
 //!
 //! - 本文件只做「状态投影 + 交互事件转发」。编码识别、章节识别、分页边界、位置校验、
 //!   书签规则全部属于冻结核心 `reading-core`，UI 不得复制、也不得自行推断；
-//! - 版式常量（顶栏高度 / 底部栏高度 / 正文内边距 / 菜单高度 等）的**唯一来源**是
-//!   `crates/desktop-app/src/layout.rs`。下面的 `UiMetrics` 只有属性声明（默认 `0px`），
-//!   启动时由 Rust 的 `ui.rs::apply_layout_metrics` 注入真实数值；
+//! - 版式常量（尺寸 / 字号 / 间距）与配色令牌的**唯一来源**是
+//!   `crates/desktop-app/src/layout.rs`。下面的 `UiMetrics` / `Skin` 只有属性声明
+//!   （默认 `0 像素` / 透明），启动时由 Rust 的 `ui.rs::apply_layout_metrics` /
+//!   `apply_palette` 注入真实数值；
 //! - 本文件任何位置都不得写死尺寸（一律走 `UiMetrics.*`），由
 //!   `scripts/verify-desktop-scope.py` 与 `tests/layout_constants.rs` 双重强制；
-//! - `Screens` 的序号与 Rust `app_state::Screen::index()` 一致，由 Rust 投影驱动，
-//!   界面自己不做页面语义判断；
-//! - 目录 / 书签面板只渲染 Rust 给的有界窗口（序号、标题、文案都由 Rust 生成），
-//!   界面不计算章节、不解析位置、不拼文案（DT4）。
+//! - 一切面向用户的**结果/状态文案**（含 tooltip 里的快捷键）由 Rust 投影；
+//!   界面只保留固定的结构性格文案（栏位名、按钮动作名、分组标题）；
+//! - `Screens` 的序号与 Rust `app_state::Screen::index()` 一致，由 Rust 投影驱动。
 
-import { LineEdit } from "std-widgets.slint";
+// ---------------------------------------------------------------------------
+// 视图结构（只含可显示字段；全部由 Rust 投影）
+// ---------------------------------------------------------------------------
 
+// 书架一行：书名/文件 + 状态 Tag + 进度 + 最近阅读 + 行级入口。
 export struct BookRow {
     id: string,
     title: string,
+    initial: string,
+    meta: string,
     status: string,
+    // 语义槽位（Rust 判定）：0=中性 1=信息（蓝）2=成功（绿）3=警告（黄）4=错误（红）
+    status-tone: int,
     progress: string,
+    // 进度千分比（0..1000；2 像素 进度条用）
+    percent: int,
+    recent: string,
     needs-relink: bool,
+    can-open: bool,
 }
 
-// 目录一行（可显示字段；序号与当前章标记由 Rust 给出）。
+// 目录一行（序号 / 标题 / 偏移量都由 Rust 给出；当前章由 Rust 标记）。
 export struct TocRow {
     sequence: string,
     title: string,
+    meta: string,
     current: bool,
 }
 
-// 书签一行（可显示字段；位置文案由 Rust 生成）。
+// 书签一行（位置与当前章标记由 Rust 给出）。
 export struct MarkRow {
     id: string,
+    chapter: string,
     title: string,
     position-label: string,
     current-chapter: bool,
     selected: bool,
+    delete-pending: bool,
 }
 
 // 内容编码一行（名称与「当前」标记由 Rust 给出；界面不做编码语义）。
@@ -46,39 +62,179 @@ export struct ChoiceRow {
     current: bool,
 }
 
-// 全局设置一行（键 / 名称 / 当前值 / 说明都由 Rust 生成）。
+// 设置一行（键 / 名称 / 值 / 说明 / 控件类型都由 Rust 生成）。
+//
+// kind：0=字体族（循环字段）1=数值滑杆 2=枚举单选 3=布尔开关 4=只读文本行
+// section：0=排版 1=版式 2=外观 3=交互 4=数据
 export struct SettingsRow {
     key: string,
     label: string,
     value: string,
     note: string,
     effective: bool,
+    kind: int,
+    section: int,
+    value-min: int,
+    value-max: int,
+    value-step: int,
+    value-current: int,
+    options: [string],
+    current-index: int,
+    checked: bool,
+    // 值文本用等宽字体（机器可核对信息，如数据库路径）。
+    mono: bool,
+    // 取值范围显示口径（如 `12 … 40`、`1.0 × … 2.4 ×`；空串隐藏）。
+    range-label: string,
 }
 
-// 版式常量投影入口（数值由 Rust 注入，此处只有声明）。
+// 快捷键说明一行（action/keys 由 Rust 生成；available=false 为建议项）。
+export struct ShortcutEntry {
+    action: string,
+    keys: string,
+    available: bool,
+}
+
+// 导入步骤一行（state：0=未开始 1=进行中 2=已完成）。
+export struct StepRow {
+    label: string,
+    state: int,
+}
+
+// ---------------------------------------------------------------------------
+// 版式常量投影入口（数值由 Rust 注入，此处只有声明）
+// ---------------------------------------------------------------------------
+
 export global UiMetrics {
+    // 窗口与条带
     in property <length> top-bar-height: 0px;
-    in property <length> bottom-bar-height: 0px;
-    in property <length> menu-height: 0px;
+    in property <length> toolbar-height: 0px;
+    in property <length> toolbar-height-compact: 0px;
+    in property <length> status-bar-height: 0px;
+    in property <length> progress-bar-height: 0px;
+    in property <length> progress-bar-hover-height: 0px;
     in property <length> content-padding-h: 0px;
     in property <length> content-padding-v: 0px;
-    in property <length> nav-tab-width: 0px;
-    in property <length> nav-tab-height: 0px;
+    in property <length> content-padding-h-wide: 0px;
+    in property <length> content-padding-compact: 0px;
+    in property <length> breakpoint-wide: 0px;
+    in property <length> breakpoint-compact: 0px;
+    in property <length> breakpoint-narrow: 0px;
     in property <length> default-window-width: 0px;
     in property <length> default-window-height: 0px;
-    in property <length> title-font-size: 0px;
-    in property <length> body-font-size: 0px;
-    in property <length> caption-font-size: 0px;
-    in property <length> corner-radius: 0px;
-    // 窗口最小尺寸（窗口本身用 preferred-*，可缩放/可最大化）。
     in property <length> min-window-width: 0px;
     in property <length> min-window-height: 0px;
-    // 目录滚动条（宽度 / 右缘间距 / 滑块最小长度）。
+    // 字号
+    in property <length> title-font-size: 0px;
+    in property <length> heading-font-size: 0px;
+    in property <length> body-font-size: 0px;
+    in property <length> ui-font-size: 0px;
+    in property <length> label-font-size: 0px;
+    in property <length> caption-font-size: 0px;
+    in property <length> mono-font-size: 0px;
+    in property <length> tag-font-size: 0px;
+    // 导航
+    in property <length> nav-tab-min-width: 0px;
+    in property <length> nav-tab-height: 0px;
+    in property <length> nav-indicator-height: 0px;
+    // 控件
+    in property <length> icon-button-size: 0px;
+    in property <length> icon-button-compact-size: 0px;
+    in property <length> button-height: 0px;
+    in property <length> button-height-compact: 0px;
+    in property <length> focus-ring-width: 0px;
+    in property <length> search-field-width: 0px;
+    in property <length> sort-field-width: 0px;
+    in property <length> tag-height: 0px;
+    in property <length> switch-width: 0px;
+    in property <length> switch-height: 0px;
+    in property <length> radio-size: 0px;
+    in property <length> slider-handle-size: 0px;
+    in property <length> slider-track-height: 0px;
+    // 列表 / 表格
+    in property <length> list-row-height: 0px;
+    in property <length> table-row-height: 0px;
+    in property <length> table-header-height: 0px;
+    in property <length> column-status-width: 0px;
+    in property <length> column-progress-width: 0px;
+    in property <length> column-recent-width: 0px;
+    in property <length> column-actions-width: 0px;
+    in property <length> page-header-height: 0px;
+    in property <length> panel-header-height: 0px;
+    in property <length> panel-hint-height: 0px;
+    // 滚动条
     in property <length> scrollbar-width: 0px;
     in property <length> scrollbar-gutter: 0px;
     in property <length> scrollbar-min-handle: 0px;
-    // 面板内行间距：不写死绝对尺寸，由单一来源（说明字号）派生。
-    out property <length> panel-row-gap: caption-font-size / 4;
+    // 覆盖层
+    in property <length> toast-radius: 0px;
+    in property <length> toast-width: 0px;
+    in property <length> toast-height: 0px;
+    in property <length> modal-width-confirm: 0px;
+    in property <length> modal-width-settings: 0px;
+    in property <length> card-width: 0px;
+    in property <length> card-height: 0px;
+    in property <length> cover-size: 0px;
+    in property <length> empty-icon-size: 0px;
+    // 间距阶
+    in property <length> space-2: 0px;
+    in property <length> space-4: 0px;
+    in property <length> space-8: 0px;
+    in property <length> space-12: 0px;
+    in property <length> space-16: 0px;
+    in property <length> space-24: 0px;
+    in property <length> space-32: 0px;
+    in property <length> space-48: 0px;
+    // 线宽 / 图标 / 卡片文字 / 面板搜索
+    in property <length> hairline: 0px;
+    in property <length> brand-font-size: 0px;
+    in property <length> icon-size: 0px;
+    in property <length> cover-font-size: 0px;
+    in property <length> card-title-font-size: 0px;
+    in property <length> search-field-panel-width: 0px;
+}
+
+// ---------------------------------------------------------------------------
+// 配色令牌投影入口（数值由 Rust 按当前主题注入；此处只有声明）
+// ---------------------------------------------------------------------------
+
+export global Skin {
+    in property <color> background: #00000000;
+    in property <color> layer-01: #00000000;
+    in property <color> layer-02: #00000000;
+    in property <color> field-01: #00000000;
+    in property <color> border-subtle: #00000000;
+    in property <color> border-strong: #00000000;
+    in property <color> text-primary: #00000000;
+    in property <color> text-secondary: #00000000;
+    in property <color> text-placeholder: #00000000;
+    in property <color> text-disabled: #00000000;
+    in property <color> primary: #00000000;
+    in property <color> primary-hover: #00000000;
+    in property <color> primary-pressed: #00000000;
+    in property <color> primary-soft: #00000000;
+    in property <color> primary-border: #00000000;
+    in property <color> primary-strong: #00000000;
+    in property <color> on-primary: #00000000;
+    in property <color> focus: #00000000;
+    in property <color> header: #00000000;
+    in property <color> header-text: #00000000;
+    in property <color> support-success: #00000000;
+    in property <color> success-soft: #00000000;
+    in property <color> support-warning: #00000000;
+    in property <color> warning-soft: #00000000;
+    in property <color> support-error: #00000000;
+    in property <color> error-soft: #00000000;
+    in property <color> scrollbar-track: #00000000;
+    in property <color> scrollbar-handle: #00000000;
+    in property <color> control-track: #00000000;
+    in property <color> disabled-bg: #00000000;
+    in property <color> disabled-border: #00000000;
+    in property <color> disabled-text: #00000000;
+    in property <color> overlay: #00000000;
+    in property <color> toast-bg: #00000000;
+    in property <color> toast-text: #00000000;
+    in property <color> reading-text: #00000000;
+    in property <color> cover-bg: #00000000;
 }
 
 // 页面序号（与 Rust `app_state::Screen` 对齐）。
@@ -90,27 +246,68 @@ export global Screens {
     out property <int> error: 4;
 }
 
-// 顶栏导航按钮。
-component NavTab inherits Rectangle {
+// 自绘几何线框图标（16 单位坐标系；零依赖，不引入图标库资源）。
+export global Icons {
+    out property <string> chevron-left: "M 10 3 L 5 8 L 10 13";
+    out property <string> chevron-right: "M 6 3 L 11 8 L 6 13";
+    out property <string> chevron-up: "M 4 10 L 8 6 L 12 10";
+    out property <string> chevron-down: "M 4 6 L 8 10 L 12 6";
+    out property <string> toc: "M 2 4 H 14 M 2 8 H 14 M 2 12 H 14";
+    out property <string> mark: "M 4 2 H 12 V 14 L 8 11 L 4 14 Z";
+    out property <string> options: "M 2 5 H 14 M 2 11 H 14 M 6 3 V 7 M 10 9 V 13";
+    out property <string> save: "M 3 2 H 11 L 14 5 V 14 H 2 V 2 Z M 5 2 V 6 H 10 V 2";
+    out property <string> expand: "M 3 6 V 3 H 6 M 13 6 V 3 H 10 M 3 10 V 13 H 6 M 13 10 V 13 H 10";
+    out property <string> collapse: "M 4 10 L 8 6 L 12 10";
+    out property <string> close: "M 4 4 L 12 12 M 12 4 L 4 12";
+    out property <string> search: "M 7 2 A 5 5 0 1 0 7 12 A 5 5 0 1 0 7 2 M 10.6 10.6 L 14 14";
+    out property <string> sun: "M 8 4.5 A 3.5 3.5 0 1 0 8 11.5 A 3.5 3.5 0 1 0 8 4.5 M 8 1 V 2.5 M 8 13.5 V 15 M 1 8 H 2.5 M 13.5 8 H 15 M 3 3 L 4 4 M 12 12 L 13 13 M 13 3 L 12 4 M 4 12 L 3 13";
+    out property <string> table: "M 2 3 H 14 M 2 6.5 H 14 M 2 10 H 14 M 2 13 H 14";
+    out property <string> cards: "M 2 3 H 7 V 8 H 2 Z M 9 3 H 14 V 8 H 9 Z M 2 9 H 7 V 14 H 2 Z M 9 9 H 14 V 14 H 9 Z";
+    out property <string> link: "M 6.2 9.8 L 9.8 6.2 M 4 7.5 A 3 3 0 0 1 7 4.5 L 8.2 4.5 M 12 8.5 A 3 3 0 0 1 9 11.5 L 7.8 11.5";
+    out property <string> check: "M 3 8.5 L 6.5 12 L 13 4.5";
+    out property <string> folder: "M 2 4 H 6.5 L 8 6 H 14 V 13 H 2 Z";
+    out property <string> info: "M 8 2 A 6 6 0 1 0 8 14 A 6 6 0 1 0 8 2 M 8 7 V 11 M 8 4.6 V 5.4";
+    out property <string> warning: "M 8 2 L 14.5 13.5 H 1.5 Z M 8 6 V 10 M 8 11.6 V 12.4";
+    out property <string> error: "M 8 2 A 6 6 0 1 0 8 14 A 6 6 0 1 0 8 2 M 5.4 5.4 L 10.6 10.6 M 10.6 5.4 L 5.4 10.6";
+    out property <string> book: "M 3 2 H 6 V 14 H 3 Z M 8 2 H 11 V 14 H 8 Z";
+    out property <string> more: "M 4 8 A 0.6 0.6 0 1 0 5.2 8 A 0.6 0.6 0 1 0 4 8 M 7.4 8 A 0.6 0.6 0 1 0 8.6 8 A 0.6 0.6 0 1 0 7.4 8 M 10.8 8 A 0.6 0.6 0 1 0 12 8 A 0.6 0.6 0 1 0 10.8 8";
+    out property <string> help: "M 6 6 A 2.2 2.2 0 1 1 8 9 V 10.5 M 8 12.4 V 12.6";
+    out property <string> power: "M 8 2 V 8 M 4.2 4.2 A 5.2 5.2 0 1 0 11.8 4.2";
+    out property <string> rewind: "M 3 4 V 12 M 6 8 L 12 4 V 12 Z";
+    out property <string> forward: "M 13 4 V 12 M 10 8 L 4 4 V 12 Z";
+}
+
+// ---------------------------------------------------------------------------
+// 基础组件（自绘；五态与可访问名称）
+// ---------------------------------------------------------------------------
+
+// UI Shell 导航项（项高 48；选中 600 + 底部 2 像素 主色；文字自适应）。
+component NavItem inherits Rectangle {
     in property <string> caption: "";
     in property <bool> active: false;
     callback activated();
 
-    width: UiMetrics.nav-tab-width;
+    width: max(UiMetrics.nav-tab-min-width, nav-label.preferred-width + UiMetrics.space-32);
     height: UiMetrics.nav-tab-height;
-    border-radius: UiMetrics.corner-radius;
-    background: active ? #1890ff : #d9d9d9;
-    accessible-role: button;
-    accessible-label: caption;
+    background: transparent;
 
-    Text {
-        text: caption;
-        color: active ? #ffffff : #333333;
-        horizontal-alignment: center;
+    nav-label := Text {
+        text: root.caption;
+        x: (parent.width - self.width) / 2;
+        y: 0;
+        height: parent.height - UiMetrics.nav-indicator-height;
+        font-size: UiMetrics.ui-font-size;
+        font-weight: root.active ? 600 : 400;
+        color: Skin.header-text;
         vertical-alignment: center;
-        font-size: UiMetrics.caption-font-size;
     }
-
+    if root.active : Rectangle {
+        x: 0;
+        y: parent.height - self.height;
+        width: parent.width;
+        height: UiMetrics.nav-indicator-height;
+        background: Skin.primary;
+    }
     TouchArea {
         clicked => {
             root.activated();
@@ -118,116 +315,694 @@ component NavTab inherits Rectangle {
     }
 }
 
-// 通用动作按钮（可禁用；禁用时不触发回调）。
-component ActionButton inherits Rectangle {
+// 图标（几何线框；颜色由 `color` 注入）。
+component Icon inherits Path {
+    in property <string> shape: "";
+    in property <length> size: UiMetrics.icon-size;
+    in property <color> color: Skin.text-primary;
+    width: root.size;
+    height: root.size;
+    commands: root.shape;
+    stroke: root.color;
+    stroke-width: UiMetrics.hairline;
+    fill: transparent;
+    viewbox-width: 16;
+    viewbox-height: 16;
+}
+
+// 状态 Tag（高 20 / 圆角 999；5 种语义槽位）。
+component Tag inherits Rectangle {
+    in property <string> text: "";
+    // 0=中性（灰）1=信息（蓝）2=成功（绿）3=警告（黄）4=错误（红）
+    in property <int> tone: 0;
+    height: UiMetrics.tag-height;
+    width: max(UiMetrics.space-24, tag-text.preferred-width + UiMetrics.space-12);
+    border-radius: self.height / 2;
+    background: tone == 2 ? Skin.success-soft : (tone == 3 ? Skin.warning-soft : (tone == 4 ? Skin.error-soft : (tone == 1 ? Skin.primary-soft : Skin.layer-01)));
+    border-width: UiMetrics.hairline;
+    border-color: tone == 2 ? Skin.support-success : (tone == 3 ? Skin.support-warning : (tone == 4 ? Skin.support-error : (tone == 1 ? Skin.primary-border : Skin.border-subtle)));
+
+    tag-text := Text {
+        text: root.text;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        font-size: UiMetrics.tag-font-size;
+        color: tone == 2 ? Skin.support-success : (tone == 3 ? Skin.support-warning : (tone == 4 ? Skin.support-error : (tone == 1 ? Skin.primary-strong : Skin.text-secondary)));
+        vertical-alignment: center;
+    }
+}
+
+// 图标按钮（32 / 行内 28；必须带 tooltip 与可访问名称）。
+//
+// `caption` 是动作名（结构性格文案）；`shortcut` 是 Rust 投影的**已实现**快捷键
+// （tooltip 与快捷键面板同源；未实现时不投影文本）。
+component IconButton inherits Rectangle {
     in property <string> caption: "";
+    in property <string> shortcut: "";
+    in property <string> shape: "";
     in property <bool> enabled: true;
+    in property <bool> selected: false;
+    in property <bool> compact: false;
+    in property <bool> danger: false;
+    // tooltip 出现在下方（工具条 / 页头）或上方（状态栏）。
+    in property <bool> tip-below: false;
+    // 位于深色顶栏（前景取 header-text，与品牌图标一致）。
+    in property <bool> on-header: false;
+    in property <length> button-size: root.compact ? UiMetrics.icon-button-compact-size : UiMetrics.icon-button-size;
     callback activated();
 
-    width: UiMetrics.nav-tab-width;
-    height: UiMetrics.nav-tab-height;
-    border-radius: UiMetrics.corner-radius;
-    background: enabled ? #1890ff : #c8c8c8;
+    width: root.button-size;
+    height: root.button-size;
+    background: !root.enabled ? Skin.disabled-bg : (area.has-hover ? (root.selected ? Skin.primary-soft : Skin.layer-01) : (root.selected ? Skin.primary-soft : transparent));
+    border-width: UiMetrics.hairline;
+    border-color: !root.enabled ? Skin.disabled-border : (root.selected ? Skin.primary : (root.danger ? Skin.support-error : Skin.border-strong));
+    border-radius: self.height / 2;
     accessible-role: button;
-    accessible-label: caption;
+    accessible-label: root.caption;
+    accessible-enabled: root.enabled;
 
-    Text {
-        text: caption;
-        color: enabled ? #ffffff : #f0f0f0;
-        horizontal-alignment: center;
-        vertical-alignment: center;
-        font-size: UiMetrics.caption-font-size;
+    area := TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            root.activated();
+        }
     }
 
-    TouchArea {
+    Icon {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        shape: root.shape;
+        size: UiMetrics.icon-size;
+        color: !root.enabled ? Skin.disabled-text : (root.danger ? Skin.support-error : (root.on-header ? Skin.header-text : (root.selected ? Skin.primary : Skin.text-primary)));
+    }
+
+    if (area.has-hover || area.pressed) && root.caption != "" : Rectangle {
+        x: 0;
+        y: root.tip-below ? parent.height + UiMetrics.space-4 : 0px - self.height - UiMetrics.space-4;
+        width: tip-text.preferred-width + UiMetrics.space-12;
+        height: UiMetrics.space-24;
+        background: Skin.toast-bg;
+        border-radius: UiMetrics.toast-radius;
+
+        tip-text := Text {
+            text: root.shortcut == "" ? root.caption : root.caption + "（" + root.shortcut + "）";
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            font-size: UiMetrics.caption-font-size;
+            color: Skin.toast-text;
+        }
+    }
+}
+
+// 文字按钮（Primary / Secondary / Ghost / Danger 四型）。
+component TextButton inherits Rectangle {
+    // 0=Primary 1=Secondary 2=Ghost 3=Danger
+    in property <int> variant: 0;
+    in property <string> caption: "";
+    in property <bool> enabled: true;
+    in property <bool> compact: false;
+    callback activated();
+
+    // 宽度按文字自然宽 + 左右内边距 16（Carbon 口径）；必须显式声明，
+    // 否则作为纯 Rectangle 会展开铺满父级（会遮住同一页头里的其他控件）。
+    width: max(UiMetrics.space-48, label.preferred-width + UiMetrics.space-32);
+    height: root.compact ? UiMetrics.button-height-compact : UiMetrics.button-height;
+    background: !root.enabled ? Skin.disabled-bg : (area.has-hover ? (variant == 0 ? Skin.primary-hover : (variant == 3 ? Skin.error-soft : (variant == 1 ? Skin.primary-soft : Skin.layer-01))) : (variant == 0 ? Skin.primary : (variant == 3 ? Skin.error-soft : (variant == 2 ? transparent : Skin.layer-02))));
+    border-width: UiMetrics.hairline;
+    border-color: !root.enabled ? Skin.disabled-border : (variant == 0 ? transparent : (variant == 3 ? Skin.support-error : (variant == 2 ? Skin.border-subtle : Skin.primary)));
+    accessible-role: button;
+    accessible-label: root.caption;
+    accessible-enabled: root.enabled;
+
+    area := TouchArea {
+        enabled: root.enabled;
         clicked => {
-            if (root.enabled) {
-                root.activated();
+            root.activated();
+        }
+    }
+
+    label := Text {
+        text: root.caption;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        font-size: UiMetrics.ui-font-size;
+        font-weight: root.variant == 0 ? 500 : 400;
+        color: !root.enabled ? Skin.disabled-text : (root.variant == 0 ? Skin.on-primary : (root.variant == 3 ? Skin.support-error : Skin.primary-strong));
+        vertical-alignment: center;
+    }
+}
+
+// 文本输入框（Carbon 口径：1 像素 底边，聚焦 2 像素 主色底边）。
+//
+// 内部使用 Slint 内置 `LineEdit` 负责真实文本输入与 IME；其自带边框由外层裁切与
+// 覆盖条遮住（本组件的 chrome 才是可见边框），保证与设计一致。
+// 文本输入框（Carbon 口径：1 像素 底边，聚焦 2 像素 主色底边）。
+//
+// 使用 Slint 低层 `TextInput`（与内置 LineEdit 同一内核：IME / 剪贴板 / 选区一致），
+// 但 chrome 完全自绘，颜色取自设计令牌（Skin）。
+component TextField inherits Rectangle {
+    in property <string> text: "";
+    in property <string> placeholder: "";
+    in property <string> label: "";
+    in property <bool> enabled: true;
+    in property <bool> compact: false;
+    in property <bool> leading-icon: false;
+    in property <length> horizontal-padding: UiMetrics.space-8;
+    out property <bool> focused: input.has-focus;
+    callback edited(string);
+
+    height: root.compact ? UiMetrics.button-height-compact : UiMetrics.button-height;
+    background: root.enabled ? Skin.field-01 : Skin.disabled-bg;
+    border-width: 0px;
+    accessible-role: text-input;
+    accessible-label: root.label;
+
+    forward-focus: input;
+
+    // 点击任意处聚焦输入（与内置控件一致的可点区域）。
+    TouchArea {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        clicked => {
+            input.focus();
+        }
+    }
+
+    if (root.leading-icon) : Icon {
+        x: root.horizontal-padding;
+        y: (parent.height - self.height) / 2;
+        shape: Icons.search;
+        size: UiMetrics.icon-size;
+        color: Skin.text-placeholder;
+    }
+
+    input := TextInput {
+        x: root.leading-icon ? (UiMetrics.icon-size + UiMetrics.space-8 + root.horizontal-padding) : root.horizontal-padding;
+        y: UiMetrics.space-4;
+        width: parent.width - self.x - root.horizontal-padding;
+        height: parent.height - 2 * UiMetrics.space-4;
+        text: root.text;
+        enabled: root.enabled;
+        read-only: !root.enabled;
+        single-line: true;
+        font-size: UiMetrics.ui-font-size;
+        color: root.enabled ? Skin.text-primary : Skin.text-disabled;
+        selection-background-color: Skin.primary;
+        selection-foreground-color: Skin.on-primary;
+        horizontal-alignment: left;
+        vertical-alignment: center;
+        edited => {
+            root.edited(input.text);
+        }
+        accepted => {
+            root.edited(input.text);
+        }
+    }
+
+    // 占位符（TextInput 无 placeholder-text：文本为空且无预编辑文本时显示）。
+    if root.text == "" && input.preedit-text == "" : Text {
+        x: root.leading-icon ? (UiMetrics.icon-size + UiMetrics.space-8 + root.horizontal-padding) : root.horizontal-padding;
+        y: 0;
+        width: parent.width - self.x - root.horizontal-padding;
+        height: parent.height;
+        text: root.placeholder;
+        font-size: UiMetrics.ui-font-size;
+        color: Skin.text-placeholder;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    // 底边（聚焦 2 像素 主色）。
+    Rectangle {
+        x: 0;
+        y: parent.height - self.height;
+        width: parent.width;
+        height: input.has-focus ? UiMetrics.focus-ring-width : UiMetrics.hairline;
+        background: !root.enabled ? Skin.disabled-border : (input.has-focus ? Skin.primary : Skin.border-strong);
+    }
+}
+
+// 滑杆（轨道 2 + 把手 16；两端边界值 + 数值框由调用方提供）。
+component SliderBar inherits Rectangle {
+    in property <int> value: 0;
+    in property <int> minimum: 0;
+    in property <int> maximum: 100;
+    in property <bool> enabled: true;
+    callback changed(int);
+
+    height: UiMetrics.slider-handle-size;
+    background: transparent;
+
+    Rectangle {
+        x: 0;
+        y: (parent.height - self.height) / 2;
+        width: parent.width;
+        height: UiMetrics.slider-track-height;
+        background: Skin.control-track;
+    }
+    Rectangle {
+        x: 0;
+        y: (parent.height - self.height) / 2;
+        width: (parent.width - UiMetrics.slider-handle-size) * (root.value - root.minimum) / max(1, root.maximum - root.minimum) + UiMetrics.slider-handle-size / 2;
+        height: UiMetrics.slider-track-height;
+        background: Skin.primary;
+    }
+    handle := Rectangle {
+        x: (parent.width - self.width) * (root.value - root.minimum) / max(1, root.maximum - root.minimum);
+        y: (parent.height - self.height) / 2;
+        width: UiMetrics.slider-handle-size;
+        height: UiMetrics.slider-handle-size;
+        border-radius: self.height / 2;
+        background: area.has-hover ? Skin.primary-hover : Skin.primary;
+        border-width: UiMetrics.hairline;
+        border-color: Skin.background;
+    }
+    area := TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            let unit = (parent.width - UiMetrics.slider-handle-size) / max(1, root.maximum - root.minimum);
+            let raw = round((self.mouse-x - UiMetrics.slider-handle-size / 2) / max(UiMetrics.hairline, unit)) + root.minimum;
+            root.changed(min(root.maximum, max(root.minimum, raw)));
+        }
+        moved => {
+            if (self.pressed) {
+                let unit = (parent.width - UiMetrics.slider-handle-size) / max(1, root.maximum - root.minimum);
+                let raw = round((self.mouse-x - UiMetrics.slider-handle-size / 2) / max(UiMetrics.hairline, unit)) + root.minimum;
+                root.changed(min(root.maximum, max(root.minimum, raw)));
             }
         }
     }
 }
 
-// 书架页：只显示 Rust 投影的行，不做任何导入/解析逻辑。
-//
-// 「导入 TXT…」与「重新关联…」都只上报意图（Rust 侧决定校验、指纹比对与错误文案）；
-// 是否显示重新关联入口由 Rust 投影的 `needs-relink` 决定。
-component ShelfPage inherits Rectangle {
-    in property <[BookRow]> rows: [];
-    in property <string> hint: "";
-    in property <bool> theme-dark: false;
-    callback import-txt();
-    callback relink-book(string);
-    /// 打开阅读：值为书籍 id（与启动驱动 `NR_READER_BOOK` 同一入口）。
-    callback open-book(string);
+// 开关（32×18；用于布尔项）。
+component SwitchToggle inherits Rectangle {
+    in property <bool> checked: false;
+    in property <bool> enabled: true;
+    callback toggled(bool);
+
+    width: UiMetrics.switch-width;
+    height: UiMetrics.switch-height;
+    border-radius: self.height / 2;
+    background: !root.enabled ? Skin.disabled-bg : (root.checked ? Skin.primary : Skin.control-track);
+    border-width: UiMetrics.hairline;
+    border-color: !root.enabled ? Skin.disabled-border : (root.checked ? Skin.primary : Skin.border-strong);
+
+    Rectangle {
+        x: root.checked ? parent.width - self.width - UiMetrics.space-2 : UiMetrics.space-2;
+        y: (parent.height - self.height) / 2;
+        width: parent.height - 2 * UiMetrics.space-2;
+        height: parent.height - 2 * UiMetrics.space-2;
+        border-radius: self.height / 2;
+        background: root.enabled ? Skin.background : Skin.disabled-text;
+    }
+    area := TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            root.toggled(!root.checked);
+        }
+    }
+}
+
+// 单选圆点 + 标签（互斥项 ≤4 时使用）。
+component RadioItem inherits Rectangle {
+    in property <string> caption: "";
+    in property <bool> checked: false;
+    in property <bool> enabled: true;
+    callback selected();
+
+    height: UiMetrics.space-24;
+    background: transparent;
+
+    Rectangle {
+        x: 0;
+        y: (parent.height - self.height) / 2;
+        width: UiMetrics.radio-size;
+        height: UiMetrics.radio-size;
+        border-radius: self.height / 2;
+        background: Skin.field-01;
+        border-width: root.checked ? UiMetrics.space-4 : UiMetrics.hairline;
+        border-color: root.checked ? Skin.primary : (root.enabled ? Skin.control-track : Skin.disabled-border);
+    }
+    Text {
+        text: root.caption;
+        x: UiMetrics.radio-size + UiMetrics.space-8;
+        y: 0;
+        width: parent.width - UiMetrics.radio-size - UiMetrics.space-8;
+        height: parent.height;
+        font-size: UiMetrics.ui-font-size;
+        color: root.enabled ? Skin.text-primary : Skin.disabled-text;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    area := TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            root.selected();
+        }
+    }
+}
+
+// 线性进度条（2 像素；可交互变体支持点击/拖拽跳转）。
+component ProgressTrack inherits Rectangle {
+    in property <int> permille: 0;
+    in property <bool> interactive: false;
+    out property <bool> hovering: area.has-hover;
+    out property <length> pointer-x: area.mouse-x;
+    callback seek(float);
+
+    height: area.has-hover && root.interactive ? UiMetrics.progress-bar-hover-height : UiMetrics.progress-bar-height;
+    background: Skin.border-subtle;
+
+    Rectangle {
+        x: 0;
+        y: (parent.height - UiMetrics.progress-bar-height) / 2;
+        width: parent.width * min(1000, max(0, root.permille)) / 1000;
+        height: UiMetrics.progress-bar-height;
+        background: Skin.primary;
+    }
+
+    area := TouchArea {
+        enabled: root.interactive;
+        clicked => {
+            root.seek(self.mouse-x / max(UiMetrics.hairline, parent.width));
+        }
+        moved => {
+            if (self.pressed) {
+                root.seek(self.mouse-x / max(UiMetrics.hairline, parent.width));
+            }
+        }
+    }
+}
+
+// 自绘滚动条（宽 8；可拖拽与点击轨道）。
+component ScrollBar inherits Rectangle {
+    in property <float> ratio: 0;
+    in property <float> handle-ratio: 0.2;
+    callback seek(float);
+
+    width: UiMetrics.scrollbar-width;
+    background: Skin.scrollbar-track;
+    border-radius: self.width / 2;
+
+    handle := Rectangle {
+        x: 0;
+        width: parent.width;
+        height: max(UiMetrics.scrollbar-min-handle, parent.height * root.handle-ratio);
+        y: (parent.height - self.height) * root.ratio;
+        background: area.has-hover ? Skin.primary : Skin.scrollbar-handle;
+        border-radius: self.width / 2;
+    }
+    area := TouchArea {
+        clicked => {
+            root.seek((self.mouse-y - handle.height / 2) / max(UiMetrics.hairline, parent.height - handle.height));
+        }
+        moved => {
+            if (self.pressed) {
+                root.seek((self.mouse-y - handle.height / 2) / max(UiMetrics.hairline, parent.height - handle.height));
+            }
+        }
+    }
+}
+
+// 空态（64 像素 灰图标 + 20/600 标题 + 14 说明 + 唯一主按钮 + 补充说明）。
+component EmptyState inherits Rectangle {
+    in property <string> title: "";
+    in property <string> description: "";
+    in property <[string]> notes: [];
+    in property <string> action-label: "";
+    in property <string> shape: Icons.book;
+    callback activated();
 
     background: transparent;
 
     VerticalLayout {
-        padding-left: UiMetrics.content-padding-h;
-        padding-right: UiMetrics.content-padding-h;
-        padding-top: UiMetrics.content-padding-v;
-        padding-bottom: UiMetrics.content-padding-v;
-        spacing: UiMetrics.caption-font-size;
+        x: (parent.width - self.width) / 2;
+        y: UiMetrics.space-48;
+        width: min(parent.width - 2 * UiMetrics.space-16, UiMetrics.card-width * 2);
+        spacing: UiMetrics.space-16;
+        alignment: start;
 
-        HorizontalLayout {
-            spacing: UiMetrics.caption-font-size;
-            alignment: start;
+        Rectangle {
+            height: UiMetrics.empty-icon-size;
+            background: transparent;
 
-            ActionButton {
-                caption: "导入 TXT…";
+            Icon {
+                x: (parent.width - self.width) / 2;
+                shape: root.shape;
+                size: UiMetrics.empty-icon-size;
+                color: Skin.border-strong;
+            }
+        }
+        Text {
+            text: root.title;
+            font-size: UiMetrics.heading-font-size;
+            font-weight: 600;
+            color: Skin.text-primary;
+            horizontal-alignment: center;
+            width: parent.width;
+        }
+        Text {
+            text: root.description;
+            font-size: UiMetrics.ui-font-size;
+            color: Skin.text-secondary;
+            horizontal-alignment: center;
+            width: parent.width;
+            wrap: word-wrap;
+            height: self.preferred-height;
+        }
+        if root.action-label != "" : Rectangle {
+            height: UiMetrics.button-height;
+            background: transparent;
+
+            TextButton {
+                x: (parent.width - self.width) / 2;
+                variant: 0;
+                caption: root.action-label;
                 activated => {
-                    root.import-txt();
+                    root.activated();
                 }
             }
         }
-
-        Text {
-            text: root.hint;
-            font-size: UiMetrics.body-font-size;
-            color: root.theme-dark ? #b0b0b0 : #555555;
+        for note in root.notes : Text {
+            text: "· " + note;
+            font-size: UiMetrics.caption-font-size;
+            color: Skin.text-placeholder;
             wrap: word-wrap;
+            height: self.preferred-height;
+            width: parent.width;
         }
+    }
+}
 
-        for row in root.rows: Rectangle {
-            height: UiMetrics.bottom-bar-height;
-            background: root.theme-dark ? #2c2c2e : #ffffff;
-            border-radius: UiMetrics.corner-radius;
+// 行内通知（左 3 像素 状态色 + 图标 + 标题 + 正文 + 动作 + 关闭）。
+component InlineNotice inherits Rectangle {
+    // tone：1=信息 2=成功 3=警告 4=错误
+    in property <int> tone: 4;
+    in property <string> title: "";
+    in property <string> body: "";
+    in property <string> action-label: "";
+    callback activated();
+    callback dismissed();
 
-            HorizontalLayout {
-                padding-left: UiMetrics.content-padding-h;
-                padding-right: UiMetrics.content-padding-h;
-                spacing: UiMetrics.content-padding-h;
+    background: tone == 2 ? Skin.success-soft : (tone == 3 ? Skin.warning-soft : (tone == 4 ? Skin.error-soft : Skin.primary-soft));
 
-                Text {
-                    text: row.title;
-                    font-size: UiMetrics.body-font-size;
-                    color: root.theme-dark ? #f0f0f0 : #222222;
-                    vertical-alignment: center;
-                }
-                Text {
-                    text: row.status;
-                    font-size: UiMetrics.caption-font-size;
-                    color: #888888;
-                    vertical-alignment: center;
-                }
-                Text {
-                    text: row.progress;
-                    font-size: UiMetrics.caption-font-size;
-                    color: #888888;
-                    vertical-alignment: center;
-                }
-                ActionButton {
-                    caption: "阅读";
-                    activated => {
-                        root.open-book(row.id);
+    Rectangle {
+        x: 0;
+        y: 0;
+        width: UiMetrics.space-4 - UiMetrics.hairline;
+        height: parent.height;
+        background: root.tone == 2 ? Skin.support-success : (root.tone == 3 ? Skin.support-warning : (root.tone == 4 ? Skin.support-error : Skin.primary));
+    }
+    Icon {
+        x: UiMetrics.space-16;
+        y: UiMetrics.space-16;
+        shape: root.tone == 2 ? Icons.check : (root.tone == 3 ? Icons.warning : (root.tone == 4 ? Icons.error : Icons.info));
+        size: UiMetrics.icon-size;
+        color: root.tone == 2 ? Skin.support-success : (root.tone == 3 ? Skin.support-warning : (root.tone == 4 ? Skin.support-error : Skin.primary));
+    }
+    Text {
+        x: UiMetrics.space-16 + UiMetrics.icon-size + UiMetrics.space-8;
+        y: UiMetrics.space-12;
+        width: parent.width - self.x - UiMetrics.space-16 - (root.action-label == "" ? 0px : UiMetrics.space-24 * 4 + UiMetrics.space-24) - UiMetrics.icon-button-compact-size - UiMetrics.space-8;
+        text: root.title;
+        font-size: UiMetrics.ui-font-size;
+        font-weight: 600;
+        color: Skin.text-primary;
+        wrap: word-wrap;
+        height: self.preferred-height;
+    }
+    Text {
+        x: UiMetrics.space-16 + UiMetrics.icon-size + UiMetrics.space-8;
+        y: UiMetrics.space-12 + UiMetrics.space-24;
+        width: parent.width - self.x - UiMetrics.space-16 - (root.action-label == "" ? 0px : UiMetrics.space-24 * 4 + UiMetrics.space-24) - UiMetrics.icon-button-compact-size - UiMetrics.space-8;
+        text: root.body;
+        font-size: UiMetrics.caption-font-size;
+        color: Skin.text-secondary;
+        wrap: word-wrap;
+        height: self.preferred-height;
+    }
+    if root.action-label != "" : TextButton {
+        x: parent.width - UiMetrics.space-16 - UiMetrics.icon-button-compact-size - UiMetrics.space-8 - self.width;
+        y: (parent.height - self.height) / 2;
+        variant: 1;
+        compact: true;
+        caption: root.action-label;
+        activated => {
+            root.activated();
+        }
+    }
+    IconButton {
+        x: parent.width - UiMetrics.space-16 - self.width;
+        y: (parent.height - self.height) / 2;
+        compact: true;
+        caption: "关闭通知";
+        shape: Icons.close;
+        activated => {
+            root.dismissed();
+        }
+    }
+}
+
+// Toast（深底白字；自动消失由 Rust 一次性定时器驱动）。
+component Toast inherits Rectangle {
+    in property <string> text: "";
+    in property <string> action-label: "";
+    callback activated();
+
+    width: UiMetrics.toast-width;
+    height: UiMetrics.toast-height;
+    background: Skin.toast-bg;
+    border-radius: UiMetrics.toast-radius;
+
+    Text {
+        x: UiMetrics.space-16;
+        y: (parent.height - self.height) / 2;
+        width: parent.width - UiMetrics.space-16 * 2 - (root.action-label == "" ? 0px : UiMetrics.space-24 * 5);
+        text: root.text;
+        font-size: UiMetrics.ui-font-size;
+        color: Skin.toast-text;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    if root.action-label != "" : TextButton {
+        x: parent.width - UiMetrics.space-16 - self.width;
+        y: (parent.height - self.height) / 2;
+        compact: true;
+        variant: 2;
+        caption: root.action-label;
+        activated => {
+            root.activated();
+        }
+    }
+}
+
+// 弹窗遮罩（点击遮罩 = 取消；面板自身吞掉点击）。
+component Overlay inherits Rectangle {
+    background: Skin.overlay;
+    callback dismissed();
+    area := TouchArea {
+        clicked => {
+            root.dismissed();
+        }
+    }
+}
+
+// 确认弹窗（S13 / S14：标题 + 说明 + 可选勾选 + [取消][确认]）。
+component ConfirmDialog inherits Rectangle {
+    in property <string> title: "";
+    in property <string> body: "";
+    in property <string> note: "";
+    in property <string> checkbox-label: "";
+    in-out property <bool> checked: false;
+    in property <string> confirm-label: "确认";
+    in property <bool> danger: false;
+    callback cancelled();
+    callback confirmed(bool);
+
+    Overlay {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        dismissed => {
+            root.cancelled();
+        }
+    }
+
+    panel := Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: UiMetrics.modal-width-confirm;
+        height: content.preferred-height + UiMetrics.space-24 * 2;
+        background: Skin.layer-02;
+        border-width: UiMetrics.hairline;
+        border-color: Skin.border-strong;
+
+        TouchArea { }
+
+        content := VerticalLayout {
+            x: UiMetrics.space-24;
+            y: UiMetrics.space-24;
+            width: parent.width - 2 * UiMetrics.space-24;
+            spacing: UiMetrics.space-16;
+
+            Text {
+                text: root.title;
+                font-size: UiMetrics.heading-font-size;
+                font-weight: 600;
+                color: Skin.text-primary;
+                height: self.preferred-height;
+            }
+            Text {
+                text: root.body;
+                font-size: UiMetrics.ui-font-size;
+                color: Skin.text-secondary;
+                wrap: word-wrap;
+                height: self.preferred-height;
+            }
+            if root.checkbox-label != "" : HorizontalLayout {
+                spacing: UiMetrics.space-8;
+                height: UiMetrics.space-24;
+                SwitchToggle {
+                    checked: root.checked;
+                    toggled(checked) => {
+                        root.checked = checked;
                     }
                 }
-                ActionButton {
-                    caption: "重新关联…";
-                    enabled: row.needs-relink;
+                Text {
+                    text: root.checkbox-label;
+                    font-size: UiMetrics.ui-font-size;
+                    color: Skin.text-primary;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+            }
+            if root.note != "" : Text {
+                text: root.note;
+                font-size: UiMetrics.caption-font-size;
+                color: Skin.text-placeholder;
+                wrap: word-wrap;
+                height: self.preferred-height;
+            }
+            HorizontalLayout {
+                alignment: end;
+                spacing: UiMetrics.space-8;
+                height: UiMetrics.button-height;
+
+                TextButton {
+                    variant: 2;
+                    caption: "取消";
                     activated => {
-                        root.relink-book(row.id);
+                        root.cancelled();
+                    }
+                }
+                TextButton {
+                    variant: root.danger ? 3 : 0;
+                    caption: root.confirm-label;
+                    activated => {
+                        root.confirmed(root.checked);
                     }
                 }
             }
@@ -235,83 +1010,1062 @@ component ShelfPage inherits Rectangle {
     }
 }
 
-// 阅读页：正文区域几何与 Rust `LayoutMetrics::content_area` 同口径（同一份常量）。
-//
-// 正文渲染口径（DT3，DR3）：
-// - 逐行渲染：行数与行盒高度由 Rust 的测量结果唯一决定（`page-lines` / `line-pitch`），
-//   界面**不**自行换行、不叠加段距、不做首行缩进、不加字距；
-// - 行宽与正文区宽度相同，且每行都从行盒顶部起算，因此「一页的行数 × 行盒 ≤ 正文区高度」
-//   这条测量端不变量在渲染端同样成立：没有滚动条、没有半字裁切、底部也不留整行空白；
-// - 正文区 `clip: true`：即使出现异常长的行也只被裁掉右侧，绝不产生纵向溢出。
-//
-// 目录 / 书签 / 进度（DT4）：面板行与全部文案来自 Rust 的有界投影；手势模式下隐藏
-// 常驻翻页按钮条，正文左右区域点击翻页、中部点击呼出菜单。
+// 选项弹窗（S8：居中弹窗 + 单选 + [取消][应用]）。
+component ChoiceDialog inherits Rectangle {
+    in property <string> title: "";
+    in property <string> meta: "";
+    in property <[ChoiceRow]> rows: [];
+    in property <int> initial-index: 0;
+    in-out property <int> selected-index: 0;
+    callback cancelled();
+    callback applied(int);
+
+    init => {
+        root.selected-index = root.initial-index;
+    }
+
+    Overlay {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        dismissed => {
+            root.cancelled();
+        }
+    }
+
+    panel := Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: UiMetrics.modal-width-settings;
+        height: content.preferred-height + UiMetrics.space-24 * 2;
+        background: Skin.layer-02;
+        border-width: UiMetrics.hairline;
+        border-color: Skin.border-strong;
+
+        TouchArea { }
+
+        content := VerticalLayout {
+            x: UiMetrics.space-24;
+            y: UiMetrics.space-24;
+            width: parent.width - 2 * UiMetrics.space-24;
+            spacing: UiMetrics.space-16;
+
+            Text {
+                text: root.title;
+                font-size: UiMetrics.heading-font-size;
+                font-weight: 600;
+                color: Skin.text-primary;
+                height: self.preferred-height;
+            }
+            if root.meta != "" : Text {
+                text: root.meta;
+                font-size: UiMetrics.mono-font-size;
+                color: Skin.text-secondary;
+                height: self.preferred-height;
+            }
+            for row[i] in root.rows : Rectangle {
+                height: UiMetrics.list-row-height;
+                background: row.current ? Skin.primary-soft : transparent;
+                accessible-role: list-item;
+                accessible-label: row.name;
+
+                RadioItem {
+                    x: UiMetrics.space-8;
+                    y: (parent.height - self.height) / 2;
+                    width: parent.width - 2 * UiMetrics.space-8;
+                    caption: row.name;
+                    checked: i == root.selected-index;
+                    selected => {
+                        root.selected-index = i;
+                    }
+                }
+            }
+            HorizontalLayout {
+                alignment: end;
+                spacing: UiMetrics.space-8;
+                height: UiMetrics.button-height;
+
+                TextButton {
+                    variant: 2;
+                    caption: "取消";
+                    activated => {
+                        root.cancelled();
+                    }
+                }
+                TextButton {
+                    variant: 0;
+                    caption: "应用";
+                    activated => {
+                        root.applied(root.selected-index);
+                    }
+                }
+            }
+        }
+    }
+}
+
+// 快捷键说明弹窗（S15：已实现按键正常显示；建议项灰显 + 「建议」Tag）。
+component ShortcutsDialog inherits Rectangle {
+    in property <[ShortcutEntry]> rows: [];
+    callback dismissed();
+
+    Overlay {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        dismissed => {
+            root.dismissed();
+        }
+    }
+
+    panel := Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: UiMetrics.modal-width-settings;
+        height: content.preferred-height + UiMetrics.space-24 * 2;
+        background: Skin.layer-02;
+        border-width: UiMetrics.hairline;
+        border-color: Skin.border-strong;
+
+        TouchArea { }
+
+        content := VerticalLayout {
+            x: UiMetrics.space-24;
+            y: UiMetrics.space-24;
+            width: parent.width - 2 * UiMetrics.space-24;
+            spacing: UiMetrics.space-12;
+
+            Text {
+                text: "快捷键";
+                font-size: UiMetrics.heading-font-size;
+                font-weight: 600;
+                color: Skin.text-primary;
+                height: self.preferred-height;
+            }
+            for row in root.rows : Rectangle {
+                height: UiMetrics.space-24;
+                background: transparent;
+                accessible-role: list-item;
+                accessible-label: row.action;
+
+                Text {
+                    text: row.action;
+                    x: 0;
+                    y: 0;
+                    width: parent.width / 2;
+                    height: parent.height;
+                    font-size: UiMetrics.ui-font-size;
+                    color: row.available ? Skin.text-primary : Skin.text-disabled;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+                Text {
+                    text: row.keys;
+                    x: parent.width / 2;
+                    y: 0;
+                    width: parent.width / 2 - UiMetrics.space-24 * 2;
+                    height: parent.height;
+                    font-family: "monospace";
+                    font-size: UiMetrics.mono-font-size;
+                    color: row.available ? Skin.text-secondary : Skin.text-disabled;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+                if !row.available : Tag {
+                    x: parent.width - self.width;
+                    y: (parent.height - self.height) / 2;
+                    tone: 3;
+                    text: "建议";
+                }
+            }
+            HorizontalLayout {
+                alignment: end;
+                height: UiMetrics.button-height;
+
+                TextButton {
+                    variant: 2;
+                    caption: "关闭";
+                    activated => {
+                        root.dismissed();
+                    }
+                }
+            }
+        }
+    }
+}
+
+// 重命名弹窗（书架行「重命名…」；输入框聚焦时翻页键由 Rust 侧屏蔽）。
+component RenameDialog inherits Rectangle {
+    in property <string> title: "";
+    in property <string> label: "";
+    in property <string> initial-value: "";
+    in-out property <string> value: "";
+    callback cancelled();
+    callback saved(string);
+
+    init => {
+        root.value = root.initial-value;
+    }
+
+    Overlay {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        dismissed => {
+            root.cancelled();
+        }
+    }
+
+    panel := Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: UiMetrics.modal-width-confirm;
+        height: content.preferred-height + UiMetrics.space-24 * 2;
+        background: Skin.layer-02;
+        border-width: UiMetrics.hairline;
+        border-color: Skin.border-strong;
+
+        TouchArea { }
+
+        content := VerticalLayout {
+            x: UiMetrics.space-24;
+            y: UiMetrics.space-24;
+            width: parent.width - 2 * UiMetrics.space-24;
+            spacing: UiMetrics.space-16;
+
+            Text {
+                text: root.title;
+                font-size: UiMetrics.heading-font-size;
+                font-weight: 600;
+                color: Skin.text-primary;
+                height: self.preferred-height;
+            }
+            TextField {
+                text: root.value;
+                label: root.label;
+                edited(text) => {
+                    root.value = text;
+                }
+            }
+            HorizontalLayout {
+                alignment: end;
+                spacing: UiMetrics.space-8;
+                height: UiMetrics.button-height;
+
+                TextButton {
+                    variant: 2;
+                    caption: "取消";
+                    activated => {
+                        root.cancelled();
+                    }
+                }
+                TextButton {
+                    variant: 0;
+                    caption: "保存名称";
+                    activated => {
+                        root.saved(root.value);
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// S1 / S2 / S3 / S4：书架（表格 / 卡片 / 空态 / 失效通知）
+// ---------------------------------------------------------------------------
+
+component ShelfPage inherits Rectangle {
+    in property <[BookRow]> rows: [];
+    in property <bool> is-empty: false;
+    in property <string> empty-title: "";
+    in property <string> empty-desc: "";
+    in property <[string]> empty-notes: [];
+    // 0=表格 1=卡片
+    in property <int> view: 0;
+    in property <string> search: "";
+    in property <string> sort-value: "";
+    in property <string> count-label: "";
+    in property <bool> notice: false;
+    in property <string> notice-title: "";
+    in property <string> notice-body: "";
+    // 展开行级菜单的行下标（-1 = 未展开；由 Rust 依据 id 投影）。
+    in property <int> menu-index: -1;
+    callback import-txt();
+    callback search-edited(string);
+    callback view-set(int);
+    callback sort-cycle();
+    callback open-book(string);
+    callback row-menu(int);
+    callback row-action(string, string);
+    callback relink-all();
+    callback notice-dismiss();
+
+    background: transparent;
+
+    // 列可见性（§2.5 断点：窗口 < 960 隐藏「最近阅读」列）。
+    private property <bool> recent-visible: root.width >= UiMetrics.breakpoint-compact;
+    // 列表区起始 y（页头 80 + 可选通知条 96）。
+    private property <length> list-top: UiMetrics.page-header-height + (root.notice ? UiMetrics.space-48 * 2 : 0px);
+    // 表格列位置（从右向左排布，右侧固定宽列）。
+    private property <length> col-actions-x: root.width - UiMetrics.space-16 - UiMetrics.column-actions-width;
+    private property <length> col-recent-x: root.col-actions-x - (root.recent-visible ? UiMetrics.column-recent-width : 0px);
+    private property <length> col-progress-x: root.col-recent-x - UiMetrics.column-progress-width;
+    private property <length> col-status-x: root.col-progress-x - UiMetrics.column-status-width;
+    // 卡片列数（3 / 2 / 1）。
+    private property <int> card-columns: root.width >= (UiMetrics.card-width * 3 + UiMetrics.space-32 + UiMetrics.space-32) ? 3 : (root.width >= (UiMetrics.card-width * 2 + UiMetrics.space-16 + UiMetrics.space-32) ? 2 : 1);
+    private property <length> card-gap: UiMetrics.space-16;
+    private property <length> cards-height: ((root.rows.length + root.card-columns - 1) / root.card-columns) * (UiMetrics.card-height + root.card-gap) + root.card-gap;
+    private property <length> table-height: root.rows.length * UiMetrics.table-row-height + (root.menu-index >= 0 ? UiMetrics.list-row-height : 0px) + UiMetrics.space-16;
+
+    // ---- S4：失效源文件通知（宽 = 内容区）----
+    if root.notice : InlineNotice {
+        x: UiMetrics.space-16;
+        y: UiMetrics.page-header-height;
+        width: parent.width - 2 * UiMetrics.space-16;
+        height: UiMetrics.space-48 * 2;
+        tone: 4;
+        title: root.notice-title;
+        body: root.notice-body;
+        action-label: "全部重新关联…";
+        activated => {
+            root.relink-all();
+        }
+        dismissed => {
+            root.notice-dismiss();
+        }
+    }
+
+    // ---- 列表区（表格 / 卡片；可滚动）----
+    list-view := Flickable {
+        visible: !root.is-empty;
+        x: 0;
+        y: root.list-top;
+        width: parent.width;
+        height: parent.height - root.list-top;
+        viewport-width: self.width;
+        viewport-height: root.view == 0 ? root.table-height + UiMetrics.table-header-height : root.cards-height;
+        interactive: self.viewport-height > self.height;
+
+        // ---- S1：表格视图 ----
+        if root.view == 0 : Rectangle {
+            x: 0;
+            y: 0;
+            width: parent.width;
+            height: root.table-height + UiMetrics.table-header-height;
+            background: transparent;
+
+            // 表头（40）：列标题为结构性文案。
+            Rectangle {
+                x: 0;
+                y: 0;
+                width: parent.width;
+                height: UiMetrics.table-header-height;
+                background: Skin.layer-01;
+
+                Text {
+                    x: UiMetrics.space-16;
+                    y: 0;
+                    width: root.col-status-x - UiMetrics.space-16 - UiMetrics.space-16;
+                    height: parent.height;
+                    text: "书名 / 文件";
+                    font-size: UiMetrics.caption-font-size;
+                    color: Skin.text-secondary;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+                Text {
+                    x: root.col-status-x;
+                    y: 0;
+                    width: UiMetrics.column-status-width;
+                    height: parent.height;
+                    text: "状态";
+                    font-size: UiMetrics.caption-font-size;
+                    color: Skin.text-secondary;
+                    vertical-alignment: center;
+                }
+                Text {
+                    x: root.col-progress-x;
+                    y: 0;
+                    width: UiMetrics.column-progress-width;
+                    height: parent.height;
+                    text: "进度";
+                    font-size: UiMetrics.caption-font-size;
+                    color: Skin.text-secondary;
+                    vertical-alignment: center;
+                }
+                Text {
+                    x: root.col-recent-x;
+                    y: 0;
+                    width: UiMetrics.column-recent-width;
+                    height: parent.height;
+                    text: "最近阅读";
+                    font-size: UiMetrics.caption-font-size;
+                    color: Skin.text-secondary;
+                    vertical-alignment: center;
+                    visible: root.recent-visible;
+                }
+                Text {
+                    x: root.col-actions-x;
+                    y: 0;
+                    width: UiMetrics.column-actions-width;
+                    height: parent.height;
+                    text: "操作";
+                    font-size: UiMetrics.caption-font-size;
+                    color: Skin.text-secondary;
+                    vertical-alignment: center;
+                    visible: root.width >= UiMetrics.breakpoint-narrow;
+                }
+            }
+
+            // 行（48；整行可点 = 打开阅读；行尾「更多」= 行级动作）。
+            for row[i] in root.rows : Rectangle {
+                x: 0;
+                y: UiMetrics.table-header-height + i * UiMetrics.table-row-height + (root.menu-index >= 0 && i > root.menu-index ? UiMetrics.list-row-height : 0px);
+                width: parent.width;
+                height: UiMetrics.table-row-height;
+                background: row-area.has-hover ? Skin.layer-01 : (root.menu-index == i ? Skin.primary-soft : transparent);
+                accessible-role: list-item;
+                accessible-label: row.title;
+
+                Rectangle {
+                    x: UiMetrics.space-16;
+                    y: parent.height - self.height;
+                    width: parent.width - 2 * UiMetrics.space-16;
+                    height: UiMetrics.hairline;
+                    background: Skin.border-subtle;
+                }
+
+                Text {
+                    x: UiMetrics.space-16;
+                    y: UiMetrics.space-4;
+                    width: root.col-status-x - UiMetrics.space-16 - UiMetrics.space-16;
+                    text: row.title;
+                    font-size: UiMetrics.ui-font-size;
+                    font-weight: 500;
+                    color: row.can-open ? Skin.text-primary : Skin.text-disabled;
+                    overflow: elide;
+                }
+                Text {
+                    x: UiMetrics.space-16;
+                    y: UiMetrics.space-4 + UiMetrics.space-16 + UiMetrics.space-2;
+                    width: root.col-status-x - UiMetrics.space-16 - UiMetrics.space-16;
+                    text: row.meta;
+                    font-size: UiMetrics.mono-font-size;
+                    font-family: "monospace";
+                    color: Skin.text-placeholder;
+                    overflow: elide;
+                }
+                Tag {
+                    x: root.col-status-x;
+                    y: (parent.height - self.height) / 2;
+                    tone: row.status-tone;
+                    text: row.status;
+                }
+                // 进度：文本 11 + 2 像素 进度条。
+                Text {
+                    x: root.col-progress-x;
+                    y: UiMetrics.space-8;
+                    width: UiMetrics.column-progress-width - UiMetrics.space-16;
+                    text: row.progress;
+                    font-size: UiMetrics.tag-font-size;
+                    color: Skin.text-secondary;
+                    overflow: elide;
+                }
+                Rectangle {
+                    x: root.col-progress-x;
+                    y: parent.height - UiMetrics.space-12;
+                    width: UiMetrics.column-progress-width - UiMetrics.space-16;
+                    height: UiMetrics.progress-bar-height;
+                    background: Skin.control-track;
+
+                    Rectangle {
+                        x: 0;
+                        y: 0;
+                        width: parent.width * min(1000, max(0, row.percent)) / 1000;
+                        height: parent.height;
+                        background: Skin.primary;
+                    }
+                }
+                Text {
+                    x: root.col-recent-x;
+                    y: 0;
+                    width: UiMetrics.column-recent-width;
+                    height: parent.height;
+                    text: row.recent;
+                    font-size: UiMetrics.label-font-size;
+                    color: Skin.text-secondary;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    visible: root.recent-visible;
+                }
+                IconButton {
+                    x: root.col-actions-x;
+                    y: (parent.height - self.height) / 2;
+                    compact: true;
+                    caption: "更多操作";
+                    shape: Icons.more;
+                    activated => {
+                        root.row-menu(i);
+                    }
+                }
+
+                row-area := TouchArea {
+                    clicked => {
+                        root.open-book(row.id);
+                    }
+                }
+            }
+
+            // 行级菜单（展开时内联在行下方；破坏性动作已分离）。
+            if root.menu-index >= 0 && root.menu-index < root.rows.length : Rectangle {
+                x: 0;
+                y: UiMetrics.table-header-height + (root.menu-index + 1) * UiMetrics.table-row-height;
+                width: parent.width;
+                height: UiMetrics.list-row-height;
+                background: Skin.layer-02;
+                border-width: UiMetrics.hairline;
+                border-color: Skin.primary-border;
+
+                HorizontalLayout {
+                    x: UiMetrics.space-16;
+                    y: 0;
+                    width: parent.width - 2 * UiMetrics.space-16;
+                    spacing: UiMetrics.space-8;
+                    alignment: start;
+
+                    Text {
+                        text: "行操作";
+                        font-size: UiMetrics.caption-font-size;
+                        color: Skin.text-placeholder;
+                        vertical-alignment: center;
+                        width: UiMetrics.space-48 * 2;
+                    }
+                    TextButton {
+                        variant: 1;
+                        compact: true;
+                        caption: "重新关联…";
+                        activated => {
+                            root.row-action("relink", root.rows[root.menu-index].id);
+                        }
+                    }
+                    TextButton {
+                        variant: 1;
+                        compact: true;
+                        caption: "重命名…";
+                        activated => {
+                            root.row-action("rename", root.rows[root.menu-index].id);
+                        }
+                    }
+                    TextButton {
+                        variant: 3;
+                        compact: true;
+                        caption: "移出书架…";
+                        activated => {
+                            root.row-action("remove", root.rows[root.menu-index].id);
+                        }
+                    }
+                    TextButton {
+                        variant: 3;
+                        compact: true;
+                        caption: "彻底删除记录…";
+                        activated => {
+                            root.row-action("purge", root.rows[root.menu-index].id);
+                        }
+                    }
+                    TextButton {
+                        variant: 2;
+                        compact: true;
+                        caption: "关闭";
+                        activated => {
+                            root.row-menu(-2);
+                        }
+                    }
+                }
+            }
+        }
+
+        // ---- S2：卡片视图 ----
+        if root.view == 1 : Rectangle {
+            x: 0;
+            y: 0;
+            width: parent.width;
+            height: root.cards-height;
+            background: transparent;
+
+            for row[i] in root.rows : Rectangle {
+                x: UiMetrics.space-16 + (i - (i / root.card-columns) * root.card-columns) * (UiMetrics.card-width + root.card-gap);
+                y: UiMetrics.space-16 + (i / root.card-columns) * (UiMetrics.card-height + root.card-gap);
+                width: UiMetrics.card-width;
+                height: UiMetrics.card-height;
+                background: Skin.layer-02;
+                border-width: UiMetrics.hairline;
+                border-color: row.needs-relink ? Skin.support-error : Skin.border-subtle;
+                accessible-role: list-item;
+                accessible-label: row.title;
+
+                // 封面占位（本地派生：主色底 + 首字）。
+                Rectangle {
+                    x: (parent.width - self.width) / 2;
+                    y: UiMetrics.space-16;
+                    width: UiMetrics.cover-size;
+                    height: UiMetrics.cover-size;
+                    background: row.needs-relink ? Skin.error-soft : Skin.cover-bg;
+                    border-width: UiMetrics.hairline;
+                    border-color: Skin.border-subtle;
+
+                    Text {
+                        x: 0;
+                        y: 0;
+                        width: parent.width;
+                        height: parent.height;
+                        text: row.initial;
+                        font-size: UiMetrics.cover-font-size;
+                        font-weight: 600;
+                        color: row.needs-relink ? Skin.support-error : Skin.primary-strong;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+                Text {
+                    x: UiMetrics.space-16;
+                    y: UiMetrics.space-16 + UiMetrics.cover-size + UiMetrics.space-12;
+                    width: parent.width - 2 * UiMetrics.space-16;
+                    text: row.title;
+                    font-size: UiMetrics.card-title-font-size;
+                    font-weight: 600;
+                    color: Skin.text-primary;
+                    overflow: elide;
+                }
+                Tag {
+                    x: UiMetrics.space-16;
+                    y: UiMetrics.space-16 + UiMetrics.cover-size + UiMetrics.space-12 + UiMetrics.space-24 + UiMetrics.space-4;
+                    tone: row.status-tone;
+                    text: row.status;
+                }
+                Text {
+                    x: UiMetrics.space-16;
+                    y: UiMetrics.space-16 + UiMetrics.cover-size + UiMetrics.space-12 + UiMetrics.space-24 + UiMetrics.space-4;
+                    width: parent.width - 2 * UiMetrics.space-16;
+                    height: UiMetrics.tag-height;
+                    text: (row.percent / 10) + "%";
+                    font-size: UiMetrics.mono-font-size;
+                    font-family: "monospace";
+                    color: Skin.text-secondary;
+                    horizontal-alignment: right;
+                    vertical-alignment: center;
+                }
+                Text {
+                    x: UiMetrics.space-16;
+                    y: UiMetrics.space-16 + UiMetrics.cover-size + UiMetrics.space-12 + UiMetrics.space-24 + UiMetrics.space-4 + UiMetrics.tag-height + UiMetrics.space-4;
+                    width: parent.width - 2 * UiMetrics.space-16;
+                    text: row.progress;
+                    font-size: UiMetrics.tag-font-size;
+                    color: Skin.text-secondary;
+                    overflow: elide;
+                }
+                Rectangle {
+                    x: UiMetrics.space-16;
+                    y: UiMetrics.space-16 + UiMetrics.cover-size + UiMetrics.space-12 + UiMetrics.space-24 + UiMetrics.space-4 + UiMetrics.tag-height + UiMetrics.space-4 + UiMetrics.space-16 + UiMetrics.space-4;
+                    width: parent.width - 2 * UiMetrics.space-16;
+                    height: UiMetrics.progress-bar-height;
+                    background: Skin.control-track;
+
+                    Rectangle {
+                        x: 0;
+                        y: 0;
+                        width: parent.width * min(1000, max(0, row.percent)) / 1000;
+                        height: parent.height;
+                        background: row.needs-relink ? Skin.support-error : Skin.primary;
+                    }
+                }
+                TextButton {
+                    x: UiMetrics.space-16;
+                    y: UiMetrics.space-16 + UiMetrics.cover-size + UiMetrics.space-12 + UiMetrics.space-24 + UiMetrics.space-4 + UiMetrics.tag-height + UiMetrics.space-4 + UiMetrics.space-16 + UiMetrics.space-4 + UiMetrics.progress-bar-height + UiMetrics.space-8;
+                    width: parent.width - 2 * UiMetrics.space-16;
+                    compact: true;
+                    variant: row.needs-relink ? 1 : 0;
+                    caption: row.needs-relink ? "重新关联…" : "继续阅读";
+                    activated => {
+                        if (row.needs-relink) {
+                            root.row-action("relink", row.id);
+                        } else {
+                            root.open-book(row.id);
+                        }
+                    }
+                }
+                card-area := TouchArea {
+                    double-clicked => {
+                        root.open-book(row.id);
+                    }
+                }
+            }
+        }
+    }
+
+    // 列表区滚动条（宽 8）。
+    ScrollBar {
+        visible: !root.is-empty;
+        x: parent.width - UiMetrics.scrollbar-gutter - self.width;
+        y: root.list-top + UiMetrics.space-8;
+        height: parent.height - root.list-top - 2 * UiMetrics.space-8;
+        ratio: list-view.viewport-y / max(UiMetrics.hairline, list-view.viewport-height - list-view.height);
+        handle-ratio: min(1, list-view.height / max(UiMetrics.hairline, list-view.viewport-height));
+        seek(ratio) => {
+            list-view.viewport-y = max(0px, ratio * (list-view.viewport-height - list-view.height));
+        }
+    }
+
+    // ---- S3：空态 ----
+    if root.is-empty : EmptyState {
+        x: 0;
+        y: UiMetrics.page-header-height;
+        width: parent.width;
+        height: parent.height - UiMetrics.page-header-height;
+        shape: Icons.book;
+        title: root.empty-title;
+        description: root.empty-desc;
+        notes: root.empty-notes;
+        action-label: "导入 TXT…";
+        activated => {
+            root.import-txt();
+        }
+    }
+
+    // ---- 页头（80）：标题 24/600 + 计数 Tag；右侧 搜索 · 视图 · 排序 · 主按钮 ----
+    // 说明：页头在源码顺序上位于列表之后 —— 这样排序字段的行内浮层不会被表格遮住。
+    Rectangle {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: UiMetrics.page-header-height;
+        background: transparent;
+
+        Text {
+            x: UiMetrics.space-16;
+            y: UiMetrics.space-16;
+            text: "书架";
+            font-size: UiMetrics.title-font-size;
+            font-weight: 600;
+            color: Skin.text-primary;
+        }
+        Tag {
+            x: UiMetrics.space-16 + title-text.preferred-width + UiMetrics.space-12;
+            y: UiMetrics.space-16 + UiMetrics.space-8;
+            tone: 0;
+            text: root.count-label;
+        }
+        title-text := Text {
+            x: 0px - parent.width;
+            y: 0px - parent.height;
+            text: "书架";
+            font-size: UiMetrics.title-font-size;
+            font-weight: 600;
+        }
+        import-btn := TextButton {
+            x: parent.width - UiMetrics.space-16 - self.width;
+            y: (parent.height - self.height) / 2;
+            variant: 0;
+            caption: "导入 TXT…";
+            activated => {
+                root.import-txt();
+            }
+        }
+        sort-field := Rectangle {
+            x: import-btn.x - UiMetrics.space-16 - self.width;
+            y: (parent.height - self.height) / 2;
+            width: UiMetrics.sort-field-width;
+            height: UiMetrics.button-height-compact;
+            background: Skin.field-01;
+            border-width: UiMetrics.hairline;
+            border-color: Skin.border-strong;
+
+            Text {
+                x: UiMetrics.space-8;
+                y: (parent.height - self.height) / 2;
+                width: parent.width - 3 * UiMetrics.space-8 - UiMetrics.icon-size;
+                text: root.sort-value;
+                font-size: UiMetrics.ui-font-size;
+                color: Skin.text-primary;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            Icon {
+                x: parent.width - UiMetrics.space-8 - self.width;
+                y: (parent.height - self.height) / 2;
+                shape: Icons.chevron-down;
+                size: UiMetrics.icon-size;
+                color: Skin.text-secondary;
+            }
+            sort-area := TouchArea {
+                clicked => {
+                    root.sort-cycle();
+                }
+            }
+        }
+        IconButton {
+            x: sort-field.x - UiMetrics.space-16 - self.width - UiMetrics.icon-button-size - UiMetrics.space-4;
+            y: (parent.height - self.height) / 2;
+            caption: "列表视图";
+            shape: Icons.table;
+            selected: root.view == 0;
+            activated => {
+                root.view-set(0);
+            }
+        }
+        IconButton {
+            x: sort-field.x - UiMetrics.space-16 - self.width;
+            y: (parent.height - self.height) / 2;
+            caption: "卡片视图";
+            shape: Icons.cards;
+            selected: root.view == 1;
+            activated => {
+                root.view-set(1);
+            }
+        }
+        search-field := TextField {
+            x: sort-field.x - UiMetrics.space-16 - UiMetrics.icon-button-size - UiMetrics.space-4 - UiMetrics.icon-button-size - UiMetrics.space-16 - self.width;
+            y: (parent.height - self.height) / 2;
+            width: UiMetrics.search-field-width;
+            compact: true;
+            leading-icon: true;
+            text: root.search;
+            placeholder: "搜索书名 / 文件";
+            label: "搜索书架";
+            edited(text) => {
+                root.search-edited(text);
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// S5 – S9：阅读页（工具条 / 正文 / 进度条 / 目录 / 书签 / 沉浸）
+// ---------------------------------------------------------------------------
+
 component ReaderPage inherits Rectangle {
-    in property <string> book-title: "";
-    in property <string> chapter-title: "";
-    in property <string> chapter-label: "";
-    in property <string> page-text: "";
-    in property <string> page-label: "";
+    in property <string> heading: "";
+    in property <bool> toolbar-open: true;
+    in property <bool> immersive: false;
+    in property <bool> show-floating: false;
+    in property <bool> gesture-mode: false;
     in property <[string]> page-lines: [];
     in property <length> line-pitch: 0px;
     in property <length> body-font-size: 0px;
     in property <string> body-font-family: "";
-    in property <bool> menu-open: false;
-    in property <bool> theme-dark: false;
-    in property <bool> gesture-mode: false;
-    in property <string> progress-status: "";
+    in property <length> column-x: 0px;
+    in property <length> column-y: 0px;
+    in property <length> column-width: 0px;
+    in property <length> column-height: 0px;
+    in property <int> progress-permille: 0;
+    in property <string> shortcut-prev: "";
+    in property <string> shortcut-next: "";
+    in property <string> shortcut-immersive: "";
     in property <bool> toc-open: false;
     in property <[TocRow]> toc-rows: [];
-    // 目录滚动条比例：`toc-ratio` = 窗口起点在列表中的比例；`toc-handle-ratio` = 可视窗口占比。
     in property <float> toc-ratio: 0;
     in property <float> toc-handle-ratio: 0.2;
+    in property <string> toc-count: "";
+    in property <string> toc-readout: "";
+    in property <string> toc-search: "";
     in property <bool> marks-open: false;
     in property <[MarkRow]> mark-rows: [];
-    in property <int> mark-total: 0;
+    in property <string> mark-count: "";
+    in property <string> mark-readout: "";
     in property <string> rename-text: "";
-    // 信息区附加行 + 通用选项面板（具体语义全部由 Rust 投影为文本与行数据）。
-    in property <string> meta-label: "";
-    in property <bool> choice-open: false;
-    in property <[ChoiceRow]> choice-rows: [];
-    // 沉浸阅读（隐藏顶栏 / 底部状态栏 / 阅读菜单；正文区使用整个窗口）。
-    in property <bool> immersive: false;
-    callback toggle-menu();
+    in property <string> mark-search: "";
+    callback options-clicked();
+    callback toolbar-toggle();
     callback immersive-toggle();
     callback prev-page();
     callback next-page();
     callback save-progress();
+    callback progress-seek(float);
+    callback zone-hover(bool);
     callback toc-toggle();
-    callback toc-scroll(int);
-    callback chapter-jump(string);
-    /// 目录滚轮（`length` 增量，正数向下）。在目录面板内被消费，不触发正文翻页。
     callback toc-wheel(length);
-    /// 目录滚动条定位（传入指针 y 与轨道高度两个长度；Rust 换算为比例）。
     callback toc-seek(length, length);
-    callback choice-toggle();
-    callback choice-select(string);
+    callback toc-search-edited(string);
+    callback chapter-jump(string);
     callback marks-toggle();
     callback marks-scroll(int);
+    callback mark-search-edited(string);
     callback mark-add();
     callback mark-select(string);
     callback mark-jump(string);
     callback mark-rename(string);
     callback mark-delete(string);
+    callback mark-delete-confirm(string);
+    callback mark-delete-cancel();
     callback rename-text-edited(string);
-    // DT8：键盘 / 滚轮输入意图（只转发原始事件数据；「哪些键 / 哪个方向代表翻页」以及
-    // 「输入框聚焦时不翻页」的判定全部在 Rust `crate::input`，界面不做翻页语义）。
+    callback overlay-click();
     callback key-input(string, bool);
     callback wheel-input(length, length);
 
-    background: transparent;
+    background: Skin.background;
 
-    // ---- DT8：键盘翻页入口（真实按键通道）----
-    //
-    // 覆盖整个阅读页的 `FocusScope` 是 Slint 中窗口级键盘的唯一落地方式：
-    // `WindowEvent::KeyPressed` 只发给持有焦点的元素，因此这里既负责「拿焦点」
-    // （实例化时、点击正文区时、书签面板关闭时），也只做**事件转发**：
-    // 原始按键文本 + 「焦点是否不在本作用域上」（本页唯一其它可聚焦元素是书签重命名
-    // 输入框，所以该标志即「输入框聚焦」）。翻页意图与「输入框聚焦时不翻页」的规则
-    // 全部在 Rust `crate::input`，界面不复制任何翻页语义。
+    // 工具条高度（沉浸态 0；收起态 0；紧凑档 40）。
+    private property <length> bar-h: root.immersive ? 0px : (root.toolbar-open ? (root.width >= UiMetrics.breakpoint-narrow ? UiMetrics.toolbar-height : UiMetrics.toolbar-height-compact) : 0px);
+
+    // ---- S5：阅读工具条（左 3 图标 + 居中「书名 · 章节」+ 右 3 图标）----
+    Rectangle {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: root.bar-h;
+        background: Skin.layer-01;
+        clip: true;
+
+        Rectangle {
+            x: 0;
+            y: parent.height - self.height;
+            width: parent.width;
+            height: UiMetrics.hairline;
+            background: Skin.border-subtle;
+        }
+        HorizontalLayout {
+            x: UiMetrics.space-8;
+            y: 0;
+            width: parent.width - 2 * UiMetrics.space-8;
+            height: parent.height;
+            spacing: UiMetrics.space-4;
+            alignment: start;
+
+            IconButton {
+                caption: "目录";
+                shape: Icons.toc;
+                selected: root.toc-open;
+                tip-below: true;
+                activated => {
+                    root.toc-toggle();
+                }
+            }
+            IconButton {
+                caption: "书签";
+                shape: Icons.mark;
+                selected: root.marks-open;
+                tip-below: true;
+                activated => {
+                    root.marks-toggle();
+                }
+            }
+            IconButton {
+                caption: "选项";
+                shape: Icons.options;
+                tip-below: true;
+                activated => {
+                    root.options-clicked();
+                }
+            }
+            Rectangle {
+                horizontal-stretch: 1;
+                min-width: 0px;
+                clip: true;
+                background: transparent;
+
+                Text {
+                    x: 0;
+                    y: 0;
+                    width: 100%;
+                    height: parent.height;
+                    text: root.heading;
+                    font-size: UiMetrics.ui-font-size;
+                    color: Skin.text-secondary;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+            IconButton {
+                caption: "保存进度";
+                shape: Icons.save;
+                tip-below: true;
+                activated => {
+                    root.save-progress();
+                }
+            }
+            IconButton {
+                caption: "沉浸阅读";
+                shortcut: root.shortcut-immersive;
+                shape: Icons.expand;
+                tip-below: true;
+                activated => {
+                    root.immersive-toggle();
+                }
+            }
+            IconButton {
+                caption: "收起工具条";
+                shape: Icons.collapse;
+                tip-below: true;
+                activated => {
+                    root.toolbar-toggle();
+                }
+            }
+        }
+    }
+
+    // ---- 正文（几何由 Rust 投影：正文列 = min(正文区宽, 40 × 字号) 居中）----
+    Rectangle {
+        x: root.column-x;
+        y: root.column-y;
+        width: root.column-width;
+        height: root.column-height;
+        background: transparent;
+        clip: true;
+
+        for line[index] in root.page-lines : Text {
+            x: 0;
+            y: index * root.line-pitch;
+            width: parent.width;
+            height: root.line-pitch;
+            text: line;
+            font-family: root.body-font-family;
+            font-size: root.body-font-size;
+            letter-spacing: 0px;
+            color: Skin.reading-text;
+            horizontal-alignment: left;
+            vertical-alignment: center;
+            wrap: no-wrap;
+        }
+
+        // 点击分区（手势模式左/右 1/3 翻页、中部收起工具条；按钮模式点中部收起工具条）
+        // + 滚轮整页翻页（正文不出滚动条）。
+        content-area := TouchArea {
+            x: 0;
+            y: 0;
+            width: parent.width;
+            height: parent.height;
+
+            clicked => {
+                reader-keys.focus();
+                if (root.gesture-mode) {
+                    if (self.mouse-x < self.width / 3) {
+                        root.prev-page();
+                    } else if (self.mouse-x > self.width * 2 / 3) {
+                        root.next-page();
+                    } else if (root.immersive) {
+                        root.immersive-toggle();
+                    } else {
+                        root.toolbar-toggle();
+                    }
+                } else if (root.immersive) {
+                    root.immersive-toggle();
+                } else {
+                    root.toolbar-toggle();
+                }
+            }
+
+            scroll-event(event) => {
+                root.wheel-input(event.delta-x, event.delta-y);
+                accept
+            }
+        }
+    }
+
+    // 键盘翻页入口（真实按键通道）：只上报原始按键文本 + 「焦点是否不在本作用域上」。
     reader-keys := FocusScope {
         x: 0;
         y: 0;
@@ -323,679 +2077,1186 @@ component ReaderPage inherits Rectangle {
         }
 
         key-pressed(event) => {
-            // 只上报「原始按键文本 + 焦点是否不在本作用域上」：
-            // 本页唯一的其它可聚焦元素是书签重命名输入框，因此该标志配合 Rust 侧的书签
-            // 面板状态即可判定「输入框聚焦」；是否翻页、是否屏蔽都由 Rust `crate::input`
-            // 决定，界面既不吃掉文本输入，也不复制任何翻页语义。
             root.key-input(event.text, !self.has-focus);
             reject
         }
+    }
 
-        // 阅读菜单条：展开时高度为 UiMetrics.menu-height，收起时为 0px；沉浸阅读时恒为 0。
+    // ---- S5：阅读进度条（2 像素；hover 4 像素 并显示浮标；点击/拖拽跳转）----
+    progress-bar := ProgressTrack {
+        x: 0;
+        y: parent.height - self.height;
+        width: parent.width;
+        permille: root.progress-permille;
+        interactive: true;
+        seek(ratio) => {
+            root.progress-seek(ratio);
+        }
+    }
+    if progress-bar.hovering : Rectangle {
+        x: min(parent.width - self.width, max(0px, progress-bar.pointer-x - self.width / 2));
+        y: parent.height - UiMetrics.progress-bar-hover-height - UiMetrics.space-32;
+        width: bubble-text.preferred-width + UiMetrics.space-12;
+        height: UiMetrics.space-24;
+        background: Skin.toast-bg;
+        border-radius: UiMetrics.toast-radius;
+        opacity: 0.9;
+
+        bubble-text := Text {
+            text: "跳至 " + round(progress-bar.pointer-x / max(UiMetrics.hairline, root.width) * 100) + "%";
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            font-size: UiMetrics.caption-font-size;
+            color: Skin.toast-text;
+        }
+    }
+
+    // ---- 覆盖层：点击面板外关闭（O4）----
+    if (root.toc-open || root.marks-open) : TouchArea {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        clicked => {
+            root.overlay-click();
+        }
+    }
+
+    // ---- S6：目录面板（覆盖正文区；内缩 24 水平 / 16 垂直）----
+    if root.toc-open : Rectangle {
+        x: UiMetrics.space-24;
+        y: root.bar-h + UiMetrics.space-16;
+        width: parent.width - 2 * UiMetrics.space-24;
+        height: parent.height - root.bar-h - UiMetrics.progress-bar-height - 2 * UiMetrics.space-16;
+        background: Skin.layer-02;
+        border-width: UiMetrics.hairline;
+        border-color: Skin.border-strong;
+        clip: true;
+
+        // 滚轮层：位于目录内容之下（声明的先后即叠放顺序）——行可点，滚轮在本层被消费。
+        TouchArea {
+            x: 0;
+            y: 0;
+            width: parent.width;
+            height: parent.height;
+
+            scroll-event(event) => {
+                root.toc-wheel(event.delta-y);
+                accept
+            }
+        }
+
+        // 面板头 48：「目录」+ 计数 Tag + 搜索 260 + 关闭。
         Rectangle {
             x: 0;
             y: 0;
             width: parent.width;
-            height: root.immersive ? 0px : (root.menu-open ? UiMetrics.menu-height : 0px);
-            background: root.theme-dark ? #3a3a3c : #e6e6e6;
-            clip: true;
+            height: UiMetrics.panel-header-height;
+            background: Skin.layer-01;
 
             HorizontalLayout {
-                padding-left: UiMetrics.content-padding-h;
-                padding-right: UiMetrics.content-padding-h;
-                spacing: UiMetrics.caption-font-size;
+                x: UiMetrics.space-16;
+                y: 0;
+                width: parent.width - 2 * UiMetrics.space-16;
+                height: parent.height;
+                spacing: UiMetrics.space-8;
                 alignment: start;
 
-                // 书名 + 当前章节（原先画在正文区顶部、与正文重叠；现统一在此常驻显示）。
-                // 占「剩余宽度」并可省略：文字再长也不得把菜单按钮推出窗口（真实缺陷）。
                 Text {
-                    text: root.book-title == "" ? root.chapter-label : root.book-title + " · " + root.chapter-label;
-                    font-size: UiMetrics.caption-font-size;
-                    color: root.theme-dark ? #f0f0f0 : #333333;
+                    text: "目录";
+                    font-size: UiMetrics.body-font-size;
+                    font-weight: 600;
+                    color: Skin.text-primary;
                     vertical-alignment: center;
-                    horizontal-stretch: 1;
-                    overflow: elide;
                 }
-                ActionButton {
-                    caption: "目录";
+                Tag {
+                    tone: 1;
+                    text: root.toc-count;
+                }
+                Rectangle { horizontal-stretch: 1; background: transparent; }
+                TextField {
+                    width: UiMetrics.search-field-panel-width;
+                    compact: true;
+                    leading-icon: true;
+                    text: root.toc-search;
+                    placeholder: "按章节名过滤";
+                    label: "搜索章节";
+                    edited(text) => {
+                        root.toc-search-edited(text);
+                    }
+                }
+                IconButton {
+                    compact: true;
+                    caption: "关闭目录";
+                    shape: Icons.close;
                     activated => {
                         root.toc-toggle();
                     }
                 }
-                ActionButton {
-                    caption: "选项";
-                    activated => {
-                        root.choice-toggle();
+            }
+        }
+
+        // 行（40）：序号 mono + 章节名 + 偏移量 mono；整行可点（跳转）。
+        for row[i] in root.toc-rows : Rectangle {
+            x: UiMetrics.space-8;
+            y: UiMetrics.panel-header-height + i * UiMetrics.list-row-height;
+            width: parent.width - UiMetrics.space-8 - UiMetrics.scrollbar-width - UiMetrics.space-8;
+            height: UiMetrics.list-row-height;
+            background: row.current ? Skin.primary-soft : (toc-row-area.has-hover ? Skin.layer-01 : transparent);
+            accessible-role: list-item;
+            accessible-label: row.title;
+
+            if row.current : Rectangle {
+                x: 0;
+                y: 0;
+                width: UiMetrics.space-4 - UiMetrics.hairline;
+                height: parent.height;
+                background: Skin.primary;
+            }
+            Text {
+                x: UiMetrics.space-12;
+                y: 0;
+                width: UiMetrics.space-48;
+                height: parent.height;
+                text: row.sequence;
+                font-family: "monospace";
+                font-size: UiMetrics.mono-font-size;
+                color: row.current ? Skin.primary-strong : Skin.text-placeholder;
+                vertical-alignment: center;
+            }
+            Text {
+                x: UiMetrics.space-12 + UiMetrics.space-48;
+                y: 0;
+                width: parent.width - UiMetrics.space-12 - UiMetrics.space-48 - UiMetrics.space-48 * 2 - UiMetrics.space-16;
+                height: parent.height;
+                text: row.title;
+                font-size: UiMetrics.label-font-size;
+                font-weight: row.current ? 600 : 400;
+                color: row.current ? Skin.primary-strong : Skin.text-primary;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            Text {
+                x: parent.width - UiMetrics.space-48 * 2;
+                y: 0;
+                width: UiMetrics.space-48 * 2 - UiMetrics.space-8;
+                height: parent.height;
+                text: row.meta;
+                font-family: "monospace";
+                font-size: UiMetrics.mono-font-size;
+                color: Skin.text-placeholder;
+                vertical-alignment: center;
+            }
+            toc-row-area := TouchArea {
+                clicked => {
+                    root.chapter-jump(row.sequence);
+                }
+            }
+        }
+
+        // 底部提示条 32：滚轮行为说明 + 位置读数。
+        Rectangle {
+            x: 0;
+            y: parent.height - self.height;
+            width: parent.width;
+            height: UiMetrics.panel-hint-height;
+            background: Skin.layer-01;
+
+            Text {
+                x: UiMetrics.space-16;
+                y: 0;
+                width: parent.width / 2;
+                height: parent.height;
+                text: "滚轮滚动目录 · 点击行跳转";
+                font-size: UiMetrics.caption-font-size;
+                color: Skin.text-placeholder;
+                vertical-alignment: center;
+            }
+            Text {
+                x: parent.width / 2;
+                y: 0;
+                width: parent.width / 2 - UiMetrics.space-16 - UiMetrics.scrollbar-width - UiMetrics.space-8;
+                height: parent.height;
+                text: root.toc-readout;
+                font-family: "monospace";
+                font-size: UiMetrics.mono-font-size;
+                color: Skin.text-secondary;
+                horizontal-alignment: right;
+                vertical-alignment: center;
+            }
+        }
+
+        // 面板滚动条（8）。
+        ScrollBar {
+            x: parent.width - UiMetrics.scrollbar-gutter;
+            y: UiMetrics.panel-header-height;
+            height: parent.height - UiMetrics.panel-header-height - UiMetrics.panel-hint-height;
+            ratio: root.toc-ratio;
+            handle-ratio: root.toc-handle-ratio;
+            seek(ratio) => {
+                root.toc-seek(ratio * 1000 * UiMetrics.hairline, 1000 * UiMetrics.hairline);
+            }
+        }
+    }
+
+    // ---- S7：书签面板 ----
+    if root.marks-open : Rectangle {
+        x: UiMetrics.space-24;
+        y: root.bar-h + UiMetrics.space-16;
+        width: parent.width - 2 * UiMetrics.space-24;
+        height: parent.height - root.bar-h - UiMetrics.progress-bar-height - 2 * UiMetrics.space-16;
+        background: Skin.layer-02;
+        border-width: UiMetrics.hairline;
+        border-color: Skin.border-strong;
+        clip: true;
+
+        // 面板头 48：「书签」+ 计数 Tag + 搜索 + 唯一主按钮 + 关闭。
+        Rectangle {
+            x: 0;
+            y: 0;
+            width: parent.width;
+            height: UiMetrics.panel-header-height;
+            background: Skin.layer-01;
+
+            HorizontalLayout {
+                x: UiMetrics.space-16;
+                y: 0;
+                width: parent.width - 2 * UiMetrics.space-16;
+                height: parent.height;
+                spacing: UiMetrics.space-8;
+                alignment: start;
+
+                Text {
+                    text: "书签";
+                    font-size: UiMetrics.body-font-size;
+                    font-weight: 600;
+                    color: Skin.text-primary;
+                    vertical-alignment: center;
+                }
+                Tag {
+                    tone: 1;
+                    text: root.mark-count;
+                }
+                Rectangle { horizontal-stretch: 1; background: transparent; }
+                TextField {
+                    width: UiMetrics.search-field-panel-width;
+                    compact: true;
+                    leading-icon: true;
+                    text: root.mark-search;
+                    placeholder: "按标题过滤";
+                    label: "搜索书签";
+                    edited(text) => {
+                        root.mark-search-edited(text);
                     }
                 }
-                ActionButton {
-                    caption: "书签";
+                TextButton {
+                    compact: true;
+                    variant: 0;
+                    caption: "在当前页新增书签";
+                    activated => {
+                        root.mark-add();
+                    }
+                }
+                IconButton {
+                    compact: true;
+                    caption: "关闭书签";
+                    shape: Icons.close;
                     activated => {
                         root.marks-toggle();
                     }
                 }
-                ActionButton {
+            }
+        }
+
+        // 行（40）：章节读数 mono + 标题 + 位置 + 行尾图标（跳转 / 重命名 / 删除）。
+        for row[i] in root.mark-rows : Rectangle {
+            x: UiMetrics.space-8;
+            y: UiMetrics.panel-header-height + i * UiMetrics.list-row-height;
+            width: parent.width - UiMetrics.space-8 - UiMetrics.scrollbar-width - UiMetrics.space-8;
+            height: UiMetrics.list-row-height;
+            background: row.selected ? Skin.primary-soft : (mark-row-area.has-hover ? Skin.layer-01 : transparent);
+            accessible-role: list-item;
+            accessible-label: row.title;
+
+            if row.delete-pending : HorizontalLayout {
+                x: UiMetrics.space-12;
+                y: 0;
+                width: parent.width - 2 * UiMetrics.space-12;
+                spacing: UiMetrics.space-8;
+                alignment: start;
+
+                Text {
+                    text: "删除这条书签？";
+                    font-size: UiMetrics.label-font-size;
+                    color: Skin.support-error;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+                TextButton {
+                    compact: true;
+                    variant: 2;
+                    caption: "取消";
+                    activated => {
+                        root.mark-delete-cancel();
+                    }
+                }
+                TextButton {
+                    compact: true;
+                    variant: 3;
+                    caption: "删除";
+                    activated => {
+                        root.mark-delete-confirm(row.id);
+                    }
+                }
+            }
+            if !row.delete-pending : HorizontalLayout {
+                x: UiMetrics.space-12;
+                y: 0;
+                width: parent.width - 2 * UiMetrics.space-12;
+                spacing: UiMetrics.space-8;
+                alignment: start;
+
+                Text {
+                    width: UiMetrics.space-48 * 2;
+                    text: row.chapter;
+                    font-family: "monospace";
+                    font-size: UiMetrics.mono-font-size;
+                    color: Skin.text-placeholder;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: row.title;
+                    font-size: UiMetrics.label-font-size;
+                    font-weight: row.selected ? 600 : 400;
+                    color: row.current-chapter ? Skin.primary-strong : Skin.text-primary;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                }
+                Text {
+                    text: row.position-label;
+                    font-family: "monospace";
+                    font-size: UiMetrics.mono-font-size;
+                    color: Skin.text-placeholder;
+                    vertical-alignment: center;
+                }
+                IconButton {
+                    compact: true;
+                    caption: "跳转";
+                    shape: Icons.forward;
+                    activated => {
+                        root.mark-jump(row.id);
+                    }
+                }
+                IconButton {
+                    compact: true;
+                    caption: "重命名";
+                    shape: Icons.options;
+                    activated => {
+                        root.mark-select(row.id);
+                    }
+                }
+                IconButton {
+                    compact: true;
+                    caption: "删除";
+                    shape: Icons.close;
+                    danger: true;
+                    activated => {
+                        root.mark-delete(row.id);
+                    }
+                }
+            }
+            mark-row-area := TouchArea {
+                clicked => {
+                    root.mark-select(row.id);
+                }
+                double-clicked => {
+                    root.mark-jump(row.id);
+                }
+            }
+        }
+
+        // 重命名区（64）：选中项 + 输入框 + 「保存名称」。
+        Rectangle {
+            x: 0;
+            y: parent.height - UiMetrics.panel-hint-height - UiMetrics.space-48 - UiMetrics.space-16;
+            width: parent.width;
+            height: UiMetrics.space-48 + UiMetrics.space-16;
+            background: Skin.layer-01;
+
+            rename-field := TextField {
+                x: UiMetrics.space-16;
+                y: UiMetrics.space-8;
+                width: parent.width - 2 * UiMetrics.space-16 - UiMetrics.space-48 * 2 - UiMetrics.space-16;
+                compact: true;
+                text: root.rename-text;
+                placeholder: "选中书签后输入新名称";
+                label: "书签名称";
+                edited(text) => {
+                    root.rename-text-edited(text);
+                }
+            }
+            TextButton {
+                x: parent.width - UiMetrics.space-16 - self.width;
+                y: UiMetrics.space-8;
+                compact: true;
+                variant: 1;
+                caption: "保存名称";
+                activated => {
+                    root.mark-rename(root.rename-text);
+                }
+            }
+        }
+
+        // 底部提示条 32：滚轮说明 + 位置读数。
+        Rectangle {
+            x: 0;
+            y: parent.height - self.height;
+            width: parent.width;
+            height: UiMetrics.panel-hint-height;
+            background: Skin.layer-01;
+
+            Text {
+                x: UiMetrics.space-16;
+                y: 0;
+                width: parent.width / 2;
+                height: parent.height;
+                text: "单击选中 · 双击跳转 · 删除需二次确认";
+                font-size: UiMetrics.caption-font-size;
+                color: Skin.text-placeholder;
+                vertical-alignment: center;
+            }
+            Text {
+                x: parent.width / 2;
+                y: 0;
+                width: parent.width / 2 - UiMetrics.space-16 - UiMetrics.scrollbar-width - UiMetrics.space-8;
+                height: parent.height;
+                text: root.mark-readout;
+                font-family: "monospace";
+                font-size: UiMetrics.mono-font-size;
+                color: Skin.text-secondary;
+                horizontal-alignment: right;
+                vertical-alignment: center;
+            }
+        }
+
+        ScrollBar {
+            x: parent.width - UiMetrics.scrollbar-gutter;
+            y: UiMetrics.panel-header-height;
+            height: parent.height - UiMetrics.panel-header-height - UiMetrics.panel-hint-height - UiMetrics.space-48 - UiMetrics.space-16;
+            ratio: 0;
+            handle-ratio: min(1, (UiMetrics.list-row-height * 8) / max(UiMetrics.hairline, root.mark-rows.length * UiMetrics.list-row-height));
+            seek(ratio) => {
+                root.marks-scroll(round(ratio * 100) - 50);
+            }
+        }
+    }
+
+    // ---- S9：沉浸态（顶部悬停 → 浮出工具条；离开 1.5s 由 Rust 一次性定时器淡出）----
+    if root.immersive : Rectangle {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        background: transparent;
+
+        zone := TouchArea {
+            x: 0;
+            y: 0;
+            width: parent.width;
+            height: root.show-floating ? UiMetrics.toolbar-height : UiMetrics.space-24;
+
+            changed has-hover => {
+                root.zone-hover(self.has-hover);
+            }
+        }
+
+        if root.show-floating : Rectangle {
+            x: 0;
+            y: 0;
+            width: parent.width;
+            height: UiMetrics.toolbar-height;
+
+            Rectangle {
+                x: 0;
+                y: 0;
+                width: parent.width;
+                height: parent.height;
+                background: Skin.layer-01;
+                opacity: 0.82;
+            }
+            Rectangle {
+                x: 0;
+                y: parent.height - self.height;
+                width: parent.width;
+                height: UiMetrics.hairline;
+                background: Skin.border-subtle;
+            }
+            HorizontalLayout {
+                x: UiMetrics.space-8;
+                y: 0;
+                width: parent.width - 2 * UiMetrics.space-8;
+                height: parent.height;
+                spacing: UiMetrics.space-4;
+                alignment: start;
+
+                IconButton {
+                    caption: "目录";
+                    shape: Icons.toc;
+                    activated => {
+                        root.toc-toggle();
+                    }
+                }
+                IconButton {
+                    caption: "书签";
+                    shape: Icons.mark;
+                    activated => {
+                        root.marks-toggle();
+                    }
+                }
+                IconButton {
                     caption: "保存进度";
+                    shape: Icons.save;
                     activated => {
                         root.save-progress();
                     }
                 }
-                ActionButton {
-                    caption: "沉浸阅读";
+                Rectangle { horizontal-stretch: 1; background: transparent; }
+                IconButton {
+                    caption: "退出沉浸";
+                    shortcut: root.shortcut-immersive;
+                    shape: Icons.collapse;
                     activated => {
                         root.immersive-toggle();
                     }
                 }
-                ActionButton {
-                    caption: "收起菜单";
-                    activated => {
-                        root.toggle-menu();
-                    }
-                }
             }
-        }
-
-        // 正文区域：x/width/height 与 Rust 侧同一常量集（不含顶栏/底部栏的局部坐标）。
-        // 沉浸阅读时菜单条不再占位（Rust 侧同口径：`LayoutMetrics::immersive()`）。
-        Rectangle {
-            x: UiMetrics.content-padding-h;
-            y: (root.immersive ? 0px : (root.menu-open ? UiMetrics.menu-height : 0px)) + UiMetrics.content-padding-v;
-            width: parent.width - 2 * UiMetrics.content-padding-h;
-            height: parent.height - (root.immersive ? 0px : (root.menu-open ? UiMetrics.menu-height : 0px)) - 2 * UiMetrics.content-padding-v;
-            background: root.theme-dark ? #1e1e20 : #ffffff;
-            border-radius: UiMetrics.corner-radius;
-            clip: true;
-
-            // 逐行渲染：第 i 行固定在 y = i × 行盒，行盒高度来自测量结果。
-            for line[index] in root.page-lines: Text {
-                x: 0;
-                y: index * root.line-pitch;
-                width: parent.width;
-                height: root.line-pitch;
-                text: line;
-                font-family: root.body-font-family;
-                font-size: root.body-font-size;
-                letter-spacing: 0px;
-                color: root.theme-dark ? #ececec : #222222;
-                horizontal-alignment: left;
-                vertical-alignment: center;
-                wrap: no-wrap;
-            }
-
-            // 正文区输入层：手势点击（DT4）+ 滚轮整页翻页（DT8）。
-            //
-            // - 手势模式：左 1/3 上一页、右 1/3 下一页、中部呼出/收起菜单（语义由 Rust 决定）；
-            // - 任意模式：滚轮只上报意图 —— DR3 要求正文不出现滚动条，因此滚轮映射为**整页翻页**
-            //   而不是滚动正文；
-            // - 点击顺便把键盘焦点交给阅读页的 FocusScope（键盘翻页入口，DT8）。
-            TouchArea {
-                x: 0;
-                y: 0;
-                width: parent.width;
-                height: parent.height;
-
-                clicked => {
-                    reader-keys.focus();
-                    if (root.gesture-mode) {
-                        if (self.mouse-x < self.width / 3) {
-                            root.prev-page();
-                        } else if (self.mouse-x > self.width * 2 / 3) {
-                            root.next-page();
-                        } else {
-                            // 中部：沉浸态下退出沉浸（菜单条不可见），否则呼出/收起菜单。
-                            if (root.immersive) {
-                                root.immersive-toggle();
-                            } else {
-                                root.toggle-menu();
-                            }
-                        }
-                    } else if (root.immersive) {
-                        // 按钮模式的沉浸态：顶栏/底栏/菜单都不可见，点正文即退出沉浸
-                        // （另有 Esc 键与右上角「退出沉浸」按钮，三条路径等价）。
-                        root.immersive-toggle();
-                    }
-                }
-
-                scroll-event(event) => {
-                    root.wheel-input(event.delta-x, event.delta-y);
-                    accept
-                }
-            }
-        }
-
-        // 正文区顶部不再绘制「书名 / 章节名」浮动小标题：它们的 y 与正文首行同位，
-        // 必然与正文重叠（2026-09-29 真实缺陷）。这两条信息已在菜单条与底部状态栏常驻显示，
-        // 故此处直接移除，而不是牺牲正文行空间。
-
-        // ---- 目录面板（覆盖正文区；只渲染 Rust 给的有界窗口）----
-        // 交互：滚轮滚动目录本身（不翻动正文）、右侧细滚动条点击/拖动按比例定位。
-        if (root.toc-open) : Rectangle {
-            x: UiMetrics.content-padding-h;
-            y: (root.menu-open ? UiMetrics.menu-height : 0px) + UiMetrics.content-padding-v;
-            width: parent.width - 2 * UiMetrics.content-padding-h;
-            height: parent.height - (root.menu-open ? UiMetrics.menu-height : 0px) - 2 * UiMetrics.content-padding-v;
-            background: root.theme-dark ? #26262a : #f7f7f9;
-            border-radius: UiMetrics.corner-radius;
-            clip: true;
-
-            // 滚轮层：位于目录内容**之下**（声明的先后即叠放顺序）——
-            // 这样行内「跳转」按钮照常可点，而滚轮事件在本层被消费，
-            // 不会再冒泡到正文区触发翻页（2026-09-30 真实缺陷）。
-            TouchArea {
-                x: 0;
-                y: 0;
-                width: parent.width;
-                height: parent.height;
-
-                scroll-event(event) => {
-                    // 长度类型直接交给 Rust（Rust 侧只取符号；界面不做数值换算）。
-                    root.toc-wheel(event.delta-y);
-                    accept
-                }
-            }
-
-            VerticalLayout {
-                padding-left: UiMetrics.content-padding-h;
-                padding-right: UiMetrics.content-padding-h * 2;
-                padding-top: UiMetrics.content-padding-v;
-                spacing: UiMetrics.panel-row-gap;
-
-                HorizontalLayout {
-                    spacing: UiMetrics.caption-font-size;
-                    alignment: start;
-                    Text {
-                        text: "目录";
-                        font-size: UiMetrics.body-font-size;
-                        color: root.theme-dark ? #f0f0f0 : #222222;
-                        vertical-alignment: center;
-                    }
-                    ActionButton {
-                        caption: "更早";
-                        activated => {
-                            root.toc-scroll(-1);
-                        }
-                    }
-                    ActionButton {
-                        caption: "更晚";
-                        activated => {
-                            root.toc-scroll(1);
-                        }
-                    }
-                    ActionButton {
-                        caption: "收起目录";
-                        activated => {
-                            root.toc-toggle();
-                        }
-                    }
-                }
-
-                for row in root.toc-rows: Rectangle {
-                    height: UiMetrics.nav-tab-height;
-                    background: row.current ? (root.theme-dark ? #3a3a3c : #d6e4ff) : transparent;
-                    // 可访问名称（AC-D4/DR4）：目录行必须在辅助技术层级里可被识别。
-                    accessible-role: list-item;
-                    accessible-label: row.title;
-
-                    HorizontalLayout {
-                        spacing: UiMetrics.caption-font-size;
-
-                        Text {
-                            text: row.title;
-                            font-size: UiMetrics.caption-font-size;
-                            color: row.current ? #1890ff : (root.theme-dark ? #d0d0d0 : #333333);
-                            vertical-alignment: center;
-                        }
-                        ActionButton {
-                            caption: "跳转";
-                            activated => {
-                                root.chapter-jump(row.sequence);
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 细滚动条：点击轨道或拖动滑块即按比例定位（找偏后章节不必逐页翻）。
-            // 所有尺寸来自 UiMetrics（唯一来源：layout.rs），界面不书写像素常量。
-            Rectangle {
-                x: parent.width - UiMetrics.scrollbar-gutter;
-                y: UiMetrics.content-padding-v;
-                width: UiMetrics.scrollbar-width;
-                height: parent.height - 2 * UiMetrics.content-padding-v;
-                background: root.theme-dark ? #3a3a3c : #e4e4e7;
-                border-radius: UiMetrics.scrollbar-width / 2;
-
-                Rectangle {
-                    x: 0;
-                    width: parent.width;
-                    height: max(UiMetrics.scrollbar-min-handle, parent.height * root.toc-handle-ratio);
-                    y: (parent.height - self.height) * root.toc-ratio;
-                    background: #1890ff;
-                    border-radius: UiMetrics.scrollbar-width / 2;
-                }
-
-                TouchArea {
-                    clicked => {
-                        root.toc-seek(self.mouse-y, self.height);
-                    }
-                    moved => {
-                        if (self.pressed) {
-                            root.toc-seek(self.mouse-y, self.height);
-                        }
-                    }
-                }
-            }
-        }
-
-        // 沉浸阅读：右上角常驻「退出沉浸」——顶栏与底部状态栏都被隐藏，这是唯一可见的界面出口
-        // （键盘翻页与手势在沉浸态照常可用；界面显隐由 Rust 的状态投影决定）。
-        if (root.immersive) : Rectangle {
-            x: parent.width - UiMetrics.nav-tab-width - UiMetrics.content-padding-h;
-            y: UiMetrics.caption-font-size;
-            opacity: 0.8;
-
-            ActionButton {
-                caption: "退出沉浸";
-                activated => {
-                    root.immersive-toggle();
-                }
-            }
-        }
-
-        // ---- 选项面板（覆盖正文区；只渲染 Rust 给的行）----
-        // 语义：点击「选用」= 转发给 Rust（Rust 侧落库、失效索引、重建目录与分页）；
-        // 界面不判定选项含义，只渲染投影结果。
-        if (root.choice-open) : Rectangle {
-            x: UiMetrics.content-padding-h;
-            y: (root.menu-open ? UiMetrics.menu-height : 0px) + UiMetrics.content-padding-v;
-            width: parent.width - 2 * UiMetrics.content-padding-h;
-            height: parent.height - (root.menu-open ? UiMetrics.menu-height : 0px) - 2 * UiMetrics.content-padding-v;
-            background: root.theme-dark ? #26262a : #f7f7f9;
-            border-radius: UiMetrics.corner-radius;
-            clip: true;
-
-            VerticalLayout {
-                padding-left: UiMetrics.content-padding-h;
-                padding-right: UiMetrics.content-padding-h;
-                padding-top: UiMetrics.content-padding-v;
-                spacing: UiMetrics.panel-row-gap;
-
-                HorizontalLayout {
-                    spacing: UiMetrics.caption-font-size;
-                    alignment: start;
-                    Text {
-                        text: "选项（当前：" + (root.meta-label == "" ? "未知" : root.meta-label) + "）";
-                        font-size: UiMetrics.body-font-size;
-                        color: root.theme-dark ? #f0f0f0 : #222222;
-                        vertical-alignment: center;
-                    }
-                    ActionButton {
-                        caption: "关闭";
-                        activated => {
-                            root.choice-toggle();
-                        }
-                    }
-                }
-
-                for row in root.choice-rows: Rectangle {
-                    height: UiMetrics.nav-tab-height;
-                    background: row.current ? (root.theme-dark ? #3a3a3c : #d6e4ff) : transparent;
-                    // 可访问名称（AC-D4/DR4）：编码行必须在辅助技术层级里可被识别。
-                    accessible-role: list-item;
-                    accessible-label: row.name;
-
-                    HorizontalLayout {
-                        spacing: UiMetrics.caption-font-size;
-
-                        Text {
-                            text: row.name;
-                            font-size: UiMetrics.caption-font-size;
-                            color: row.current ? #1890ff : (root.theme-dark ? #d0d0d0 : #333333);
-                            vertical-alignment: center;
-                        }
-                        ActionButton {
-                            caption: row.current ? "当前" : "选用";
-                            enabled: !row.current;
-                            activated => {
-                                root.choice-select(row.name);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // ---- 书签面板（覆盖正文区；只渲染 Rust 给的有界窗口）----
-        if (root.marks-open) : Rectangle {
-            x: UiMetrics.content-padding-h;
-            y: (root.menu-open ? UiMetrics.menu-height : 0px) + UiMetrics.content-padding-v;
-            width: parent.width - 2 * UiMetrics.content-padding-h;
-            height: parent.height - (root.menu-open ? UiMetrics.menu-height : 0px) - 2 * UiMetrics.content-padding-v;
-            background: root.theme-dark ? #26262a : #f7f7f9;
-            border-radius: UiMetrics.corner-radius;
-            clip: true;
-
-            VerticalLayout {
-                padding-left: UiMetrics.content-padding-h;
-                padding-right: UiMetrics.content-padding-h;
-                padding-top: UiMetrics.content-padding-v;
-                spacing: UiMetrics.panel-row-gap;
-
-                HorizontalLayout {
-                    spacing: UiMetrics.caption-font-size;
-                    alignment: start;
-                    Text {
-                        text: "书签（\{root.mark-total}）";
-                        font-size: UiMetrics.body-font-size;
-                        color: root.theme-dark ? #f0f0f0 : #222222;
-                        vertical-alignment: center;
-                    }
-                    ActionButton {
-                        caption: "新增书签";
-                        activated => {
-                            root.mark-add();
-                        }
-                    }
-                    ActionButton {
-                        caption: "更早";
-                        activated => {
-                            root.marks-scroll(-1);
-                        }
-                    }
-                    ActionButton {
-                        caption: "更晚";
-                        activated => {
-                            root.marks-scroll(1);
-                        }
-                    }
-                    ActionButton {
-                        caption: "收起书签";
-                        activated => {
-                            root.marks-toggle();
-                        }
-                    }
-                }
-
-                HorizontalLayout {
-                    spacing: UiMetrics.caption-font-size;
-
-                    rename-edit := LineEdit {
-                        width: parent.width - UiMetrics.nav-tab-width * 2;
-                        text: root.rename-text;
-                        placeholder-text: "选中书签后输入新名称";
-                        // 可访问名称（AC-D4/DR4）：输入框必须有可访问名称，而不是只有 placeholder。
-                        accessible-label: "书签名称";
-                        edited(text) => {
-                            root.rename-text-edited(text);
-                        }
-                    }
-                    ActionButton {
-                        caption: "重命名";
-                        activated => {
-                            root.mark-rename(root.rename-text);
-                        }
-                    }
-                }
-
-                for row in root.mark-rows: Rectangle {
-                    height: UiMetrics.nav-tab-height;
-                    background: row.selected ? (root.theme-dark ? #3a3a3c : #d6e4ff) : transparent;
-                    // 可访问名称（AC-D4/DR4）：书签行必须在辅助技术层级里可被识别。
-                    accessible-role: list-item;
-                    accessible-label: row.title;
-
-                    HorizontalLayout {
-                        spacing: UiMetrics.caption-font-size;
-
-                        Text {
-                            text: row.title;
-                            font-size: UiMetrics.caption-font-size;
-                            color: row.current-chapter ? #1890ff : (root.theme-dark ? #d0d0d0 : #333333);
-                            vertical-alignment: center;
-                        }
-                        Text {
-                            text: row.position-label;
-                            font-size: UiMetrics.caption-font-size;
-                            color: #999999;
-                            vertical-alignment: center;
-                        }
-                        ActionButton {
-                            caption: "选中";
-                            activated => {
-                                root.mark-select(row.id);
-                            }
-                        }
-                        ActionButton {
-                            caption: "跳转";
-                            activated => {
-                                root.mark-jump(row.id);
-                            }
-                        }
-                        ActionButton {
-                            caption: "删除";
-                            activated => {
-                                root.mark-delete(row.id);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // 进度状态（保存 / 恢复结果；有内容时才显示）。
-        Text {
-            x: UiMetrics.content-padding-h;
-            y: parent.height - UiMetrics.bottom-bar-height;
-            text: root.progress-status;
-            font-size: UiMetrics.caption-font-size;
-            color: #d46b08;
-            visible: root.progress-status != "";
         }
     }
 
-    // 书签面板关闭后把键盘焦点收回阅读页（面板里唯一可聚焦元素是重命名输入框，
-    // 关闭时焦点会随之丢失；不收回会让键盘翻页在下次点击正文前失效）。
-    changed marks-open => {
-        if (!self.marks-open) {
-            reader-keys.focus();
-        }
-    }
+    // 选项入口（S8：居中弹窗由 AppWindow 承载；此处只上报意图）。
 }
 
-// 设置页：只显示 Rust 投影的全局设置行；改动只上报意图（键 + 步长），
-// 取值校验、毫单位换算与持久化全部在 `crate::settings`。
+// ---------------------------------------------------------------------------
+// S10：设置（表单化：滑杆 / 开关 / 单选 / 循环字段 / 只读 / 动作行）
+// ---------------------------------------------------------------------------
+
 component SettingsPage inherits Rectangle {
     in property <[SettingsRow]> rows: [];
-    in property <string> interaction-mode: "";
-    in property <bool> persisted: false;
-    in property <bool> theme-dark: false;
-    callback change(string, int);
+    in property <string> note: "";
+    in property <string> data-path: "";
+    callback cycle(string);
+    callback set-int(string, int);
+    callback set-text(string, string);
+    callback set-index(string, int);
+    callback toggle(string, bool);
+    callback clear-index();
+    callback clear-index-clicked();
 
     background: transparent;
 
-    VerticalLayout {
-        padding-left: UiMetrics.content-padding-h;
-        padding-right: UiMetrics.content-padding-h;
-        padding-top: UiMetrics.content-padding-v;
-        padding-bottom: UiMetrics.content-padding-v;
-        spacing: UiMetrics.panel-row-gap;
+    private property <length> label-width: UiMetrics.space-48 * 4 + UiMetrics.space-8;
+    private property <length> control-x: root.label-width + UiMetrics.space-16;
+
+    Rectangle {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: UiMetrics.page-header-height;
+        background: transparent;
 
         Text {
-            text: root.persisted ? "全局阅读设置（已持久化到本地库）" : "全局阅读设置（默认值；首次修改后落库）";
-            font-size: UiMetrics.caption-font-size;
-            color: #888888;
+            x: UiMetrics.space-16;
+            y: UiMetrics.space-16;
+            text: "设置";
+            font-size: UiMetrics.title-font-size;
+            font-weight: 600;
+            color: Skin.text-primary;
         }
+        Text {
+            x: UiMetrics.space-16;
+            y: UiMetrics.space-16 + UiMetrics.space-32 + UiMetrics.space-4;
+            text: root.note;
+            font-size: UiMetrics.caption-font-size;
+            color: Skin.text-placeholder;
+            overflow: elide;
+            width: parent.width - 2 * UiMetrics.space-16;
+        }
+    }
 
-        for row in root.rows: Rectangle {
-            height: UiMetrics.bottom-bar-height;
-            background: root.theme-dark ? #2c2c2e : #ffffff;
-            border-radius: UiMetrics.corner-radius;
+    settings-view := Flickable {
+        x: 0;
+        y: UiMetrics.page-header-height;
+        width: parent.width;
+        height: parent.height - UiMetrics.page-header-height;
+        viewport-width: self.width;
+        interactive: settings-layout.preferred-height > self.height;
 
-            HorizontalLayout {
-                padding-left: UiMetrics.content-padding-h;
-                padding-right: UiMetrics.content-padding-h;
-                spacing: UiMetrics.content-padding-h;
+        settings-layout := VerticalLayout {
+            x: UiMetrics.space-16;
+            y: 0;
+            width: parent.width - 2 * UiMetrics.space-16;
+            spacing: UiMetrics.space-8;
 
-                Text {
+            for row in root.rows : Rectangle {
+                width: parent.width;
+                // kind：5=分组标题 1=数值滑杆（两行）其余单行。
+                height: row.kind == 5 ? UiMetrics.space-48 : (row.kind == 1 ? UiMetrics.space-48 + UiMetrics.space-24 : UiMetrics.space-48 + UiMetrics.space-8);
+                background: row.kind == 5 ? transparent : Skin.layer-02;
+                border-width: row.kind == 5 ? 0px : UiMetrics.hairline;
+                border-color: Skin.border-subtle;
+
+                // 分组标题（含说明）。
+                if row.kind == 5 : Text {
+                    x: 0;
+                    y: (parent.height - self.height) / 2;
+                    text: row.note == "" ? row.label : row.label + "　" + row.note;
+                    font-size: UiMetrics.ui-font-size;
+                    font-weight: 600;
+                    color: Skin.text-primary;
+                    vertical-alignment: center;
+                }
+
+                // 标签 + 说明（200 像素 列）。
+                if row.kind != 5 : Text {
+                    x: UiMetrics.space-16;
+                    y: UiMetrics.space-8;
+                    width: root.label-width - UiMetrics.space-16;
                     text: row.label;
-                    font-size: UiMetrics.body-font-size;
-                    color: root.theme-dark ? #f0f0f0 : #222222;
-                    vertical-alignment: center;
+                    font-size: UiMetrics.ui-font-size;
+                    color: row.effective ? Skin.text-primary : Skin.text-disabled;
+                    overflow: elide;
                 }
-                Text {
-                    text: row.value;
-                    font-size: UiMetrics.body-font-size;
-                    color: #1890ff;
-                    vertical-alignment: center;
-                }
-                Text {
-                    text: row.effective ? "" : row.note;
+                if row.kind != 5 && row.note != "" : Text {
+                    x: UiMetrics.space-16;
+                    y: UiMetrics.space-8 + UiMetrics.space-16 + UiMetrics.space-4;
+                    width: root.label-width - UiMetrics.space-16;
+                    text: row.note;
                     font-size: UiMetrics.caption-font-size;
-                    color: #d46b08;
+                    color: row.effective ? Skin.text-placeholder : Skin.support-warning;
+                    wrap: word-wrap;
+                    height: self.preferred-height;
+                }
+                // kind 0：字体族（点击循环切换）。
+                if row.kind == 0 : Rectangle {
+                    x: root.control-x;
+                    y: UiMetrics.space-8;
+                    width: UiMetrics.search-field-width;
+                    height: UiMetrics.button-height-compact;
+                    background: Skin.field-01;
+                    border-width: UiMetrics.hairline;
+                    border-color: Skin.border-strong;
+
+                    Text {
+                        x: UiMetrics.space-8;
+                        y: (parent.height - self.height) / 2;
+                        width: parent.width - 3 * UiMetrics.space-8 - UiMetrics.icon-size;
+                        text: row.value;
+                        font-size: UiMetrics.ui-font-size;
+                        color: Skin.text-primary;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    Icon {
+                        x: parent.width - UiMetrics.space-8 - self.width;
+                        y: (parent.height - self.height) / 2;
+                        shape: Icons.chevron-down;
+                        size: UiMetrics.icon-size;
+                        color: Skin.text-secondary;
+                    }
+                    TouchArea {
+                        clicked => {
+                            root.cycle(row.key);
+                        }
+                    }
+                }
+
+                // kind 1：数值滑杆（滑杆 + 数值框 + 边界值）。
+                if row.kind == 1 : SliderBar {
+                    x: root.control-x;
+                    y: UiMetrics.space-8 + UiMetrics.space-8;
+                    width: UiMetrics.search-field-width + UiMetrics.space-48 * 2;
+                    value: row.value-current;
+                    minimum: row.value-min;
+                    maximum: row.value-max;
+                    changed(value) => {
+                        root.set-int(row.key, value);
+                    }
+                }
+                if row.kind == 1 : TextField {
+                    x: root.control-x + UiMetrics.search-field-width + UiMetrics.space-48 * 2 + UiMetrics.space-16;
+                    y: UiMetrics.space-8;
+                    width: UiMetrics.search-field-width - UiMetrics.space-48 * 2;
+                    compact: true;
+                    text: row.value;
+                    label: row.label;
+                    edited(text) => {
+                        root.set-text(row.key, text);
+                    }
+                }
+                if row.kind == 1 : Text {
+                    x: root.control-x;
+                    y: UiMetrics.space-8 + UiMetrics.space-48;
+                    width: UiMetrics.search-field-width + UiMetrics.space-48 * 2;
+                    text: row.range-label;
+                    font-family: "monospace";
+                    font-size: UiMetrics.mono-font-size;
+                    color: Skin.text-placeholder;
+                }
+
+                // kind 2：枚举单选（≤4 项）。
+                if row.kind == 2 : Rectangle {
+                    x: root.control-x;
+                    y: UiMetrics.space-8;
+                    width: parent.width - self.x - UiMetrics.space-16;
+                    height: UiMetrics.space-24;
+
+                    for option[index] in row.options : RadioItem {
+                        x: index * (UiMetrics.space-48 * 2 + UiMetrics.space-24);
+                        y: 0;
+                        width: UiMetrics.space-48 * 2 + UiMetrics.space-24 - UiMetrics.space-8;
+                        caption: option;
+                        checked: index == row.current-index;
+                        selected => {
+                            root.set-index(row.key, index);
+                        }
+                    }
+                }
+
+                // kind 3：布尔开关。
+                if row.kind == 3 : SwitchToggle {
+                    x: root.control-x;
+                    y: UiMetrics.space-8 + UiMetrics.space-8;
+                    checked: row.checked;
+                    toggled(checked) => {
+                        root.toggle(row.key, checked);
+                    }
+                }
+
+                // kind 4：只读文本行（值可能是机器可核对信息）；未生效项带黄色 Tag。
+                if row.kind == 4 && !row.effective : Tag {
+                    x: parent.width - UiMetrics.space-16 - self.width;
+                    y: (parent.height - self.height) / 2;
+                    tone: 3;
+                    text: "暂未生效";
+                }
+                if row.kind == 4 : Text {
+                    x: root.control-x;
+                    y: UiMetrics.space-8;
+                    width: parent.width - self.x - UiMetrics.space-16 - (row.effective ? 0px : (UiMetrics.space-48 + UiMetrics.space-16));
+                    text: row.value;
+                    font-family: row.mono ? "monospace" : "";
+                    font-size: row.mono ? UiMetrics.mono-font-size : UiMetrics.ui-font-size;
+                    color: row.effective ? Skin.text-secondary : Skin.text-disabled;
                     vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-alignment: right;
                 }
-                ActionButton {
-                    caption: "减小";
+
+                // kind 6：动作行（如「清理章节索引与分页缓存…」）。
+                if row.kind == 6 : TextButton {
+                    x: root.control-x;
+                    y: UiMetrics.space-8;
+                    variant: 1;
+                    compact: true;
+                    caption: row.label;
                     activated => {
-                        root.change(row.key, -1);
+                        root.clear-index();
                     }
                 }
-                ActionButton {
-                    caption: "增大";
-                    activated => {
-                        root.change(row.key, 1);
-                    }
+                if row.kind == 6 : Text {
+                    x: root.control-x;
+                    y: UiMetrics.space-8 + UiMetrics.space-16 + UiMetrics.space-4;
+                    width: parent.width - self.x - UiMetrics.space-16;
+                    text: row.note;
+                    font-size: UiMetrics.caption-font-size;
+                    color: Skin.text-placeholder;
+                    overflow: elide;
                 }
+            }
+
+            Rectangle {
+                width: parent.width;
+                height: UiMetrics.space-24;
+                background: transparent;
             }
         }
     }
+
+    // 设置区滚动条（8）。
+    ScrollBar {
+        x: parent.width - UiMetrics.scrollbar-gutter - self.width;
+        y: UiMetrics.page-header-height + UiMetrics.space-8;
+        height: parent.height - UiMetrics.page-header-height - 2 * UiMetrics.space-8;
+        ratio: settings-view.viewport-y / max(UiMetrics.hairline, settings-view.viewport-height - settings-view.height);
+        handle-ratio: min(1, settings-view.height / max(UiMetrics.hairline, settings-view.viewport-height));
+        seek(ratio) => {
+            settings-view.viewport-y = max(0px, ratio * (settings-view.viewport-height - settings-view.height));
+        }
+    }
 }
 
-// 过渡页（导入中 / 错误）：只显示 Rust 投影的标题与说明。
-component PlaceholderPage inherits Rectangle {
-    in property <string> title: "";
-    in property <string> message: "";
-    in property <bool> theme-dark: false;
+// ---------------------------------------------------------------------------
+// S11：导入中 / S12：错误态
+// ---------------------------------------------------------------------------
+
+component ImportingPage inherits Rectangle {
+    in property <string> file-name: "";
+    in property <string> file-size: "";
+    in property <int> percent: 0;
+    in property <[StepRow]> steps: [];
+    in property <string> note: "";
+    in property <string> status: "";
 
     background: transparent;
 
     VerticalLayout {
-        padding-left: UiMetrics.content-padding-h;
-        padding-right: UiMetrics.content-padding-h;
-        padding-top: UiMetrics.content-padding-v;
-        spacing: UiMetrics.caption-font-size;
+        x: (parent.width - self.width) / 2;
+        y: UiMetrics.space-48;
+        width: min(parent.width - 2 * UiMetrics.space-16, UiMetrics.card-width * 2);
+        spacing: UiMetrics.space-16;
+        alignment: start;
 
-        Text {
-            text: root.title;
-            font-size: UiMetrics.title-font-size;
-            color: root.theme-dark ? #f0f0f0 : #222222;
+        Rectangle {
+            height: UiMetrics.space-32;
+            background: transparent;
+
+            Icon {
+                x: (parent.width - self.width) / 2;
+                shape: Icons.book;
+                size: UiMetrics.space-32;
+                color: Skin.primary;
+            }
         }
         Text {
-            text: root.message;
-            font-size: UiMetrics.body-font-size;
-            color: root.theme-dark ? #b0b0b0 : #555555;
+            text: "正在导入…";
+            font-size: UiMetrics.heading-font-size;
+            font-weight: 600;
+            color: Skin.text-primary;
+            horizontal-alignment: center;
+            width: parent.width;
+        }
+        Text {
+            text: root.file-name + "　" + root.file-size;
+            font-family: "monospace";
+            font-size: UiMetrics.mono-font-size;
+            color: Skin.text-secondary;
+            horizontal-alignment: center;
+            width: parent.width;
+            overflow: elide;
+        }
+        Rectangle {
+            width: parent.width;
+            height: UiMetrics.progress-bar-height + UiMetrics.space-4;
+            background: Skin.border-subtle;
+
+            Rectangle {
+                x: 0;
+                y: 0;
+                width: parent.width * min(100, max(0, root.percent)) / 100;
+                height: UiMetrics.progress-bar-height;
+                background: Skin.primary;
+            }
+        }
+        Text {
+            text: root.percent + "%";
+            font-family: "monospace";
+            font-size: UiMetrics.mono-font-size;
+            color: Skin.text-secondary;
+            horizontal-alignment: center;
+            width: parent.width;
+        }
+        for step in root.steps : HorizontalLayout {
+            width: parent.width;
+            height: UiMetrics.space-24;
+            spacing: UiMetrics.space-8;
+
+            Rectangle {
+                width: UiMetrics.space-16;
+                height: UiMetrics.space-16;
+                border-radius: self.height / 2;
+                background: step.state == 2 ? Skin.support-success : (step.state == 1 ? Skin.primary : Skin.border-subtle);
+            }
+            Text {
+                text: step.label;
+                font-size: UiMetrics.ui-font-size;
+                color: step.state == 0 ? Skin.text-placeholder : Skin.text-primary;
+                font-weight: step.state == 1 ? 600 : 400;
+                vertical-alignment: center;
+            }
+        }
+        Text {
+            text: root.note;
+            font-size: UiMetrics.caption-font-size;
+            color: Skin.text-placeholder;
             wrap: word-wrap;
+            height: self.preferred-height;
+            width: parent.width;
+        }
+        Text {
+            text: root.status;
+            font-size: UiMetrics.caption-font-size;
+            color: Skin.text-secondary;
+            wrap: word-wrap;
+            height: self.preferred-height;
+            width: parent.width;
         }
     }
 }
+
+component ErrorPage inherits Rectangle {
+    in property <string> title: "";
+    in property <string> reason: "";
+    in property <string> details: "";
+    in-out property <bool> details-open: false;
+    callback retry();
+    callback back();
+
+    background: transparent;
+
+    VerticalLayout {
+        x: (parent.width - self.width) / 2;
+        y: UiMetrics.space-48;
+        width: min(parent.width - 2 * UiMetrics.space-16, UiMetrics.card-width * 2);
+        spacing: UiMetrics.space-16;
+        alignment: start;
+
+        Rectangle {
+            height: UiMetrics.space-32;
+            background: transparent;
+
+            Icon {
+                x: (parent.width - self.width) / 2;
+                shape: Icons.error;
+                size: UiMetrics.space-32;
+                color: Skin.support-error;
+            }
+        }
+        Text {
+            text: root.title;
+            font-size: UiMetrics.heading-font-size;
+            font-weight: 600;
+            color: Skin.text-primary;
+            horizontal-alignment: center;
+            width: parent.width;
+        }
+        Text {
+            text: root.reason;
+            font-size: UiMetrics.ui-font-size;
+            color: Skin.text-secondary;
+            horizontal-alignment: center;
+            width: parent.width;
+            wrap: word-wrap;
+            height: self.preferred-height;
+        }
+        HorizontalLayout {
+            alignment: center;
+            spacing: UiMetrics.space-8;
+            height: UiMetrics.button-height;
+
+            TextButton {
+                variant: 0;
+                caption: "重新选择文件…";
+                activated => {
+                    root.retry();
+                }
+            }
+            TextButton {
+                variant: 2;
+                caption: "返回书架";
+                activated => {
+                    root.back();
+                }
+            }
+        }
+        TextButton {
+            x: 0;
+            variant: 2;
+            compact: true;
+            caption: root.details-open ? "收起技术详情" : "技术详情";
+            activated => {
+                root.details-open = !root.details-open;
+            }
+        }
+        if root.details-open : Text {
+            text: root.details;
+            font-family: "monospace";
+            font-size: UiMetrics.mono-font-size;
+            color: Skin.text-placeholder;
+            wrap: word-wrap;
+            height: self.preferred-height;
+            width: parent.width;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 主窗口：UI Shell 顶栏 + 页面切换 + 状态栏 + 弹窗 + Toast
+// ---------------------------------------------------------------------------
 
 export component AppWindow inherits Window {
     title: "novel-reader";
-    // 用 `preferred-*` 而非固定 `width/height`：**固定尺寸会被 Slint 当作「不可缩放窗口」**
-    // （无法最大化、无法拖边框改大小 —— 2026-09-30 真实缺陷）。
-    // 窗口尺寸变化由 Rust 侧 `viewport-changed` → 重排处理：当前位置按**字节偏移**保持，
-    // 只改变每页容纳的内容长度，不需要计算总页数。
     preferred-width: UiMetrics.default-window-width;
     preferred-height: UiMetrics.default-window-height;
     min-width: UiMetrics.min-window-width;
     min-height: UiMetrics.min-window-height;
-    background: root.theme-dark ? #1c1c1e : #f2f3f5;
+    background: Skin.background;
 
     // ---- Rust → UI（只读投影；Rust 是唯一状态源）----
     in property <int> current-screen: 0;
-    in property <string> page-title: "";
-    in property <string> status-text: "";
     in property <string> app-version: "";
     in property <bool> theme-dark: false;
-    in property <[BookRow]> book-rows: [];
-    in property <string> shelf-hint: "";
-    in property <string> reader-book-title: "";
-    in property <string> reader-chapter-title: "";
-    in property <string> reader-chapter-label: "";
-    in property <string> reader-page-text: "";
+    // 状态栏
+    in property <string> status-text: "";
+    in property <string> status-chapter: "";
+    in property <string> status-page: "";
+    in property <string> status-percent: "";
+    in property <string> status-meta: "";
+    in property <string> status-reflow: "";
+    // 阅读页
+    in property <string> reader-heading: "";
+    in property <bool> reader-toolbar-open: false;
+    in property <bool> reader-immersive: false;
+    in property <bool> reader-floating-toolbar: false;
+    in property <bool> reader-gesture-mode: false;
     in property <[string]> reader-page-lines: [];
     in property <length> reader-line-pitch: 0px;
     in property <length> reader-body-font-size: 0px;
     in property <string> reader-body-font-family: "";
-    in property <string> reader-page-label: "";
-    in property <bool> reader-menu-open: false;
-    // 重排状态（DT3B）：重排期间必须让用户看到「正在重排…」，文案由 Rust 提供。
-    in property <string> reader-reflow-status: "";
-    // DT4：进度状态 / 目录 / 书签 / 手势模式（全部由 Rust 投影）。
-    in property <string> reader-progress-status: "";
-    in property <bool> reader-gesture-mode: false;
+    in property <length> reader-column-x: 0px;
+    in property <length> reader-column-y: 0px;
+    in property <length> reader-column-width: 0px;
+    in property <length> reader-column-height: 0px;
+    in property <int> reader-progress-permille: 0;
+    in property <string> reader-shortcut-prev: "";
+    in property <string> reader-shortcut-next: "";
+    in property <string> reader-shortcut-immersive: "";
+    // 目录面板
     in property <bool> reader-toc-open: false;
     in property <[TocRow]> reader-toc-rows: [];
     in property <float> reader-toc-ratio: 0;
     in property <float> reader-toc-handle-ratio: 0.2;
+    in property <string> reader-toc-count: "";
+    in property <string> reader-toc-readout: "";
+    in property <string> reader-toc-search: "";
+    // 书签面板
     in property <bool> reader-marks-open: false;
     in property <[MarkRow]> reader-mark-rows: [];
-    in property <int> reader-mark-total: 0;
+    in property <string> reader-mark-count: "";
+    in property <string> reader-mark-readout: "";
     in property <string> reader-rename-text: "";
-    // 信息区附加行 + 通用选项面板（具体语义全部由 Rust 投影）。
-    in property <string> reader-meta-label: "";
-    in property <bool> reader-choice-open: false;
-    in property <[ChoiceRow]> reader-choice-rows: [];
-    // 沉浸阅读（隐藏顶栏 / 底部状态栏与阅读菜单，正文区使用整个窗口；状态由 Rust 持有）。
-    in property <bool> reader-immersive: false;
-    // 阅读进度读数（按字节位置，如 `42.3%`；页码不属于排版签名，故不作为进度）。
-    in property <string> reader-progress-percent: "";
-    // 真实字体度量（Slint 公开属性 `font-metrics`）：Rust 测量侧用它确定行盒下限，
-    // 保证「测量口径 = 渲染口径」而不是靠猜字号倍数。
-    out property <length> body-ascent: metrics-probe.font-metrics.ascent;
-    out property <length> body-descent: metrics-probe.font-metrics.descent;
+    in property <string> reader-mark-search: "";
+    // 选项（S8）与弹窗
+    in property <int> dialog: 0;
+    in property <string> confirm-title: "";
+    in property <string> confirm-body: "";
+    in property <string> confirm-note: "";
+    in property <string> confirm-checkbox-label: "";
+    in property <string> confirm-label: "";
+    in property <bool> confirm-danger: false;
+    in property <string> choice-title: "";
+    in property <string> choice-meta: "";
+    in property <[ChoiceRow]> choice-rows: [];
+    in property <int> choice-current-index: 0;
+    in property <[ShortcutEntry]> shortcut-rows: [];
+    in property <string> rename-title: "";
+    in property <string> rename-value: "";
+    // 书架
+    in property <[BookRow]> book-rows: [];
+    in property <bool> shelf-empty: false;
+    in property <string> shelf-empty-title: "";
+    in property <string> shelf-empty-desc: "";
+    in property <[string]> shelf-empty-notes: [];
+    in property <int> shelf-view: 0;
+    in property <string> shelf-search: "";
+    in property <string> shelf-sort-value: "";
+    in property <string> shelf-count: "";
+    in property <bool> shelf-notice: false;
+    in property <string> shelf-notice-title: "";
+    in property <string> shelf-notice-body: "";
+    in property <int> shelf-menu-index: -1;
+    // 设置
     in property <[SettingsRow]> settings-rows: [];
-    in property <string> settings-interaction-mode: "";
-    in property <bool> settings-persisted: false;
-    in property <string> placeholder-title: "";
-    in property <string> placeholder-message: "";
+    in property <string> settings-note: "";
+    in property <string> settings-data-path: "";
+    // 导入 / 错误
+    in property <string> import-file: "";
+    in property <string> import-size: "";
+    in property <int> import-percent: 0;
+    in property <[StepRow]> import-steps: [];
+    in property <string> import-note: "";
+    in property <string> error-title: "";
+    in property <string> error-reason: "";
+    in property <string> error-details: "";
+    in property <string> placeholder-status: "";
+    // Toast
+    in property <bool> toast-visible: false;
+    in property <string> toast-text: "";
+    in property <string> toast-action: "";
 
     // ---- UI → Rust（只上报意图，页面语义由 Rust 决定）----
     callback navigate(int);
+    callback theme-toggle();
+    callback shortcuts-toggle();
+    callback quit-requested();
     callback reader-prev-page();
     callback reader-next-page();
-    callback toggle-reader-menu();
-    callback settings-change(string, int);
-    callback import-txt();
-    callback relink-book(string);
-    // 书架行「阅读」：按书籍 id 打开阅读页（与 `NR_READER_BOOK` 同一函数）。
-    callback reader-open-book(string);
-    // DT4：进度 / 目录 / 书签入口（语义全部在 Rust：位置来自 ContentPosition）。
-    callback save-progress();
+    callback toggle-reader-toolbar();
+    callback reader-immersive-toggle();
+    callback reader-save-progress();
+    callback reader-progress-seek(float);
+    callback reader-zone-hover(bool);
+    callback reader-options-toggle();
     callback toc-toggle();
     callback toc-scroll(int);
-    callback chapter-jump(string);
-    // 目录滚动条与滚轮（比例定位；滚轮在目录面板内消费，不翻正文）。
     callback toc-wheel(length);
     callback toc-seek(length, length);
+    callback toc-search-edited(string);
+    callback chapter-jump(string);
     callback marks-toggle();
     callback marks-scroll(int);
+    callback mark-search-edited(string);
     callback mark-add();
     callback mark-select(string);
     callback mark-jump(string);
     callback mark-rename(string);
     callback mark-delete(string);
+    callback mark-delete-confirm(string);
+    callback mark-delete-cancel();
     callback rename-text-edited(string);
     callback choice-toggle();
     callback choice-select(string);
-    callback immersive-toggle();
-    // DT8：键盘 / 滚轮输入（阅读页 `FocusScope.key-pressed` 与正文区 `scroll-event` 的落点）。
+    callback overlay-click();
     callback key-input(string, bool);
     callback wheel-input(length, length);
-    // 窗口映射完成或尺寸变化（含 DPI 比例变化导致的逻辑尺寸变化）：
-    // Rust 侧据此在**取得真实尺寸之后**派生版式签名并重新分页。
+    // 书架
+    callback shelf-import();
+    callback shelf-search-edited(string);
+    callback shelf-view-set(int);
+    callback shelf-sort-cycle();
+    callback shelf-open-book(string);
+    callback shelf-row-menu(int);
+    callback shelf-row-action(string, string);
+    callback shelf-relink-all();
+    callback shelf-notice-dismiss();
+    // 设置
+    callback settings-cycle(string);
+    callback settings-set-int(string, int);
+    callback settings-set-text(string, string);
+    callback settings-set-index(string, int);
+    callback settings-toggle(string, bool);
+    callback settings-clear-index();
+    // 弹窗与 Toast
+    callback dialog-cancel();
+    callback dialog-confirm(bool);
+    callback dialog-choice-apply(int);
+    callback dialog-rename-save(string);
+    callback toast-action-clicked();
+    // 导入 / 错误
+    callback import-retry();
+    callback import-back();
+    // 窗口映射完成或尺寸变化。
     callback viewport-changed(length, length);
-    callback quit-requested();
 
     // 只在尺寸真的变化时上报（事件循环启动前的 0×0 不会触发）。
     changed width => {
@@ -1006,140 +3267,196 @@ export component AppWindow inherits Window {
     }
 
     // 字体度量探针：与正文逐行 Text 使用完全相同的字体属性，位置在窗口之外（不可见）。
-    // 它不是装饰元素，而是「测量口径 = 渲染口径」的运行时依据（Slint 公开 API）。
     metrics-probe := Text {
-        x: 0 - root.width;
-        y: 0 - root.height;
+        x: 0px - root.width;
+        y: 0px - root.height;
         width: root.width;
         height: root.reader-body-font-size;
         text: "M";
         font-family: root.reader-body-font-family;
         font-size: root.reader-body-font-size;
     }
+    out property <length> body-ascent: metrics-probe.font-metrics.ascent;
+    out property <length> body-descent: metrics-probe.font-metrics.descent;
 
-    // 顶栏：高度来自 UiMetrics.top-bar-height。沉浸阅读时整条隐藏（正文区占满窗口）。
+    // ---- 顶栏 UI Shell（48；深色 #161616，白字；沉浸态隐藏）----
     Rectangle {
         x: 0;
         y: 0;
         width: parent.width;
         height: UiMetrics.top-bar-height;
         visible: !root.reader-immersive;
-        background: root.theme-dark ? #2c2c2e : #ffffff;
+        background: Skin.header;
 
         HorizontalLayout {
-            padding-left: UiMetrics.content-padding-h;
-            padding-right: UiMetrics.content-padding-h;
-            spacing: UiMetrics.caption-font-size;
+            x: UiMetrics.space-16;
+            y: 0;
+            width: parent.width - 2 * UiMetrics.space-16;
+            height: parent.height;
+            spacing: UiMetrics.space-4;
             alignment: start;
 
-            // 标题占「剩余宽度」并可省略：长标题不得把右侧导航按钮挤出窗口（2026-09-29 真实缺陷）。
-            Rectangle {
-                horizontal-stretch: 1;
-                min-width: 0px;
-                clip: true;
-                background: transparent;
-
-                Text {
-                    text: root.page-title;
-                    font-size: UiMetrics.title-font-size;
-                    color: root.theme-dark ? #f0f0f0 : #222222;
-                    vertical-alignment: center;
-                    overflow: elide;
-                    width: 100%;
-                }
+            // 品牌（16 图标 + 15/600 文字）。
+            Icon {
+                shape: Icons.book;
+                size: UiMetrics.icon-size;
+                color: Skin.header-text;
             }
-            NavTab {
+            Text {
+                text: "novel-reader";
+                font-size: UiMetrics.brand-font-size;
+                font-weight: 600;
+                color: Skin.header-text;
+                vertical-alignment: center;
+            }
+            Rectangle {
+                width: UiMetrics.space-16;
+                background: transparent;
+            }
+            // 全局导航（项高 48；选中 600 + 底部 2 像素 主色）。
+            NavItem {
                 caption: "书架";
                 active: root.current-screen == Screens.shelf;
                 activated => {
                     root.navigate(Screens.shelf);
                 }
             }
-            NavTab {
+            NavItem {
                 caption: "阅读";
                 active: root.current-screen == Screens.reader;
                 activated => {
                     root.navigate(Screens.reader);
                 }
             }
-            NavTab {
+            NavItem {
                 caption: "设置";
                 active: root.current-screen == Screens.settings;
                 activated => {
                     root.navigate(Screens.settings);
                 }
             }
+
+            Rectangle { horizontal-stretch: 1; background: transparent; }
+
+            // 全局动作：主题 / 快捷键 / 退出。
+            IconButton {
+                caption: "切换主题";
+                on-header: true;
+                shape: Icons.sun;
+                tip-below: true;
+                activated => {
+                    root.theme-toggle();
+                }
+            }
+            IconButton {
+                caption: "快捷键说明";
+                on-header: true;
+                shape: Icons.help;
+                tip-below: true;
+                activated => {
+                    root.shortcuts-toggle();
+                }
+            }
+            IconButton {
+                caption: "退出";
+                on-header: true;
+                shape: Icons.power;
+                tip-below: true;
+                activated => {
+                    root.quit-requested();
+                }
+            }
         }
     }
 
-    // 书架页。
-    if (root.current-screen == Screens.shelf) : ShelfPage {
+    // ---- 页面 ----
+    if root.current-screen == Screens.shelf : ShelfPage {
         x: 0;
         y: UiMetrics.top-bar-height;
         width: parent.width;
-        height: parent.height - UiMetrics.top-bar-height - UiMetrics.bottom-bar-height;
+        height: parent.height - UiMetrics.top-bar-height - UiMetrics.status-bar-height;
         rows: root.book-rows;
-        hint: root.shelf-hint;
-        theme-dark: root.theme-dark;
+        is-empty: root.shelf-empty;
+        empty-title: root.shelf-empty-title;
+        empty-desc: root.shelf-empty-desc;
+        empty-notes: root.shelf-empty-notes;
+        view: root.shelf-view;
+        search: root.shelf-search;
+        sort-value: root.shelf-sort-value;
+        count-label: root.shelf-count;
+        notice: root.shelf-notice;
+        notice-title: root.shelf-notice-title;
+        notice-body: root.shelf-notice-body;
+        menu-index: root.shelf-menu-index;
         import-txt => {
-            root.import-txt();
+            root.shelf-import();
         }
-        relink-book(book-id) => {
-            root.relink-book(book-id);
+        search-edited(text) => {
+            root.shelf-search-edited(text);
         }
-        open-book(book-id) => {
-            root.reader-open-book(book-id);
+        view-set(view) => {
+            root.shelf-view-set(view);
+        }
+        sort-cycle => {
+            root.shelf-sort-cycle();
+        }
+        open-book(id) => {
+            root.shelf-open-book(id);
+        }
+        row-menu(index) => {
+            root.shelf-row-menu(index);
+        }
+        row-action(action, id) => {
+            root.shelf-row-action(action, id);
+        }
+        relink-all => {
+            root.shelf-relink-all();
+        }
+        notice-dismiss => {
+            root.shelf-notice-dismiss();
         }
     }
 
-    // 阅读页。
-    if (root.current-screen == Screens.reader) : ReaderPage {
+    if root.current-screen == Screens.reader : ReaderPage {
         x: 0;
         y: root.reader-immersive ? 0px : UiMetrics.top-bar-height;
         width: parent.width;
-        height: root.reader-immersive ? parent.height : parent.height - UiMetrics.top-bar-height - UiMetrics.bottom-bar-height;
+        height: root.reader-immersive ? parent.height : parent.height - UiMetrics.top-bar-height - UiMetrics.status-bar-height;
+        heading: root.reader-heading;
+        toolbar-open: root.reader-toolbar-open;
         immersive: root.reader-immersive;
-        immersive-toggle => {
-            root.immersive-toggle();
-        }
-        book-title: root.reader-book-title;
-        chapter-title: root.reader-chapter-title;
-        chapter-label: root.reader-chapter-label;
-        page-text: root.reader-page-text;
+        show-floating: root.reader-floating-toolbar;
+        gesture-mode: root.reader-gesture-mode;
         page-lines: root.reader-page-lines;
         line-pitch: root.reader-line-pitch;
         body-font-size: root.reader-body-font-size;
         body-font-family: root.reader-body-font-family;
-        page-label: root.reader-page-label;
-        menu-open: root.reader-menu-open;
-        theme-dark: root.theme-dark;
-        gesture-mode: root.reader-gesture-mode;
-        progress-status: root.reader-progress-status;
+        column-x: root.reader-column-x;
+        column-y: root.reader-column-y;
+        column-width: root.reader-column-width;
+        column-height: root.reader-column-height;
+        progress-permille: root.reader-progress-permille;
+        shortcut-prev: root.reader-shortcut-prev;
+        shortcut-next: root.reader-shortcut-next;
+        shortcut-immersive: root.reader-shortcut-immersive;
         toc-open: root.reader-toc-open;
         toc-rows: root.reader-toc-rows;
         toc-ratio: root.reader-toc-ratio;
         toc-handle-ratio: root.reader-toc-handle-ratio;
-        toc-wheel(delta) => {
-            root.toc-wheel(delta);
-        }
-        toc-seek(pointer-y, track-height) => {
-            root.toc-seek(pointer-y, track-height);
-        }
+        toc-count: root.reader-toc-count;
+        toc-readout: root.reader-toc-readout;
+        toc-search: root.reader-toc-search;
         marks-open: root.reader-marks-open;
         mark-rows: root.reader-mark-rows;
-        mark-total: root.reader-mark-total;
+        mark-count: root.reader-mark-count;
+        mark-readout: root.reader-mark-readout;
         rename-text: root.reader-rename-text;
-        meta-label: root.reader-meta-label;
-        choice-open: root.reader-choice-open;
-        choice-rows: root.reader-choice-rows;
-        choice-toggle => {
-            root.choice-toggle();
+        mark-search: root.reader-mark-search;
+        toolbar-toggle => {
+            root.toggle-reader-toolbar();
         }
-        choice-select(name) => {
-            root.choice-select(name);
-        }
-        toggle-menu => {
-            root.toggle-reader-menu();
+        immersive-toggle => {
+            root.reader-immersive-toggle();
         }
         prev-page => {
             root.reader-prev-page();
@@ -1148,13 +3465,28 @@ export component AppWindow inherits Window {
             root.reader-next-page();
         }
         save-progress => {
-            root.save-progress();
+            root.reader-save-progress();
+        }
+        progress-seek(ratio) => {
+            root.reader-progress-seek(ratio);
+        }
+        zone-hover(hovered) => {
+            root.reader-zone-hover(hovered);
+        }
+        options-clicked => {
+            root.reader-options-toggle();
         }
         toc-toggle => {
             root.toc-toggle();
         }
-        toc-scroll(delta) => {
-            root.toc-scroll(delta);
+        toc-wheel(delta) => {
+            root.toc-wheel(delta);
+        }
+        toc-seek(pointer-y, track-height) => {
+            root.toc-seek(pointer-y, track-height);
+        }
+        toc-search-edited(text) => {
+            root.toc-search-edited(text);
         }
         chapter-jump(sequence) => {
             root.chapter-jump(sequence);
@@ -1164,6 +3496,9 @@ export component AppWindow inherits Window {
         }
         marks-scroll(delta) => {
             root.marks-scroll(delta);
+        }
+        mark-search-edited(text) => {
+            root.mark-search-edited(text);
         }
         mark-add => {
             root.mark-add();
@@ -1180,8 +3515,17 @@ export component AppWindow inherits Window {
         mark-delete(id) => {
             root.mark-delete(id);
         }
+        mark-delete-confirm(id) => {
+            root.mark-delete-confirm(id);
+        }
+        mark-delete-cancel => {
+            root.mark-delete-cancel();
+        }
         rename-text-edited(text) => {
             root.rename-text-edited(text);
+        }
+        overlay-click => {
+            root.overlay-click();
         }
         key-input(text, text-input-focused) => {
             root.key-input(text, text-input-focused);
@@ -1191,157 +3535,234 @@ export component AppWindow inherits Window {
         }
     }
 
-    // 设置页。
-    if (root.current-screen == Screens.settings) : SettingsPage {
+    if root.current-screen == Screens.settings : SettingsPage {
         x: 0;
         y: UiMetrics.top-bar-height;
         width: parent.width;
-        height: parent.height - UiMetrics.top-bar-height - UiMetrics.bottom-bar-height;
+        height: parent.height - UiMetrics.top-bar-height - UiMetrics.status-bar-height;
         rows: root.settings-rows;
-        interaction-mode: root.settings-interaction-mode;
-        persisted: root.settings-persisted;
-        theme-dark: root.theme-dark;
-        change(key, delta) => {
-            root.settings-change(key, delta);
+        note: root.settings-note;
+        data-path: root.settings-data-path;
+        cycle(key) => {
+            root.settings-cycle(key);
+        }
+        set-int(key, value) => {
+            root.settings-set-int(key, value);
+        }
+        set-text(key, value) => {
+            root.settings-set-text(key, value);
+        }
+        set-index(key, index) => {
+            root.settings-set-index(key, index);
+        }
+        toggle(key, checked) => {
+            root.settings-toggle(key, checked);
+        }
+        clear-index => {
+            root.settings-clear-index();
+        }
+        clear-index-clicked => {
+            root.settings-clear-index();
         }
     }
 
-    // 过渡页（导入中 / 错误）。
-    if (root.current-screen == Screens.importing || root.current-screen == Screens.error) : PlaceholderPage {
+    if root.current-screen == Screens.importing : ImportingPage {
         x: 0;
         y: UiMetrics.top-bar-height;
         width: parent.width;
-        height: parent.height - UiMetrics.top-bar-height - UiMetrics.bottom-bar-height;
-        title: root.placeholder-title;
-        message: root.placeholder-message;
-        theme-dark: root.theme-dark;
+        height: parent.height - UiMetrics.top-bar-height - UiMetrics.status-bar-height;
+        file-name: root.import-file;
+        file-size: root.import-size;
+        percent: root.import-percent;
+        steps: root.import-steps;
+        note: root.import-note;
+        status: root.placeholder-status;
     }
 
-    // 底部状态栏：高度来自 UiMetrics.bottom-bar-height。沉浸阅读时整条隐藏。
+    if root.current-screen == Screens.error : ErrorPage {
+        x: 0;
+        y: UiMetrics.top-bar-height;
+        width: parent.width;
+        height: parent.height - UiMetrics.top-bar-height - UiMetrics.status-bar-height;
+        title: root.error-title;
+        reason: root.error-reason;
+        details: root.error-details;
+        retry => {
+            root.import-retry();
+        }
+        back => {
+            root.import-back();
+        }
+    }
+
+    // ---- 状态栏（32；信息 + 读数 + 翻页图标；沉浸态隐藏）----
     Rectangle {
         x: 0;
-        y: parent.height - UiMetrics.bottom-bar-height;
+        y: parent.height - UiMetrics.status-bar-height;
         width: parent.width;
-        height: UiMetrics.bottom-bar-height;
+        height: UiMetrics.status-bar-height;
         visible: !root.reader-immersive;
-        background: root.theme-dark ? #2c2c2e : #e6e6e6;
+        background: Skin.layer-01;
 
+        Rectangle {
+            x: 0;
+            y: 0;
+            width: parent.width;
+            height: UiMetrics.hairline;
+            background: Skin.border-subtle;
+        }
         HorizontalLayout {
-            padding-left: UiMetrics.content-padding-h;
-            padding-right: UiMetrics.content-padding-h;
-            spacing: UiMetrics.caption-font-size;
+            x: UiMetrics.space-16;
+            y: 0;
+            width: parent.width - 2 * UiMetrics.space-16;
+            height: parent.height;
+            spacing: UiMetrics.space-8;
             alignment: start;
 
-            // 信息区占「剩余宽度」并在必要时裁切/省略：信息再多也不得把右侧按钮挤出窗口
-            // （2026-09-29 真实缺陷：状态/章节/页码等串成一行，按钮被顶到窗口外无法点击）。
-            Rectangle {
+            Text {
+                text: root.status-text;
+                font-size: UiMetrics.caption-font-size;
+                color: Skin.text-secondary;
+                vertical-alignment: center;
                 horizontal-stretch: 1;
-                min-width: 0px;
-                clip: true;
-                background: transparent;
-
-                HorizontalLayout {
-                    spacing: UiMetrics.caption-font-size;
-                    alignment: start;
-
-                    Text {
-                        text: root.status-text;
-                        font-size: UiMetrics.caption-font-size;
-                        color: root.theme-dark ? #d0d0d0 : #333333;
-                        vertical-alignment: center;
-                        // 状态文本最先让位（其余信息保持自然宽度，超出部分由外层裁切）。
-                        horizontal-stretch: 1;
-                        overflow: elide;
-                    }
-                    Text {
-                        text: root.reader-chapter-label;
-                        font-size: UiMetrics.caption-font-size;
-                        color: #888888;
-                        vertical-alignment: center;
-                    }
-                    Text {
-                        text: root.reader-page-label;
-                        font-size: UiMetrics.caption-font-size;
-                        color: #888888;
-                        vertical-alignment: center;
-                    }
-                    // 阅读进度（按字节位置；与「第 N 页」并列显示，切章/改字号都不会退回 0）。
-                    Text {
-                        text: root.reader-progress-percent;
-                        font-size: UiMetrics.caption-font-size;
-                        color: #888888;
-                        vertical-alignment: center;
-                        visible: root.reader-progress-percent != "";
-                    }
-                    // 信息区附加行（Rust 投影的文本，如「编码 GBK（手动）」；界面不解释其含义）。
-                    Text {
-                        text: root.reader-meta-label;
-                        font-size: UiMetrics.caption-font-size;
-                        color: #888888;
-                        vertical-alignment: center;
-                        visible: root.reader-meta-label != "";
-                    }
-                    // 重排状态（DT3B）：有内容时才显示，避免常态占用状态栏。
-                    Text {
-                        text: root.reader-reflow-status;
-                        font-size: UiMetrics.caption-font-size;
-                        color: #d46b08;
-                        vertical-alignment: center;
-                        visible: root.reader-reflow-status != "";
-                    }
-                    Text {
-                        text: root.app-version;
-                        font-size: UiMetrics.caption-font-size;
-                        color: #888888;
-                        vertical-alignment: center;
-                    }
-                }
+                overflow: elide;
             }
-            // 手势模式下隐藏常驻翻页按钮条（正文左右区域点击翻页）。
-            ActionButton {
+            Text {
+                text: root.status-reflow;
+                font-size: UiMetrics.caption-font-size;
+                color: Skin.support-warning;
+                vertical-alignment: center;
+                visible: root.status-reflow != "";
+            }
+            Text {
+                text: root.status-chapter;
+                font-family: "monospace";
+                font-size: UiMetrics.mono-font-size;
+                color: Skin.text-secondary;
+                vertical-alignment: center;
+                visible: root.current-screen == Screens.reader && !root.reader-immersive;
+            }
+            Text {
+                text: root.status-page;
+                font-family: "monospace";
+                font-size: UiMetrics.mono-font-size;
+                color: Skin.text-secondary;
+                vertical-alignment: center;
+                visible: root.current-screen == Screens.reader && !root.reader-immersive;
+            }
+            Text {
+                text: root.status-percent;
+                font-family: "monospace";
+                font-size: UiMetrics.mono-font-size;
+                color: Skin.text-secondary;
+                vertical-alignment: center;
+                visible: root.current-screen == Screens.reader && !root.reader-immersive && root.status-percent != "";
+            }
+            if root.status-meta != "" : Tag {
+                tone: 1;
+                text: root.status-meta;
+            }
+            Text {
+                text: root.app-version;
+                font-family: "monospace";
+                font-size: UiMetrics.mono-font-size;
+                color: Skin.text-placeholder;
+                vertical-alignment: center;
+                visible: root.width >= UiMetrics.breakpoint-narrow;
+            }
+            IconButton {
+                compact: true;
                 caption: "上一页";
-                visible: !root.reader-gesture-mode;
+                shortcut: root.reader-shortcut-prev;
+                shape: Icons.rewind;
+                visible: root.current-screen == Screens.reader && !root.reader-gesture-mode;
                 activated => {
                     root.reader-prev-page();
                 }
             }
-            ActionButton {
+            IconButton {
+                compact: true;
                 caption: "下一页";
-                visible: !root.reader-gesture-mode;
+                shortcut: root.reader-shortcut-next;
+                shape: Icons.forward;
+                visible: root.current-screen == Screens.reader && !root.reader-gesture-mode;
                 activated => {
                     root.reader-next-page();
                 }
             }
-            ActionButton {
-                caption: "阅读菜单";
-                activated => {
-                    root.toggle-reader-menu();
-                }
-            }
-            ActionButton {
-                caption: "目录";
-                activated => {
-                    root.toc-toggle();
-                }
-            }
-            ActionButton {
-                caption: "书签";
-                activated => {
-                    root.marks-toggle();
-                }
-            }
-            ActionButton {
-                caption: "保存进度";
-                activated => {
-                    root.save-progress();
-                }
-            }
-            ActionButton {
-                caption: "退出";
-                activated => {
-                    root.quit-requested();
-                }
-            }
+        }
+    }
+
+    // ---- 弹窗（S8 / S13 / S14 / S15）----
+    if root.dialog == 1 : ConfirmDialog {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        title: root.confirm-title;
+        body: root.confirm-body;
+        note: root.confirm-note;
+        checkbox-label: root.confirm-checkbox-label;
+        confirm-label: root.confirm-label;
+        danger: root.confirm-danger;
+        cancelled => {
+            root.dialog-cancel();
+        }
+        confirmed(checked) => {
+            root.dialog-confirm(checked);
+        }
+    }
+    if root.dialog == 2 : ShortcutsDialog {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        rows: root.shortcut-rows;
+        dismissed => {
+            root.dialog-cancel();
+        }
+    }
+    if root.dialog == 3 : ChoiceDialog {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        title: root.choice-title;
+        meta: root.choice-meta;
+        rows: root.choice-rows;
+        initial-index: root.choice-current-index;
+        cancelled => {
+            root.dialog-cancel();
+        }
+        applied(index) => {
+            root.dialog-choice-apply(index);
+        }
+    }
+    if root.dialog == 4 : RenameDialog {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        title: root.rename-title;
+        label: "书架显示名";
+        initial-value: root.rename-value;
+        cancelled => {
+            root.dialog-cancel();
+        }
+        saved(text) => {
+            root.dialog-rename-save(text);
+        }
+    }
+
+    // ---- Toast（右下；Rust 一次性定时器 3s 清除）----
+    if root.toast-visible : Toast {
+        x: parent.width - self.width - UiMetrics.space-24;
+        y: parent.height - self.height - UiMetrics.status-bar-height - UiMetrics.space-24;
+        text: root.toast-text;
+        action-label: root.toast-action;
+        activated => {
+            root.toast-action-clicked();
         }
     }
 }
+

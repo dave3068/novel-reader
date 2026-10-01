@@ -1,19 +1,22 @@
-//! 全局阅读设置：字体、字号、行距、段距、首行缩进、边距、明亮/暗黑、手势/按钮模式。
+//! 全局阅读设置：字体、字号、行距、段距、首行缩进、边距、明亮/暗黑、手势/按钮模式、
+//! 沉浸自动隐藏与书架视图/排序（v0.2.0）。
 //!
-//! 依据（开发方案 §2.1「全局阅读设置」、§8.3 第 4 条、「每本书独立阅读设置：V1 采用全局设置」）：
+//! 依据（开发方案 §2.1「全局阅读设置」、§8.3 第 4 条、「每本书独立阅读设置：V1 采用全局设置」）
+//! 与设计 `docs/design/novel-reader-desktop-redesign.md` §5 S10：
 //!
 //! - **只有一套全局设置**：排版参数落在核心 `reader_settings` 单行（`id = 1`），
-//!   交互模式落在核心 `app_meta` 的键值行；本模块不提供任何按 `book_id` 的写入入口，
-//!   也不存在每本书独立的设置体系；
-//! - 尺寸/间距一律以**整数毫单位**存取（与 `LayoutSignature` 同口径），显示口径的换算
-//!   只发生在 [`GlobalSettings::items`] 里；
+//!   交互模式 / 沉浸自动隐藏 / 书架视图 / 书架排序落在核心 `app_meta` 的键值行；
+//!   本模块不提供任何按 `book_id` 的写入入口，也不存在每本书独立的设置体系；
+//! - 尺寸/间距一律以**整数毫单位**存取（与 `LayoutSignature` 同口径）；显示口径与
+//!   **控件口径**的换算只发生在本模块（`SettingsRowView`）；
 //! - 桌面 Slint 逐行渲染不叠加段距、不做首行缩进、正文区留白由版式常量表达，
-//!   因此段距 / 首行缩进 / 边距在桌面 V1 **只持久化、不参与排版**（签名与测量两侧同时置零，
-//!   见开发方案 §8.3 第 4 条）。本模块显式暴露 `effective` 与 `note`，界面据此标注，
-//!   绝不假装它们已经生效。
+//!   因此段距 / 首行缩进 / 边距在桌面 V1 **只持久化、不参与排版**。本模块显式暴露
+//!   `effective` 与 `note`，界面据此标注，绝不假装它们已经生效；
+//! - 行距在**界面口径**上是「倍数 ×（1.0–2.4）」，与核心的「额外像素」互转只在本模块进行。
 
 use std::path::Path;
 
+use reading_storage::books;
 use reading_storage::meta;
 use reading_storage::settings::{self as core_settings, ReaderSettings};
 use reading_storage::Storage;
@@ -23,9 +26,15 @@ use crate::reflow::TypographySettings;
 
 /// 交互（翻页）模式的元信息键（存核心 `app_meta`，不新增表/列）。
 pub const INTERACTION_MODE_KEY: &str = "ui.interaction_mode";
-/// 交互模式：按钮翻页（底部常驻按钮条）。
+/// 沉浸时自动隐藏工具条的元信息键。
+pub const IMMERSIVE_AUTOHIDE_KEY: &str = "ui.immersive_autohide";
+/// 书架视图（`table` / `cards`）的元信息键。
+pub const SHELF_VIEW_KEY: &str = "ui.shelf.view";
+/// 书架排序（`recent` / `title` / `imported`）的元信息键。
+pub const SHELF_SORT_KEY: &str = "ui.shelf.sort";
+/// 交互模式：按钮翻页。
 pub const MODE_BUTTONS: &str = "buttons";
-/// 交互模式：手势翻页（正文左右区域点击翻页，中部点击呼出菜单）。
+/// 交互模式：手势翻页。
 pub const MODE_GESTURE: &str = "gesture";
 /// 允许的交互模式。
 pub const INTERACTION_MODES: &[&str] = &[MODE_BUTTONS, MODE_GESTURE];
@@ -57,17 +66,26 @@ pub const KEY_MARGIN_Y: &str = "margin-y";
 pub const KEY_THEME: &str = "theme";
 /// 字段键：交互模式（手势/按钮）。
 pub const KEY_INTERACTION_MODE: &str = "interaction-mode";
+/// 字段键：沉浸时自动隐藏工具条。
+pub const KEY_IMMERSIVE_AUTOHIDE: &str = "immersive-autohide";
 
-/// 数值型字段的取值范围与步长（显示口径：像素）。
+/// 数值型字段的取值范围与步长（**控件口径**）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NumericRange {
-    /// 最小值（像素）。
-    pub min: u32,
-    /// 最大值（像素）。
-    pub max: u32,
-    /// 调整步长（像素）。
-    pub step: u32,
+    /// 最小值（控件口径）。
+    pub min: i32,
+    /// 最大值（控件口径）。
+    pub max: i32,
+    /// 调整步长（控件口径）。
+    pub step: i32,
 }
+
+/// 行距倍数的控件口径边界（1.0 – 2.4，单位：千分比）。
+pub const LINE_SPACING_MULT_MIN: i32 = 1_000;
+/// 行距倍数的控件口径上限（2.4）。
+pub const LINE_SPACING_MULT_MAX: i32 = 2_400;
+/// 行距倍数的步长（0.1）。
+pub const LINE_SPACING_MULT_STEP: i32 = 100;
 
 /// 字段类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,7 +94,7 @@ pub enum FieldKind {
     Enum(&'static [&'static str]),
     /// 字体族（可选项来自 [`FONT_FAMILIES`]）。
     FontFamily,
-    /// 数值（像素口径）。
+    /// 数值（控件口径）。
     Numeric(NumericRange),
 }
 
@@ -96,7 +114,7 @@ pub struct SettingsField {
 }
 
 /// 段距/缩进/边距在桌面 V1 的解释（不假装生效）。
-const DESKTOP_INERT_NOTE: &str = "桌面 V1 只保存该设置：Slint 逐行渲染不叠加段距/缩进，正文区留白由版式常量表达（签名两侧同时置零）";
+const DESKTOP_INERT_NOTE: &str = "只保存、不参与桌面排版";
 
 /// 全局设置字段清单（顺序即界面顺序）。
 pub const SETTINGS_FIELDS: &[SettingsField] = &[
@@ -109,10 +127,10 @@ pub const SETTINGS_FIELDS: &[SettingsField] = &[
     },
     SettingsField {
         key: KEY_FONT_SIZE,
-        label: "字号（像素）",
+        label: "字号",
         kind: FieldKind::Numeric(NumericRange {
-            min: MIN_FONT_SIZE_PX,
-            max: MAX_FONT_SIZE_PX,
+            min: MIN_FONT_SIZE_PX as i32,
+            max: MAX_FONT_SIZE_PX as i32,
             step: 1,
         }),
         effective: true,
@@ -120,18 +138,18 @@ pub const SETTINGS_FIELDS: &[SettingsField] = &[
     },
     SettingsField {
         key: KEY_LINE_SPACING,
-        label: "行距（额外像素 ×1000）",
+        label: "行距",
         kind: FieldKind::Numeric(NumericRange {
-            min: 0,
-            max: 24,
-            step: 1,
+            min: LINE_SPACING_MULT_MIN,
+            max: LINE_SPACING_MULT_MAX,
+            step: LINE_SPACING_MULT_STEP,
         }),
         effective: true,
         note: "",
     },
     SettingsField {
         key: KEY_PARAGRAPH_SPACING,
-        label: "段距（像素）",
+        label: "段距",
         kind: FieldKind::Numeric(NumericRange {
             min: 0,
             max: 48,
@@ -142,7 +160,7 @@ pub const SETTINGS_FIELDS: &[SettingsField] = &[
     },
     SettingsField {
         key: KEY_FIRST_LINE_INDENT,
-        label: "首行缩进（像素）",
+        label: "首行缩进",
         kind: FieldKind::Numeric(NumericRange {
             min: 0,
             max: 96,
@@ -153,7 +171,7 @@ pub const SETTINGS_FIELDS: &[SettingsField] = &[
     },
     SettingsField {
         key: KEY_MARGIN_X,
-        label: "左右边距（像素）",
+        label: "左右边距",
         kind: FieldKind::Numeric(NumericRange {
             min: 0,
             max: 96,
@@ -164,7 +182,7 @@ pub const SETTINGS_FIELDS: &[SettingsField] = &[
     },
     SettingsField {
         key: KEY_MARGIN_Y,
-        label: "上下边距（像素）",
+        label: "上下边距",
         kind: FieldKind::Numeric(NumericRange {
             min: 0,
             max: 96,
@@ -175,23 +193,34 @@ pub const SETTINGS_FIELDS: &[SettingsField] = &[
     },
     SettingsField {
         key: KEY_THEME,
-        label: "明亮 / 暗黑",
+        label: "主题",
         kind: FieldKind::Enum(&["system", "light", "dark"]),
         effective: true,
         note: "",
     },
     SettingsField {
         key: KEY_INTERACTION_MODE,
-        label: "翻页模式（手势 / 按钮）",
+        label: "翻页模式",
         kind: FieldKind::Enum(INTERACTION_MODES),
+        effective: true,
+        note: "",
+    },
+    SettingsField {
+        key: KEY_IMMERSIVE_AUTOHIDE,
+        label: "沉浸时自动隐藏工具条",
+        kind: FieldKind::Numeric(NumericRange {
+            min: 0,
+            max: 1,
+            step: 1,
+        }),
         effective: true,
         note: "",
     },
 ];
 
-/// 设置行（可显示字段；文案由 Rust 唯一生成）。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SettingsItem {
+/// 设置行（可显示字段；文案与控件口径由 Rust 唯一生成）。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SettingsRowView {
     /// 字段键。
     pub key: String,
     /// 中文名。
@@ -202,6 +231,28 @@ pub struct SettingsItem {
     pub note: String,
     /// 是否参与桌面排版/渲染。
     pub effective: bool,
+    /// 控件类型：0=循环字段 1=数值滑杆 2=枚举单选 3=布尔开关 4=只读文本 5=分组标题 6=动作行。
+    pub kind: i32,
+    /// 分组：0=排版 1=版式 2=外观 3=交互 4=数据。
+    pub section: i32,
+    /// 滑杆最小值（控件口径）。
+    pub value_min: i32,
+    /// 滑杆最大值（控件口径）。
+    pub value_max: i32,
+    /// 滑杆步长（控件口径）。
+    pub value_step: i32,
+    /// 滑杆当前值（控件口径）。
+    pub value_current: i32,
+    /// 枚举选项（显示名）。
+    pub options: Vec<String>,
+    /// 枚举当前下标。
+    pub current_index: i32,
+    /// 布尔开关当前值。
+    pub checked: bool,
+    /// 值文本用等宽字体（机器可核对信息）。
+    pub mono: bool,
+    /// 取值范围显示口径（如 `12 … 40`、`1.0 × … 2.4 ×`；空串表示不显示）。
+    pub range_label: String,
 }
 
 /// 设置来源（证据用）。
@@ -263,11 +314,17 @@ impl std::fmt::Display for SettingsError {
 
 impl std::error::Error for SettingsError {}
 
+/// 主题是否深色（供投影层使用；`system` 在 V1 按明亮处理）。
+pub fn theme_is_dark(theme: &str) -> bool {
+    theme == core_settings::THEME_DARK
+}
+
 /// 全局设置（唯一一套；不含任何按书的覆盖）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GlobalSettings {
     reader: ReaderSettings,
     interaction_mode: String,
+    immersive_autohide: bool,
     origin: SettingsOrigin,
 }
 
@@ -276,6 +333,7 @@ impl Default for GlobalSettings {
         Self {
             reader: ReaderSettings::default(),
             interaction_mode: MODE_BUTTONS.to_string(),
+            immersive_autohide: true,
             origin: SettingsOrigin::Default,
         }
     }
@@ -302,9 +360,14 @@ impl GlobalSettings {
         self.interaction_mode == MODE_GESTURE
     }
 
-    /// 是否深色主题（`system` 在 V1 按浅色处理：桌面未接入系统主题探测）。
+    /// 沉浸时是否自动隐藏工具条。
+    pub fn immersive_autohide(&self) -> bool {
+        self.immersive_autohide
+    }
+
+    /// 是否深色主题。
     pub fn theme_dark(&self) -> bool {
-        self.reader.theme == core_settings::THEME_DARK
+        theme_is_dark(&self.reader.theme)
     }
 
     /// 主题显示名。
@@ -322,32 +385,149 @@ impl GlobalSettings {
         TypographySettings::from_reader_settings(&self.reader)
     }
 
-    /// 界面行（全部可显示字段；值文本由 Rust 生成）。
-    pub fn items(&self) -> Vec<SettingsItem> {
-        SETTINGS_FIELDS
-            .iter()
-            .map(|field| SettingsItem {
-                key: field.key.to_string(),
-                label: field.label.to_string(),
-                value: self.value_text(field.key),
-                note: field.note.to_string(),
-                effective: field.effective,
-            })
-            .collect()
+    /// 控件的「行距倍数」口径（千分比；1.0 = 1000）。
+    ///
+    /// 行距在核心口径上是「额外像素」；界面口径是「倍数 =（字号 + 额外像素）÷ 字号」。
+    pub fn line_spacing_mult_permille(&self) -> i32 {
+        let font = self.reader.font_size_milli.max(1);
+        let pitch = font.saturating_add(self.reader.line_spacing_milli.max(0));
+        (((pitch as f64 / font as f64) * 1_000.0).round() as i32)
+            .clamp(LINE_SPACING_MULT_MIN, LINE_SPACING_MULT_MAX)
     }
 
-    /// 单字段的显示值。
+    /// 以「行距倍数」写入（控件口径；换算成核心的额外像素）。
+    pub fn set_line_spacing_mult_permille(&mut self, permille: i32) -> Result<(), SettingsError> {
+        let permille = permille.clamp(LINE_SPACING_MULT_MIN, LINE_SPACING_MULT_MAX);
+        let font = self.reader.font_size_milli.max(1);
+        let spacing = (font as f64 * (permille as f64 - 1_000.0) / 1_000.0).round() as i64;
+        self.reader.line_spacing_milli = spacing.max(0);
+        Ok(())
+    }
+
+    /// 控件口径的当前值（滑杆用）。
+    pub fn control_value(&self, key: &str) -> i32 {
+        match key {
+            KEY_FONT_SIZE => (self.reader.font_size_milli / 1_000).max(0) as i32,
+            KEY_LINE_SPACING => self.line_spacing_mult_permille(),
+            KEY_PARAGRAPH_SPACING => (self.reader.paragraph_spacing_milli / 1_000).max(0) as i32,
+            KEY_FIRST_LINE_INDENT => (self.reader.first_line_indent_milli / 1_000).max(0) as i32,
+            KEY_MARGIN_X => (self.reader.margin_x_milli / 1_000).max(0) as i32,
+            KEY_MARGIN_Y => (self.reader.margin_y_milli / 1_000).max(0) as i32,
+            KEY_IMMERSIVE_AUTOHIDE => i32::from(self.immersive_autohide),
+            _ => 0,
+        }
+    }
+
+    /// 按控件值写入（滑杆 / 数值框共用；非法值夹紧到控件范围）。
+    pub fn set_control_value(&mut self, key: &str, value: i32) -> Result<bool, SettingsError> {
+        let Some(field) = Self::field(key) else {
+            return Err(SettingsError::UnknownField {
+                key: key.to_string(),
+            });
+        };
+        let before = self.value_text(key);
+        match key {
+            KEY_LINE_SPACING => self.set_line_spacing_mult_permille(value)?,
+            KEY_IMMERSIVE_AUTOHIDE => self.immersive_autohide = value != 0,
+            KEY_FONT_SIZE | KEY_PARAGRAPH_SPACING | KEY_FIRST_LINE_INDENT | KEY_MARGIN_X
+            | KEY_MARGIN_Y => {
+                if let FieldKind::Numeric(range) = field.kind {
+                    let clamped = value.clamp(range.min, range.max);
+                    let slot = match key {
+                        KEY_FONT_SIZE => &mut self.reader.font_size_milli,
+                        KEY_PARAGRAPH_SPACING => &mut self.reader.paragraph_spacing_milli,
+                        KEY_FIRST_LINE_INDENT => &mut self.reader.first_line_indent_milli,
+                        KEY_MARGIN_X => &mut self.reader.margin_x_milli,
+                        _ => &mut self.reader.margin_y_milli,
+                    };
+                    *slot = i64::from(clamped) * 1_000;
+                }
+            }
+            _ => {
+                return Err(SettingsError::UnknownField {
+                    key: key.to_string(),
+                })
+            }
+        }
+        Ok(self.value_text(key) != before)
+    }
+
+    /// 枚举选项显示名（界面单选组）。
+    pub fn option_labels(key: &str) -> Vec<String> {
+        match key {
+            KEY_THEME => vec![
+                "跟随系统（V1 按明亮处理）".to_string(),
+                "明亮".to_string(),
+                "暗黑".to_string(),
+            ],
+            KEY_INTERACTION_MODE => vec!["按钮翻页".to_string(), "手势翻页".to_string()],
+            _ => Vec::new(),
+        }
+    }
+
+    /// 枚举当前下标。
+    pub fn option_index(&self, key: &str) -> i32 {
+        match key {
+            KEY_THEME => match self.reader.theme.as_str() {
+                core_settings::THEME_LIGHT => 1,
+                core_settings::THEME_DARK => 2,
+                _ => 0,
+            },
+            KEY_INTERACTION_MODE => i32::from(self.gesture_mode()),
+            _ => 0,
+        }
+    }
+
+    /// 按枚举下标写入（Rust 侧映射下标 → 内部取值）。
+    pub fn set_option_index(&mut self, key: &str, index: i32) -> Result<(), SettingsError> {
+        match key {
+            KEY_THEME => {
+                self.reader.theme = match index.clamp(0, 2) {
+                    1 => core_settings::THEME_LIGHT,
+                    2 => core_settings::THEME_DARK,
+                    _ => core_settings::THEME_SYSTEM,
+                }
+                .to_string();
+            }
+            KEY_INTERACTION_MODE => {
+                self.interaction_mode = if index.clamp(0, 1) == 1 {
+                    MODE_GESTURE
+                } else {
+                    MODE_BUTTONS
+                }
+                .to_string();
+            }
+            _ => {
+                return Err(SettingsError::UnknownField {
+                    key: key.to_string(),
+                })
+            }
+        }
+        Ok(())
+    }
+
+    /// 单字段的显示值（显示口径）。
     pub fn value_text(&self, key: &str) -> String {
         match key {
             KEY_FONT_FAMILY => self.reader.font_family.clone(),
-            KEY_FONT_SIZE => format!("{} px", self.reader.font_size_milli / 1_000),
-            KEY_LINE_SPACING => format_milli_px(self.reader.line_spacing_milli),
+            KEY_FONT_SIZE => format!(
+                "{} px",
+                (self.reader.font_size_milli / 1_000).max(0)
+            ),
+            KEY_LINE_SPACING => format!("{:.1} ×", self.line_spacing_mult_permille() as f64 / 1_000.0),
             KEY_PARAGRAPH_SPACING => format_milli_px(self.reader.paragraph_spacing_milli),
             KEY_FIRST_LINE_INDENT => format_milli_px(self.reader.first_line_indent_milli),
             KEY_MARGIN_X => format_milli_px(self.reader.margin_x_milli),
             KEY_MARGIN_Y => format_milli_px(self.reader.margin_y_milli),
             KEY_THEME => self.theme_label(),
             KEY_INTERACTION_MODE => self.interaction_label().to_string(),
+            KEY_IMMERSIVE_AUTOHIDE => {
+                if self.immersive_autohide {
+                    "开".to_string()
+                } else {
+                    "关".to_string()
+                }
+            }
             _ => String::new(),
         }
     }
@@ -357,7 +537,7 @@ impl GlobalSettings {
         SETTINGS_FIELDS.iter().find(|field| field.key == key)
     }
 
-    /// 调整一个字段（`delta` 为步长个数）；返回是否真的发生变化。
+    /// 调整一个字段（`delta` 为**控件口径**步长个数）；返回是否真的发生变化。
     pub fn adjust(&mut self, key: &str, delta: i64) -> Result<bool, SettingsError> {
         let field = Self::field(key).ok_or_else(|| SettingsError::UnknownField {
             key: key.to_string(),
@@ -371,17 +551,25 @@ impl GlobalSettings {
             (KEY_INTERACTION_MODE, FieldKind::Enum(values)) => {
                 self.interaction_mode = cycle(values, &self.interaction_mode, delta)
             }
+            (KEY_IMMERSIVE_AUTOHIDE, _) => {
+                if delta % 2 != 0 {
+                    self.immersive_autohide = !self.immersive_autohide;
+                }
+            }
             (_, FieldKind::Enum(_)) => {
                 return Err(SettingsError::UnknownField {
                     key: key.to_string(),
                 })
             }
+            (KEY_LINE_SPACING, FieldKind::Numeric(range)) => {
+                let next = (self.line_spacing_mult_permille() + (delta as i32) * range.step)
+                    .clamp(range.min, range.max);
+                self.set_line_spacing_mult_permille(next)?;
+            }
             (_, FieldKind::Numeric(range)) => {
-                let current = self.numeric_milli_px(key);
-                let current_px = current / 1_000;
-                let next = (current_px + delta * range.step as i64)
-                    .clamp(range.min as i64, range.max as i64);
-                self.set_milli_px(key, next * 1_000)?;
+                let current = self.control_value(key);
+                let next = (current + (delta as i32) * range.step).clamp(range.min, range.max);
+                self.set_control_value(key, next)?;
             }
         }
         Ok(self.value_text(key) != before)
@@ -421,17 +609,17 @@ impl GlobalSettings {
                 }
             }
             FieldKind::Numeric(range) => {
-                let px: u32 = value.parse().map_err(|_| SettingsError::InvalidValue {
+                let number: i32 = value.parse().map_err(|_| SettingsError::InvalidValue {
                     key: key.to_string(),
-                    detail: format!("`{value}` 不是整数像素"),
+                    detail: format!("`{value}` 不是整数"),
                 })?;
-                if px < range.min || px > range.max {
+                if number < range.min || number > range.max {
                     return Err(SettingsError::InvalidValue {
                         key: key.to_string(),
-                        detail: format!("允许范围 {}..={} px", range.min, range.max),
+                        detail: format!("允许范围 {}..={}", range.min, range.max),
                     });
                 }
-                self.set_milli_px(key, (px as i64) * 1_000)?;
+                self.set_control_value(key, number)?;
             }
         }
         Ok(())
@@ -442,7 +630,7 @@ impl GlobalSettings {
         format!(
             "NR-SETTINGS changes={} origin={} font_family={} font_size_milli={} \
              line_spacing_milli={} paragraph_spacing_milli={} first_line_indent_milli={} \
-             margin_x_milli={} margin_y_milli={} theme={} interaction={} dark={}",
+             margin_x_milli={} margin_y_milli={} theme={} interaction={} autohide={} dark={}",
             changes,
             self.origin.as_str(),
             self.reader.font_family.replace(' ', "_"),
@@ -454,39 +642,9 @@ impl GlobalSettings {
             self.reader.margin_y_milli,
             self.reader.theme,
             self.interaction_mode,
+            u8::from(self.immersive_autohide),
             u8::from(self.theme_dark()),
         )
-    }
-
-    fn numeric_milli_px(&self, key: &str) -> i64 {
-        match key {
-            KEY_FONT_SIZE => self.reader.font_size_milli,
-            KEY_LINE_SPACING => self.reader.line_spacing_milli,
-            KEY_PARAGRAPH_SPACING => self.reader.paragraph_spacing_milli,
-            KEY_FIRST_LINE_INDENT => self.reader.first_line_indent_milli,
-            KEY_MARGIN_X => self.reader.margin_x_milli,
-            KEY_MARGIN_Y => self.reader.margin_y_milli,
-            _ => 0,
-        }
-    }
-
-    fn set_milli_px(&mut self, key: &str, value: i64) -> Result<(), SettingsError> {
-        let value = value.max(0);
-        let slot = match key {
-            KEY_FONT_SIZE => &mut self.reader.font_size_milli,
-            KEY_LINE_SPACING => &mut self.reader.line_spacing_milli,
-            KEY_PARAGRAPH_SPACING => &mut self.reader.paragraph_spacing_milli,
-            KEY_FIRST_LINE_INDENT => &mut self.reader.first_line_indent_milli,
-            KEY_MARGIN_X => &mut self.reader.margin_x_milli,
-            KEY_MARGIN_Y => &mut self.reader.margin_y_milli,
-            _ => {
-                return Err(SettingsError::UnknownField {
-                    key: key.to_string(),
-                })
-            }
-        };
-        *slot = value;
-        Ok(())
     }
 
     fn cycle_font_family(&mut self, delta: i64) {
@@ -526,6 +684,24 @@ fn mode_label(mode: &str) -> &'static str {
     }
 }
 
+/// 取值范围显示口径（滑杆下方的边界值；与控件口径一致，但换算成界面语言）。
+fn range_label(key: &str) -> String {
+    let Some(range) = GlobalSettings::field(key).and_then(|field| match field.kind {
+        FieldKind::Numeric(range) => Some(range),
+        _ => None,
+    }) else {
+        return String::new();
+    };
+    if key == KEY_LINE_SPACING {
+        return format!(
+            "{:.1} × … {:.1} ×",
+            range.min as f64 / 1_000.0,
+            range.max as f64 / 1_000.0
+        );
+    }
+    format!("{} … {}", range.min, range.max)
+}
+
 /// 毫像素 → 显示文本（保留一位小数）。
 fn format_milli_px(milli: i64) -> String {
     let value = milli.max(0);
@@ -557,9 +733,14 @@ pub fn load(db_path: &Path) -> Result<GlobalSettings, SettingsError> {
         .map_err(|error| SettingsError::Storage(error.to_string()))?
         .filter(|mode| INTERACTION_MODES.contains(&mode.as_str()))
         .unwrap_or_else(|| MODE_BUTTONS.to_string());
+    let immersive_autohide = meta::get(storage.conn(), IMMERSIVE_AUTOHIDE_KEY)
+        .map_err(|error| SettingsError::Storage(error.to_string()))?
+        .map(|value| value != "0" && value.to_lowercase() != "false")
+        .unwrap_or(true);
     Ok(GlobalSettings {
         reader,
         interaction_mode,
+        immersive_autohide,
         origin: if stored_rows > 0 {
             SettingsOrigin::Stored
         } else {
@@ -580,7 +761,212 @@ pub fn save(db_path: &Path, settings: &GlobalSettings, now: i64) -> Result<(), S
         now,
     )
     .map_err(|error| SettingsError::Storage(error.to_string()))?;
+    meta::set(
+        storage.conn(),
+        IMMERSIVE_AUTOHIDE_KEY,
+        if settings.immersive_autohide { "1" } else { "0" },
+        now,
+    )
+    .map_err(|error| SettingsError::Storage(error.to_string()))?;
     Ok(())
+}
+
+/// 读取书架视图（`0` = 表格，`1` = 卡片）。
+pub fn load_shelf_view(db_path: &Path) -> i32 {
+    let Ok(storage) = open_storage(db_path) else {
+        return 0;
+    };
+    match meta::get(storage.conn(), SHELF_VIEW_KEY) {
+        Ok(Some(value)) if value == "cards" => 1,
+        _ => 0,
+    }
+}
+
+/// 保存书架视图。
+pub fn save_shelf_view(db_path: &Path, view: i32, now: i64) -> Result<(), SettingsError> {
+    let storage = open_storage(db_path)?;
+    meta::set(
+        storage.conn(),
+        SHELF_VIEW_KEY,
+        if view == 1 { "cards" } else { "table" },
+        now,
+    )
+    .map_err(|error| SettingsError::Storage(error.to_string()))?;
+    Ok(())
+}
+
+/// 读取书架排序（0=最近阅读 1=书名 2=导入时间）。
+pub fn load_shelf_sort(db_path: &Path) -> i32 {
+    let Ok(storage) = open_storage(db_path) else {
+        return 0;
+    };
+    match meta::get(storage.conn(), SHELF_SORT_KEY) {
+        Ok(Some(value)) if value == "title" => crate::app_state::SORT_TITLE,
+        Ok(Some(value)) if value == "imported" => crate::app_state::SORT_IMPORTED,
+        _ => crate::app_state::SORT_RECENT,
+    }
+}
+
+/// 保存书架排序。
+pub fn save_shelf_sort(db_path: &Path, sort: i32, now: i64) -> Result<(), SettingsError> {
+    let storage = open_storage(db_path)?;
+    let value = match sort {
+        crate::app_state::SORT_TITLE => "title",
+        crate::app_state::SORT_IMPORTED => "imported",
+        _ => "recent",
+    };
+    meta::set(storage.conn(), SHELF_SORT_KEY, value, now)
+        .map_err(|error| SettingsError::Storage(error.to_string()))?;
+    Ok(())
+}
+
+/// 组装设置页表单行（分组标题 + 字段行 + 数据行；文案与控件口径由本模块唯一生成）。
+///
+/// `data_path` 为数据库位置（mono 行）；`counts` 为（书架记录数，已移出数）。
+pub fn display_rows(
+    settings: &GlobalSettings,
+    data_path: &str,
+    counts: (i64, i64),
+) -> Vec<SettingsRowView> {
+    let mut rows: Vec<SettingsRowView> = Vec::new();
+    let header = |rows: &mut Vec<SettingsRowView>, label: &str, note: &str| {
+        rows.push(SettingsRowView {
+            label: label.to_string(),
+            note: note.to_string(),
+            kind: 5,
+            section: -1,
+            ..SettingsRowView::default()
+        });
+    };
+    let row = |key: &str, kind: i32, section: i32| SettingsRowView {
+        key: key.to_string(),
+        label: field_label(key),
+        value: settings.value_text(key),
+        note: field_note(key),
+        effective: field_effective(key),
+        kind,
+        section,
+        value_min: field_range(key).map_or(0, |range| range.min),
+        value_max: field_range(key).map_or(0, |range| range.max),
+        value_step: field_range(key).map_or(0, |range| range.step),
+        value_current: settings.control_value(key),
+        options: GlobalSettings::option_labels(key),
+        current_index: settings.option_index(key),
+        checked: settings.control_value(key) != 0,
+        mono: false,
+        range_label: range_label(key),
+    };
+
+    // ---- 排版 ----
+    header(&mut rows, "排版", "");
+    rows.push(row(KEY_FONT_FAMILY, 0, 0));
+    rows.push(row(KEY_FONT_SIZE, 1, 0));
+    rows.push(row(KEY_LINE_SPACING, 1, 0));
+    // ---- 版式（桌面端暂未生效）----
+    header(
+        &mut rows,
+        "版式（桌面端暂未生效）",
+        "以下设置只保存到本地库、不参与桌面排版（Slint 逐行渲染不叠加段距/缩进）",
+    );
+    for key in [
+        KEY_PARAGRAPH_SPACING,
+        KEY_FIRST_LINE_INDENT,
+        KEY_MARGIN_X,
+        KEY_MARGIN_Y,
+    ] {
+        rows.push(row(key, 4, 1));
+    }
+    // ---- 外观 ----
+    header(&mut rows, "外观", "");
+    rows.push(row(KEY_THEME, 2, 2));
+    // ---- 交互 ----
+    header(&mut rows, "交互", "");
+    rows.push(row(KEY_INTERACTION_MODE, 2, 3));
+    rows.push(row(KEY_IMMERSIVE_AUTOHIDE, 3, 3));
+    // ---- 数据 ----
+    header(&mut rows, "数据", "");
+    rows.push(SettingsRowView {
+        key: "data-books".to_string(),
+        label: "书架记录数".to_string(),
+        value: format!("{} 本", counts.0 - counts.1),
+        kind: 4,
+        section: 4,
+        ..SettingsRowView::default()
+    });
+    rows.push(SettingsRowView {
+        key: "data-removed".to_string(),
+        label: "已移出".to_string(),
+        value: format!("{} 本", counts.1),
+        kind: 4,
+        section: 4,
+        ..SettingsRowView::default()
+    });
+    rows.push(SettingsRowView {
+        key: "data-path".to_string(),
+        label: "数据库位置".to_string(),
+        value: data_path.to_string(),
+        note: "备份建议：复制该文件即可完整保留书架、进度与书签".to_string(),
+        kind: 4,
+        section: 4,
+        mono: true,
+        ..SettingsRowView::default()
+    });
+    rows.push(SettingsRowView {
+        key: "clear-index".to_string(),
+        label: "清理章节索引与分页缓存…".to_string(),
+        note: "删除可重建的派生数据（章节、分页缓存）；书籍、进度与书签保留".to_string(),
+        kind: 6,
+        section: 4,
+        ..SettingsRowView::default()
+    });
+    rows
+}
+
+fn field_label(key: &str) -> String {
+    GlobalSettings::field(key)
+        .map(|field| field.label.to_string())
+        .unwrap_or_default()
+}
+
+fn field_note(key: &str) -> String {
+    GlobalSettings::field(key)
+        .map(|field| field.note.to_string())
+        .unwrap_or_default()
+}
+
+fn field_effective(key: &str) -> bool {
+    GlobalSettings::field(key).is_some_and(|field| field.effective)
+}
+
+fn field_range(key: &str) -> Option<NumericRange> {
+    match GlobalSettings::field(key).map(|field| field.kind) {
+        Some(FieldKind::Numeric(range)) => Some(range),
+        _ => None,
+    }
+}
+
+/// 组装设置页投影（含数据行；供启动期与设置变更共用）。
+pub fn view_for(db_path: &Path, settings: &GlobalSettings) -> crate::app_state::SettingsView {
+    let counts = storage_counts(db_path);
+    crate::app_state::SettingsView {
+        rows: display_rows(settings, &db_path.display().to_string(), counts),
+        note: "修改立即生效并保存到本地库（library.db）".to_string(),
+        data_path: db_path.display().to_string(),
+        theme: settings.reader().theme.clone(),
+        interaction_mode: settings.interaction_mode().to_string(),
+        immersive_autohide: settings.immersive_autohide(),
+        persisted: matches!(settings.origin(), SettingsOrigin::Stored),
+    }
+}
+
+/// 书架记录数 / 已移出数（读库；失败时按 0 处理，不假装有数据）。
+pub fn storage_counts(db_path: &Path) -> (i64, i64) {
+    let Ok(storage) = open_storage(db_path) else {
+        return (0, 0);
+    };
+    let total = books::count_books(storage.conn()).unwrap_or(0);
+    let removed = books::removed_book_count(storage.conn()).unwrap_or(0);
+    (total, removed)
 }
 
 #[cfg(test)]
@@ -614,6 +1000,7 @@ mod tests {
             KEY_MARGIN_Y,
             KEY_THEME,
             KEY_INTERACTION_MODE,
+            KEY_IMMERSIVE_AUTOHIDE,
         ] {
             assert!(keys.contains(&required), "缺少必需设置项 {required}");
         }
@@ -640,20 +1027,10 @@ mod tests {
         assert_eq!(settings.origin(), SettingsOrigin::Default);
         assert!(!settings.theme_dark());
         assert!(!settings.gesture_mode());
-        let items = settings.items();
-        assert_eq!(items.len(), SETTINGS_FIELDS.len());
-        assert!(items.iter().any(|item| item.key == KEY_FONT_SIZE));
-        let font_size = items
-            .iter()
-            .find(|item| item.key == KEY_FONT_SIZE)
-            .expect("字号行");
-        assert_eq!(font_size.value, "18 px");
-        assert!(font_size.effective);
-        let indent = items
-            .iter()
-            .find(|item| item.key == KEY_FIRST_LINE_INDENT)
-            .expect("缩进行");
-        assert!(!indent.effective && !indent.note.is_empty());
+        assert!(settings.immersive_autohide(), "沉浸自动隐藏默认开");
+        assert_eq!(settings.value_text(KEY_FONT_SIZE), "18 px");
+        // 行距显示口径是倍数（18px 字号 + 默认额外像素）。
+        assert!(settings.value_text(KEY_LINE_SPACING).ends_with('×'));
         assert_eq!(settings.typography().font_family, reader.font_family);
     }
 
@@ -687,10 +1064,14 @@ mod tests {
         assert!(settings.gesture_mode());
         assert!(settings.set_text(KEY_INTERACTION_MODE, "摇一摇").is_err());
         assert!(settings.set_text("不存在", "1").is_err());
-        // 行距调整影响排版（参与签名）。
-        let before = settings.typography().line_spacing_milli;
-        settings.adjust(KEY_LINE_SPACING, 3).expect("行距");
-        assert!(settings.typography().line_spacing_milli > before);
+        // 行距：控件口径 = 倍数（千分比）；调整后倍数必须变大。
+        let before = settings.line_spacing_mult_permille();
+        settings.adjust(KEY_LINE_SPACING, 1).expect("行距");
+        assert!(settings.line_spacing_mult_permille() > before);
+        // 沉浸自动隐藏：布尔翻转。
+        assert!(settings.immersive_autohide());
+        settings.adjust(KEY_IMMERSIVE_AUTOHIDE, 1).expect("切换");
+        assert!(!settings.immersive_autohide());
     }
 
     #[test]
@@ -700,25 +1081,25 @@ mod tests {
         let mut settings = load(&db).expect("首次读取");
         assert_eq!(settings.origin(), SettingsOrigin::Default);
         settings.set_text(KEY_FONT_SIZE, "26").expect("字号");
-        settings.set_text(KEY_LINE_SPACING, "6").expect("行距");
+        settings.set_text(KEY_LINE_SPACING, "1400").expect("行距倍数");
         settings.set_text(KEY_THEME, "dark").expect("主题");
         settings
             .set_text(KEY_INTERACTION_MODE, MODE_GESTURE)
             .expect("手势");
-        settings
-            .set_text(KEY_MARGIN_X, "24")
-            .expect("左右边距（仅保存）");
+        settings.set_text(KEY_MARGIN_X, "24").expect("左右边距（仅保存）");
+        settings.set_control_value(KEY_IMMERSIVE_AUTOHIDE, 0).expect("关闭自动隐藏");
         save(&db, &settings, 1_700_000_000).expect("保存");
 
         let reloaded = load(&db).expect("再次读取");
         assert_eq!(reloaded.origin(), SettingsOrigin::Stored);
         assert_eq!(reloaded.reader().font_size_milli, 26_000);
-        assert_eq!(reloaded.reader().line_spacing_milli, 6_000);
+        assert_eq!(reloaded.line_spacing_mult_permille(), 1_400);
         assert_eq!(reloaded.reader().margin_x_milli, 24_000);
+        assert!(!reloaded.immersive_autohide());
         assert!(reloaded.theme_dark());
         assert!(reloaded.gesture_mode());
 
-        // 全局唯一：设置表只有一行、app_meta 只有交互模式一个键，且没有按书的设置行。
+        // 全局唯一：设置表只有一行、app_meta 只有已知键，且没有按书的设置行。
         let storage = open_storage(&db).expect("打开库");
         let rows = core_settings::settings_row_count(storage.conn()).expect("设置行数");
         assert_eq!(rows, 1, "V1 只有一行全局设置");
@@ -759,6 +1140,52 @@ mod tests {
         save(&db, &settings, 1).expect("保存");
         let reloaded = load(&db).expect("读取");
         assert_eq!(reloaded.reader().font_size_milli, 18_000, "非法值不得落库");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn display_rows_cover_all_sections_and_are_projected() {
+        let settings = GlobalSettings::default();
+        let rows = display_rows(&settings, "/tmp/library.db", (12, 1));
+        let sections: Vec<i32> = rows.iter().map(|row| row.section).collect();
+        assert!(sections.contains(&0) && sections.contains(&1));
+        assert!(sections.contains(&2) && sections.contains(&3) && sections.contains(&4));
+        let font_size = rows
+            .iter()
+            .find(|row| row.key == KEY_FONT_SIZE)
+            .expect("字号行");
+        assert_eq!(font_size.kind, 1);
+        assert_eq!(font_size.value_min, MIN_FONT_SIZE_PX as i32);
+        assert_eq!(font_size.value_max, MAX_FONT_SIZE_PX as i32);
+        let theme = rows
+            .iter()
+            .find(|row| row.key == KEY_THEME)
+            .expect("主题行");
+        assert_eq!(theme.kind, 2);
+        assert_eq!(theme.options.len(), 3);
+        assert_eq!(theme.current_index, 0);
+        let path = rows
+            .iter()
+            .find(|row| row.key == "data-path")
+            .expect("路径行");
+        assert!(path.mono);
+        let clear = rows
+            .iter()
+            .find(|row| row.key == "clear-index")
+            .expect("清理行");
+        assert_eq!(clear.kind, 6);
+    }
+
+    #[test]
+    fn shelf_view_and_sort_persist_in_meta_keys() {
+        let dir = temp_dir("shelf-keys");
+        let db = dir.join("library.db");
+        assert_eq!(load_shelf_view(&db), 0);
+        assert_eq!(load_shelf_sort(&db), crate::app_state::SORT_RECENT);
+        save_shelf_view(&db, 1, 1).expect("保存视图");
+        save_shelf_sort(&db, crate::app_state::SORT_TITLE, 1).expect("保存排序");
+        assert_eq!(load_shelf_view(&db), 1);
+        assert_eq!(load_shelf_sort(&db), crate::app_state::SORT_TITLE);
         let _ = fs::remove_dir_all(&dir);
     }
 }
