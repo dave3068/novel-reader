@@ -143,7 +143,8 @@ fn gbk_pages_are_measured_and_accepted_by_the_core() {
     let request = request_for(&source, 0, 1, 1);
     let page = measure_page_with_encoding(&source, &request, &typography(), TextEncoding::Gbk)
         .expect("GBK 首屏必须可排版");
-    assert_eq!(page.lines.len(), 20, "首屏应排满 20 行");
+    // 首屏行数 = floor(正文区高 526 / 行距 25) = 21（v0.2.0：正文列限宽 40 × 字号）。
+    assert_eq!(page.lines.len(), 21, "首屏应排满 21 行");
     let text = page.lines.join("");
     assert!(
         text.contains("第一章") || text.contains("第1章"),
@@ -183,8 +184,8 @@ fn utf8_behavior_is_unchanged() {
         .expect("UTF-8 首屏");
     assert_eq!(
         (page.start_byte, page.end_byte, page.lines.len()),
-        (0, 1623, 20),
-        "UTF-8 口径不得回归"
+        (0, 1455, 21),
+        "UTF-8 口径不得回归（v0.2.0 正文列 720 宽 / 21 行）"
     );
     assert_eq!(fingerprint_of(&path), before, "夹具必须只读");
 }

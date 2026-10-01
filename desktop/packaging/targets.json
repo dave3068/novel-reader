@@ -1,7 +1,7 @@
 {
   "schema": "nr.desktop.targets/1",
   "card": "t_e83b8ad0",
-  "updated": "2026-09-29",
+  "updated": "2026-10-01",
   "description": "桌面端各平台的构建/打包目标清单（单一事实来源）。scripts/verify-desktop-targets.py 读取本文件做静态校验与状态输出；desktop/packaging/ 下的脚本按本文件的口径产出发布目录。",
   "allowed_status": {
     "verified": "通过",
@@ -48,22 +48,102 @@
       "package_command": "bash desktop/packaging/linux/package-linux.sh --backend x11 --out /tmp/nr-dist",
       "release_dir_name_pattern": "novel-reader-{version}-linux-x86_64-x11",
       "release_layout": [
-        { "path": "bin/novel-reader", "kind": "file", "required": true, "note": "Release 二进制：由 crates/desktop-app/target/release/desktop-app 复制并改名" },
-        { "path": "bin/novel-reader.sh", "kind": "file", "required": true, "note": "启动包装：定位发布目录、按需设置 FONTCONFIG_FILE/LD_LIBRARY_PATH、原样转发参数与环境" },
-        { "path": "share/doc/novel-reader/README.md", "kind": "file", "required": true, "note": "随包说明（版本、目标、启动方式、数据目录、验证状态）" },
-        { "path": "share/doc/novel-reader/platform-requirements.md", "kind": "file", "required": true, "note": "依赖与系统要求（glibc/字体/运行库）随包分发" },
-        { "path": "share/doc/novel-reader/runtime-libraries.txt", "kind": "file", "required": false, "note": "构建机 ldd 实测的动态库 soname 清单（ldd 不可用时缺省）" },
-        { "path": "share/applications/novel-reader.desktop", "kind": "file", "required": true, "note": "桌面菜单项（Exec 指向发布目录内绝对路径；移动目录后需照 README 修正）" },
-        { "path": "VERSION", "kind": "file", "required": true, "note": "key=value：版本、目标三元组、会话、构建时间、rustc、打包脚本" },
-        { "path": "MANIFEST.sha256", "kind": "file", "required": true, "note": "发布目录内全部文件的 sha256（排除自身），打包末尾自校验" },
-        { "path": "bin/", "kind": "dir", "required": true, "note": null },
-        { "path": "share/", "kind": "dir", "required": true, "note": null },
-        { "path": "share/applications/", "kind": "dir", "required": true, "note": null },
-        { "path": "share/doc/", "kind": "dir", "required": true, "note": null },
-        { "path": "share/doc/novel-reader/", "kind": "dir", "required": true, "note": null },
-        { "path": "share/fonts/", "kind": "dir", "required": false, "note": "仅在 --bundle-font 时创建：随包分发中文字体" },
-        { "path": "etc/fonts/fonts.conf", "kind": "file", "required": false, "note": "仅在 --bundle-font 时创建：fontconfig 同时指向随包字体与系统字体目录" },
-        { "path": "lib/", "kind": "dir", "required": false, "note": "预留：随包分发额外 .so（本卡不使用，避免引入第三方运行时依赖）" }
+        {
+          "path": "bin/novel-reader",
+          "kind": "file",
+          "required": true,
+          "note": "Release 二进制：由 crates/desktop-app/target/release/desktop-app 复制并改名"
+        },
+        {
+          "path": "bin/novel-reader.sh",
+          "kind": "file",
+          "required": true,
+          "note": "启动包装：定位发布目录、按需设置 FONTCONFIG_FILE/LD_LIBRARY_PATH、原样转发参数与环境"
+        },
+        {
+          "path": "share/doc/novel-reader/README.md",
+          "kind": "file",
+          "required": true,
+          "note": "随包说明（版本、目标、启动方式、数据目录、验证状态）"
+        },
+        {
+          "path": "share/doc/novel-reader/platform-requirements.md",
+          "kind": "file",
+          "required": true,
+          "note": "依赖与系统要求（glibc/字体/运行库）随包分发"
+        },
+        {
+          "path": "share/doc/novel-reader/runtime-libraries.txt",
+          "kind": "file",
+          "required": false,
+          "note": "构建机 ldd 实测的动态库 soname 清单（ldd 不可用时缺省）"
+        },
+        {
+          "path": "share/applications/novel-reader.desktop",
+          "kind": "file",
+          "required": true,
+          "note": "桌面菜单项（Exec 指向发布目录内绝对路径；移动目录后需照 README 修正）"
+        },
+        {
+          "path": "VERSION",
+          "kind": "file",
+          "required": true,
+          "note": "key=value：版本、目标三元组、会话、构建时间、rustc、打包脚本"
+        },
+        {
+          "path": "MANIFEST.sha256",
+          "kind": "file",
+          "required": true,
+          "note": "发布目录内全部文件的 sha256（排除自身），打包末尾自校验"
+        },
+        {
+          "path": "bin/",
+          "kind": "dir",
+          "required": true,
+          "note": null
+        },
+        {
+          "path": "share/",
+          "kind": "dir",
+          "required": true,
+          "note": null
+        },
+        {
+          "path": "share/applications/",
+          "kind": "dir",
+          "required": true,
+          "note": null
+        },
+        {
+          "path": "share/doc/",
+          "kind": "dir",
+          "required": true,
+          "note": null
+        },
+        {
+          "path": "share/doc/novel-reader/",
+          "kind": "dir",
+          "required": true,
+          "note": null
+        },
+        {
+          "path": "share/fonts/",
+          "kind": "dir",
+          "required": false,
+          "note": "仅在 --bundle-font 时创建：随包分发中文字体"
+        },
+        {
+          "path": "etc/fonts/fonts.conf",
+          "kind": "file",
+          "required": false,
+          "note": "仅在 --bundle-font 时创建：fontconfig 同时指向随包字体与系统字体目录"
+        },
+        {
+          "path": "lib/",
+          "kind": "dir",
+          "required": false,
+          "note": "预留：随包分发额外 .so（本卡不使用，避免引入第三方运行时依赖）"
+        }
       ],
       "dependencies": {
         "build": {
@@ -116,12 +196,12 @@
         "kind": "gate-result-json",
         "path": "results/desktop/smoke-desktop.json",
         "gate": "smoke-desktop",
-        "run_id": "20260930T044550Z",
+        "run_id": "20261001T025530Z",
         "result": "PASS",
         "backend": "x11",
         "display": ":0",
-        "binary_sha256": "19856f3f8fbdfc2d8f3432ae7e4e770c8e18d84f5b0f509bfa98df01a4b92990",
-        "summary": "12/12 检查通过（窗口 1080x720、首屏 page_index=0/lines=20、章节 8、无残留进程/窗口）；另有对等性门禁 verify-desktop-parity.py 23/23（results/desktop/parity.json）",
+        "binary_sha256": "d90b164fd40c6bbd07d42415646ea97f6383d22f948557fa4d952de47565721c",
+        "summary": "12/12 检查通过（窗口 1200x800、首屏 page_index=0/lines=22、章节 8、无残留进程/窗口）；另有对等性门禁 verify-desktop-parity.py 23/23（results/desktop/parity.json）与输入入口门禁 verify-desktop-input.py 19/19（results/dt8-logs/）",
         "evidence_doc": "results/dt5-desktop-gates.md"
       },
       "blocking_reason": null,
@@ -155,22 +235,102 @@
       "package_command": "bash desktop/packaging/linux/package-linux.sh --backend wayland --out /tmp/nr-dist",
       "release_dir_name_pattern": "novel-reader-{version}-linux-x86_64-wayland",
       "release_layout": [
-        { "path": "bin/novel-reader", "kind": "file", "required": true, "note": "Release 二进制（与 X11 目标同一二进制；winit 后端在运行期按 WAYLAND_DISPLAY/DISPLAY 选择）" },
-        { "path": "bin/novel-reader.sh", "kind": "file", "required": true, "note": "启动包装：定位发布目录、按需设置 FONTCONFIG_FILE/LD_LIBRARY_PATH、原样转发参数与环境" },
-        { "path": "share/doc/novel-reader/README.md", "kind": "file", "required": true, "note": "随包说明（版本、目标、启动方式、数据目录、验证状态）" },
-        { "path": "share/doc/novel-reader/platform-requirements.md", "kind": "file", "required": true, "note": "依赖与系统要求（glibc/字体/运行库/Wayland 会话要求）随包分发" },
-        { "path": "share/doc/novel-reader/runtime-libraries.txt", "kind": "file", "required": false, "note": "构建机 ldd 实测的动态库 soname 清单" },
-        { "path": "share/applications/novel-reader.desktop", "kind": "file", "required": true, "note": "桌面菜单项" },
-        { "path": "VERSION", "kind": "file", "required": true, "note": "key=value：版本、目标、会话、构建时间、rustc、打包脚本" },
-        { "path": "MANIFEST.sha256", "kind": "file", "required": true, "note": "发布目录内全部文件的 sha256" },
-        { "path": "bin/", "kind": "dir", "required": true, "note": null },
-        { "path": "share/", "kind": "dir", "required": true, "note": null },
-        { "path": "share/applications/", "kind": "dir", "required": true, "note": null },
-        { "path": "share/doc/", "kind": "dir", "required": true, "note": null },
-        { "path": "share/doc/novel-reader/", "kind": "dir", "required": true, "note": null },
-        { "path": "share/fonts/", "kind": "dir", "required": false, "note": "仅在 --bundle-font 时创建" },
-        { "path": "etc/fonts/fonts.conf", "kind": "file", "required": false, "note": "仅在 --bundle-font 时创建" },
-        { "path": "lib/", "kind": "dir", "required": false, "note": "预留：随包分发额外 .so（本卡不使用）" }
+        {
+          "path": "bin/novel-reader",
+          "kind": "file",
+          "required": true,
+          "note": "Release 二进制（与 X11 目标同一二进制；winit 后端在运行期按 WAYLAND_DISPLAY/DISPLAY 选择）"
+        },
+        {
+          "path": "bin/novel-reader.sh",
+          "kind": "file",
+          "required": true,
+          "note": "启动包装：定位发布目录、按需设置 FONTCONFIG_FILE/LD_LIBRARY_PATH、原样转发参数与环境"
+        },
+        {
+          "path": "share/doc/novel-reader/README.md",
+          "kind": "file",
+          "required": true,
+          "note": "随包说明（版本、目标、启动方式、数据目录、验证状态）"
+        },
+        {
+          "path": "share/doc/novel-reader/platform-requirements.md",
+          "kind": "file",
+          "required": true,
+          "note": "依赖与系统要求（glibc/字体/运行库/Wayland 会话要求）随包分发"
+        },
+        {
+          "path": "share/doc/novel-reader/runtime-libraries.txt",
+          "kind": "file",
+          "required": false,
+          "note": "构建机 ldd 实测的动态库 soname 清单"
+        },
+        {
+          "path": "share/applications/novel-reader.desktop",
+          "kind": "file",
+          "required": true,
+          "note": "桌面菜单项"
+        },
+        {
+          "path": "VERSION",
+          "kind": "file",
+          "required": true,
+          "note": "key=value：版本、目标、会话、构建时间、rustc、打包脚本"
+        },
+        {
+          "path": "MANIFEST.sha256",
+          "kind": "file",
+          "required": true,
+          "note": "发布目录内全部文件的 sha256"
+        },
+        {
+          "path": "bin/",
+          "kind": "dir",
+          "required": true,
+          "note": null
+        },
+        {
+          "path": "share/",
+          "kind": "dir",
+          "required": true,
+          "note": null
+        },
+        {
+          "path": "share/applications/",
+          "kind": "dir",
+          "required": true,
+          "note": null
+        },
+        {
+          "path": "share/doc/",
+          "kind": "dir",
+          "required": true,
+          "note": null
+        },
+        {
+          "path": "share/doc/novel-reader/",
+          "kind": "dir",
+          "required": true,
+          "note": null
+        },
+        {
+          "path": "share/fonts/",
+          "kind": "dir",
+          "required": false,
+          "note": "仅在 --bundle-font 时创建"
+        },
+        {
+          "path": "etc/fonts/fonts.conf",
+          "kind": "file",
+          "required": false,
+          "note": "仅在 --bundle-font 时创建"
+        },
+        {
+          "path": "lib/",
+          "kind": "dir",
+          "required": false,
+          "note": "预留：随包分发额外 .so（本卡不使用）"
+        }
       ],
       "dependencies": {
         "build": {
@@ -254,16 +414,66 @@
       "package_command": "pwsh -NoProfile -File desktop/packaging/windows/package-windows.ps1 -OutDir dist -Target x86_64-pc-windows-msvc",
       "release_dir_name_pattern": "novel-reader-{version}-windows-x86_64",
       "release_layout": [
-        { "path": "novel-reader.exe", "kind": "file", "required": true, "note": "Release 可执行文件：由 crates/desktop-app/target/<triple>/release/desktop-app.exe 复制并改名" },
-        { "path": "start-novel-reader.cmd", "kind": "file", "required": true, "note": "启动包装：把 dlls/ 加入 PATH 后启动 novel-reader.exe，原样转发参数" },
-        { "path": "docs/platform-requirements.md", "kind": "file", "required": true, "note": "依赖与系统要求（Windows 运行库/字体/显示）随包分发" },
-        { "path": "docs/README.txt", "kind": "file", "required": true, "note": "随包说明（版本、目标、启动方式、数据目录、验证状态）" },
-        { "path": "VERSION", "kind": "file", "required": true, "note": "key=value：版本、目标三元组、构建时间、rustc、打包脚本" },
-        { "path": "MANIFEST.sha256", "kind": "file", "required": true, "note": "发布目录内全部文件的 sha256（PowerShell Get-FileHash 生成并复核）" },
-        { "path": "novel-reader.exe.manifest", "kind": "file", "required": false, "note": "预留：需要时声明 DPI 感知/兼容性（本卡未生成）" },
-        { "path": "dlls/", "kind": "dir", "required": true, "note": "随包 DLL（未使用 -StaticCrt 且探测到 MSVC 运行库时放入 vcruntime140.dll 等）；为空目录时启动包装仍可用" },
-        { "path": "fonts/", "kind": "dir", "required": false, "note": "仅在 -BundleFont 时创建：随包分发中文字体（Windows 不走 fontconfig，需系统安装或由用户自行安装）" },
-        { "path": "docs/", "kind": "dir", "required": true, "note": null }
+        {
+          "path": "novel-reader.exe",
+          "kind": "file",
+          "required": true,
+          "note": "Release 可执行文件：由 crates/desktop-app/target/<triple>/release/desktop-app.exe 复制并改名"
+        },
+        {
+          "path": "start-novel-reader.cmd",
+          "kind": "file",
+          "required": true,
+          "note": "启动包装：把 dlls/ 加入 PATH 后启动 novel-reader.exe，原样转发参数"
+        },
+        {
+          "path": "docs/platform-requirements.md",
+          "kind": "file",
+          "required": true,
+          "note": "依赖与系统要求（Windows 运行库/字体/显示）随包分发"
+        },
+        {
+          "path": "docs/README.txt",
+          "kind": "file",
+          "required": true,
+          "note": "随包说明（版本、目标、启动方式、数据目录、验证状态）"
+        },
+        {
+          "path": "VERSION",
+          "kind": "file",
+          "required": true,
+          "note": "key=value：版本、目标三元组、构建时间、rustc、打包脚本"
+        },
+        {
+          "path": "MANIFEST.sha256",
+          "kind": "file",
+          "required": true,
+          "note": "发布目录内全部文件的 sha256（PowerShell Get-FileHash 生成并复核）"
+        },
+        {
+          "path": "novel-reader.exe.manifest",
+          "kind": "file",
+          "required": false,
+          "note": "预留：需要时声明 DPI 感知/兼容性（本卡未生成）"
+        },
+        {
+          "path": "dlls/",
+          "kind": "dir",
+          "required": true,
+          "note": "随包 DLL（未使用 -StaticCrt 且探测到 MSVC 运行库时放入 vcruntime140.dll 等）；为空目录时启动包装仍可用"
+        },
+        {
+          "path": "fonts/",
+          "kind": "dir",
+          "required": false,
+          "note": "仅在 -BundleFont 时创建：随包分发中文字体（Windows 不走 fontconfig，需系统安装或由用户自行安装）"
+        },
+        {
+          "path": "docs/",
+          "kind": "dir",
+          "required": true,
+          "note": null
+        }
       ],
       "dependencies": {
         "build": {

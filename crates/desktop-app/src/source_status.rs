@@ -68,6 +68,23 @@ pub fn status_label(status: &str) -> String {
     }
 }
 
+/// 核心状态 → 语义色槽位（设计 §2.4 Tag：0=中性 1=信息 2=成功 3=警告 4=错误）。
+pub fn status_tone(status: &str) -> i32 {
+    match status {
+        STATUS_READY => 2,
+        STATUS_MISSING => 4,
+        STATUS_NEEDS_REINDEX => 3,
+        STATUS_IMPORT_FAILED => 4,
+        STATUS_REMOVED => 0,
+        _ => 0,
+    }
+}
+
+/// 该状态是否可以打开阅读（只有 `ready` 可读；其余如实拒绝并给出原因）。
+pub fn status_can_open(status: &str) -> bool {
+    status == STATUS_READY
+}
+
 /// 该标签是否需要「重新关联」入口（内容变化与文件失效共用同一入口）。
 pub fn needs_relink_label(label: &str) -> bool {
     label == LABEL_MISSING || label == LABEL_NEEDS_REINDEX

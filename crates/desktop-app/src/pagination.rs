@@ -1307,6 +1307,30 @@ impl ReaderRuntime {
         self.immersive
     }
 
+    /// 内容总字节数（进度条跳转的换算基准）。
+    pub fn total_bytes(&self) -> u64 {
+        self.session.total_bytes()
+    }
+
+    /// 当前生效的版式常量（沉浸态为派生值；渲染几何与测量同源）。
+    pub fn layout_metrics(&self) -> LayoutMetrics {
+        if self.immersive {
+            self.metrics.immersive()
+        } else {
+            self.metrics
+        }
+    }
+
+    /// 当前视口（窗口逻辑尺寸；渲染几何与测量同源）。
+    pub fn viewport(&self) -> MappedViewport {
+        self.viewport
+    }
+
+    /// 阅读工具条（菜单）展开态。
+    pub fn menu_open(&self) -> bool {
+        self.menu_open
+    }
+
     /// 阅读进度（按**字节位置**的千分比）。
     ///
     /// 页码只属于某个排版签名（切章/重开/改字号后必然失真），因此进度读数一律用字节位置：
@@ -1562,10 +1586,16 @@ impl ReaderRuntime {
         let stats = self.session.cache_stats();
         let typography = self.session.typography();
         let (dropped_measurements, discarded) = self.session.counters();
+        // 正文区（含留白）= 窗口减去装饰的几何事实：沉浸态下等于整窗。
+        let metrics = self.layout_metrics();
+        let area = metrics.content_area(self.viewport.width, self.viewport.height, self.menu_open);
+        let pad_h = metrics.content_padding_h_for(self.viewport.width);
+        let pad_v = metrics.content_padding_v_for(self.viewport.width);
+        let region = (area.width + 2 * pad_h, area.height + 2 * pad_v);
         match self.session.current_page() {
             Some(page) => format!(
                 "NR-PAGE book={} layout={} req={} page_index={} start={} end={} lines={} \
-                 lines_per_page={} pitch={} font={} viewport={}x{} menu={} immersive={} eof={} turns={} \
+                 lines_per_page={} pitch={} font={} window={}x{} viewport={}x{} region={}x{} menu={} immersive={} eof={} turns={} \
                  reflows={} measured={} stale={} cached={} total={}",
                 self.book.book_id,
                 page.layout_id,
@@ -1577,8 +1607,12 @@ impl ReaderRuntime {
                 typography.lines_per_page(),
                 typography.line_pitch_px(),
                 typography.font_size_px(),
+                self.viewport.width,
+                self.viewport.height,
                 typography.line_width_px(),
                 typography.content_height_milli / 1_000,
+                region.0,
+                region.1,
                 u8::from(self.menu_open),
                 u8::from(self.immersive),
                 u8::from(page.eof),
@@ -1591,15 +1625,19 @@ impl ReaderRuntime {
             ),
             None => format!(
                 "NR-PAGE book={} layout={} req=0 page_index=-1 start=0 end=0 lines=0 \
-                 lines_per_page={} pitch={} font={} viewport={}x{} menu={} eof=0 turns={} \
+                 lines_per_page={} pitch={} font={} window={}x{} viewport={}x{} region={}x{} menu={} eof=0 turns={} \
                  reflows={} measured={} stale={} cached={} total={}",
                 self.book.book_id,
                 self.session.layout_id(),
                 typography.lines_per_page(),
                 typography.line_pitch_px(),
                 typography.font_size_px(),
+                self.viewport.width,
+                self.viewport.height,
                 typography.line_width_px(),
                 typography.content_height_milli / 1_000,
+                region.0,
+                region.1,
                 u8::from(self.menu_open),
                 self.turns,
                 self.reflows,

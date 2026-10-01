@@ -13,6 +13,7 @@ use std::path::Path;
 
 use reading_storage::{bookmarks as storage_bookmarks, Storage};
 
+use crate::app_state::MarkRow;
 use crate::chapters::ChapterToc;
 use crate::progress::SavedPosition;
 
@@ -21,19 +22,6 @@ pub const MAX_MARK_TITLE_CHARS: usize = 64;
 
 /// 单次展示的最大书签行数（界面不申请无限长列表）。
 pub const MARKS_PER_PAGE: usize = 8;
-
-/// 书签一行（只含可显示字段）。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MarkRow {
-    /// 书签标识（64 位；跨 UI 一律字符串化，避免精度截断）。
-    pub id: String,
-    /// 书签名。
-    pub title: String,
-    /// 位置标签（「第 N 章 · 偏移 X 字节」，由 Rust 生成，UI 不拼文案）。
-    pub position_label: String,
-    /// 是否命中当前所在章节（界面高亮用；由 Rust 判断）。
-    pub current_chapter: bool,
-}
 
 /// 书签跳转目标。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -203,27 +191,43 @@ pub fn target(db_path: &Path, id: i64) -> Result<MarkTarget, MarkError> {
     })
 }
 
-/// 书签行窗口：从 `offset` 起取 `span` 行，返回（首个下标，行）。
+/// 书签行窗口：先按标题过滤，再从 `offset` 起取 `span` 行，返回（首个下标，行）。
+///
+/// `selected` 是当前选中的书签标识，`delete_pending` 是处于「行内两段确认」的书签标识
+/// （两者都由编排层状态给出；界面不做业务判断）。
 pub fn window(
     targets: &[MarkTarget],
     toc: Option<&ChapterToc>,
     current_chapter: u32,
+    search: &str,
     offset: usize,
     span: usize,
+    selected: &str,
+    delete_pending: &str,
 ) -> (usize, Vec<MarkRow>) {
-    if targets.is_empty() || span == 0 {
+    let keyword = search.trim().to_lowercase();
+    let filtered: Vec<&MarkTarget> = targets
+        .iter()
+        .filter(|target| {
+            keyword.is_empty() || target.title.to_lowercase().contains(&keyword)
+        })
+        .collect();
+    if filtered.is_empty() || span == 0 {
         return (0, Vec::new());
     }
-    let span = span.min(targets.len());
-    let max_first = targets.len() - span;
+    let span = span.min(filtered.len());
+    let max_first = filtered.len() - span;
     let first = offset.min(max_first);
-    let rows = targets[first..first + span]
+    let rows = filtered[first..first + span]
         .iter()
         .map(|target| MarkRow {
             id: target.id.to_string(),
+            chapter: format!("第 {} 章", target.chapter_index + 1),
             title: target.title.clone(),
             position_label: position_label(toc, target),
             current_chapter: target.chapter_index == current_chapter,
+            selected: !selected.is_empty() && selected == target.id.to_string(),
+            delete_pending: !delete_pending.is_empty() && delete_pending == target.id.to_string(),
         })
         .collect();
     (first, rows)
@@ -418,13 +422,29 @@ mod tests {
         }
         let targets = list(&db, book_id).expect("列出");
         assert_eq!(targets.len(), 4);
-        let (first, rows) = window(&targets, Some(&toc), 2, 0, 3);
+        let (first, rows) = window(&targets, Some(&toc), 2, "", 0, 3, "", "");
         assert_eq!(first, 0);
         assert_eq!(rows.len(), 3, "窗口必须有界");
         assert!(rows.iter().any(|row| row.current_chapter));
-        let (first, rows) = window(&targets, Some(&toc), 0, 99, 3);
+        let (first, rows) = window(&targets, Some(&toc), 0, "", 99, 3, "", "");
         assert_eq!(first, 1, "越界偏移夹紧到最后一个窗口");
         assert_eq!(rows.len(), 3);
+        // 过滤：只保留标题命中的行（仍是有界窗口）；选中/删除待确认由入参给出。
+        let second = targets
+            .iter()
+            .find(|target| target.title == "书签2")
+            .expect("存在书签2");
+        let selected = second.id.to_string();
+        let (first, rows) = window(&targets, Some(&toc), 0, "书签2", 0, 8, &selected, "");
+        assert_eq!(first, 0);
+        assert_eq!(rows.len(), 1, "搜索只保留命中的书签");
+        assert!(rows[0].selected, "选中标记由入参给出");
+        assert!(!rows[0].delete_pending);
+        let (_, rows) = window(&targets, Some(&toc), 0, "", 0, 8, "", &selected);
+        assert!(
+            rows.iter().any(|row| row.delete_pending && row.id == selected),
+            "删除待确认标记由入参给出"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 

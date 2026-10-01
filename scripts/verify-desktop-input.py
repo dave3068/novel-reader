@@ -149,11 +149,17 @@ def static_checks() -> None:
         fail("S4_wheel_consumed_not_scrolled", "scroll-event 未显式 accept，可能被解释为滚动正文")
 
     # 阅读页必须真的覆盖在同一个键盘作用域里（面板/输入框是其子元素，按键可冒泡到该作用域）。
-    has_line_edit = re.search(r"rename-edit\s*:=\s*LineEdit", slint_code) is not None
+    has_line_edit = (
+        re.search(r"rename-field\s*:=\s*TextField", slint_code) is not None
+        and "TextInput" in slint_code
+    )
     if has_line_edit:
-        ok("S5_rename_edit_in_scope", "书签重命名输入框位于键盘作用域子树内（聚焦时可冒泡被识别）")
+        ok(
+            "S5_rename_edit_in_scope",
+            "书签重命名输入框是自绘 TextField（内核 TextInput，可聚焦并屏蔽翻页）",
+        )
     else:
-        fail("S5_rename_edit_in_scope", "未找到带 id 的书签重命名输入框（rename-edit）")
+        fail("S5_rename_edit_in_scope", "未找到带 id 的书签重命名输入框（rename-field）")
 
     print("[3] Rust 判定与接线（映射 → 用户翻页入口）")
     rust = INPUT_RS.read_text(encoding="utf-8")
@@ -197,7 +203,7 @@ def static_checks() -> None:
         covered.append("按钮组件")
     if re.search(r"accessible-role\s*:\s*list-item[\s\S]{0,200}?accessible-label\s*:\s*row\.title", slint_code):
         covered.append("列表行（目录/书签）")
-    if re.search(r"accessible-label\s*:\s*\"书签名称\"", slint_code):
+    if re.search(r"label\s*:\s*\"书签名称\"", slint_code):
         covered.append("书签重命名输入框")
     missing = [name for name in ("按钮组件", "列表行（目录/书签）", "书签重命名输入框") if name not in covered]
     if missing:
@@ -218,7 +224,7 @@ def static_checks() -> None:
         "        root.wheel-input(event.delta-x, event.delta-y);\n"
         "        accept\n"
         "    }\n"
-        "rename-edit := LineEdit { accessible-label: \"书签名称\"; }\n"
+        "rename-field := TextField { label: \"书签名称\"; }\n"
         "for row in rows: Rectangle { accessible-role: list-item; accessible-label: row.title; }\n"
     )
     probes = {
@@ -226,7 +232,7 @@ def static_checks() -> None:
         and re.search(r"key-input\s*\(\s*event\.text", sample) is not None,
         "滚轮接收点": re.search(r"scroll-event\s*\(\s*event\s*\)\s*=>", sample) is not None
         and re.search(r"wheel-input\s*\(\s*event\.delta-x\s*,\s*event\.delta-y\s*\)", sample) is not None,
-        "可访问名称": re.search(r"accessible-label\s*:\s*\"书签名称\"", sample) is not None
+        "可访问名称": re.search(r"label\s*:\s*\"书签名称\"", sample) is not None
         and re.search(r"accessible-role\s*:\s*list-item[\s\S]{0,200}?accessible-label\s*:\s*row\.title", sample)
         is not None,
     }

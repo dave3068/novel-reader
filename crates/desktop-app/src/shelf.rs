@@ -1,14 +1,17 @@
-//! 书架后台任务：DT1 中唯一真实的后台阻塞工作。
+//! 书架后台任务：书架读取与列表投影（v0.2.0：路径/体积/状态槽位/进度/最近阅读）。
 //!
 //! 边界：本模块只调用冻结核心的存储层（`reading-storage`）读取已有数据，不解析正文、
 //! 不识别编码、不推导章节；书架为空时如实返回空列表（不注入任何模拟书籍）。
-//! 结果经 [`crate::bridge`] 回到 UI 线程。
+//! 结果经 [`crate::bridge`] 回到 UI 线程；过滤与排序在投影层完成（纯计算）。
 
 use std::path::{Path, PathBuf};
 
 use reading_storage::{books, progress, Storage};
 
-use crate::app_state::{BackgroundPayload, BackgroundResult, SettingsView, ShelfRequest, ShelfRow};
+use crate::app_state::{
+    BackgroundPayload, BackgroundResult, SettingsView, ShelfRequest, ShelfRow,
+};
+use crate::source_status;
 
 /// 应用数据目录内的库文件名。
 pub const LIBRARY_FILE_NAME: &str = "library.db";
@@ -56,37 +59,127 @@ pub fn load_shelf(db_path: &Path) -> BackgroundPayload {
 
     let rows: Vec<ShelfRow> = records
         .iter()
-        .map(|book| ShelfRow {
-            id: book.id.to_string(),
-            title: book.display_name.clone(),
-            status: book.status.clone(),
-            progress: progress_label(&storage, book.id),
+        .map(|book| {
+            let record = progress::load_progress(storage.conn(), book.id)
+                .ok()
+                .flatten();
+            let (progress_label, percent, recent, recent_epoch) = match &record {
+                Some(record) => {
+                    let percent = if book.source_size > 0 {
+                        ((record.byte_offset.max(0) * 1_000) / book.source_size).clamp(0, 1_000)
+                    } else {
+                        0
+                    };
+                    (
+                        format!(
+                            "第 {} 章 · 偏移 {} 字节",
+                            record.chapter_index + 1,
+                            record.byte_offset.max(0)
+                        ),
+                        percent as i32,
+                        local_datetime(storage.conn(), record.last_opened_at),
+                        record.last_opened_at,
+                    )
+                }
+                None => (
+                    "未开始".to_string(),
+                    0,
+                    String::new(),
+                    0,
+                ),
+            };
+            ShelfRow {
+                id: book.id.to_string(),
+                title: book.display_name.clone(),
+                initial: first_char(&book.display_name),
+                meta: format!(
+                    "{} · {}",
+                    book.source_locator,
+                    human_size(book.source_size.max(0) as u64)
+                ),
+                // 原始状态；标签与语义槽位在 `source_status::shelf_job_with_source_check` 映射。
+                status: book.status.clone(),
+                status_tone: source_status::status_tone(&book.status),
+                progress: progress_label,
+                percent,
+                recent,
+                needs_relink: source_status::needs_relink_status(&book.status),
+                can_open: source_status::status_can_open(&book.status),
+                recent_epoch,
+                created_epoch: book.created_at,
+            }
         })
         .collect();
 
-    // 设置投影**必须完整**：`from_settings` 只带阅读参数、`items` 为空，
+    let total_count = books::count_books(storage.conn()).unwrap_or(rows.len() as i64);
+    let removed_count = books::removed_book_count(storage.conn()).unwrap_or(0);
+    let invalid = rows
+        .iter()
+        .filter(|row| source_status::needs_relink_status(&row.status))
+        .count();
+
+    // 设置投影**必须完整**：`from_settings` 只带阅读参数、`rows` 为空，
     // 而书架结果会整体替换 UI 的状态（`AppState::apply_result`），一旦用不完整投影，
-    // 设置页会被刷成空列表（2026-09-29 真实缺陷）。故此处与启动期同源：`from_global`。
+    // 设置页会被刷成空列表（2026-09-29 真实缺陷）。故此处与启动期同源：`view_for`。
     let global = crate::settings::load(db_path).unwrap_or_default();
+    let settings = crate::settings::view_for(db_path, &global);
+
+    let status_text = if invalid > 0 {
+        format!(
+            "书架：{} 本 · {invalid} 本待重新关联",
+            total_count - removed_count
+        )
+    } else {
+        format!("书架：{} 本", total_count - removed_count)
+    };
 
     BackgroundPayload::Shelf {
-        status_text: format!("书架：{} 本", rows.len()),
+        status_text,
         rows,
-        settings: Box::new(SettingsView::from_global(&global)),
+        total_count,
+        removed_count,
+        settings: Box::new(SettingsView { ..settings }),
     }
 }
 
-/// 进度摘要：只显示核心存储层已有的位置事实，不做百分比推导。
-fn progress_label(storage: &Storage, book_id: i64) -> String {
-    match progress::load_progress(storage.conn(), book_id) {
-        Ok(Some(record)) => format!(
-            "第 {} 章 · 偏移 {}",
-            record.chapter_index + 1,
-            record.byte_offset
-        ),
-        Ok(None) => "未开始".to_string(),
-        Err(_) => "进度不可读".to_string(),
+/// 首字（本地派生封面；取第一个非空白字符）。
+fn first_char(name: &str) -> String {
+    name.chars()
+        .find(|ch| !ch.is_whitespace())
+        .map(|ch| ch.to_string())
+        .unwrap_or_else(|| "书".to_string())
+}
+
+/// 体积（人类可读；按 1024 进制）。
+pub fn human_size(bytes: u64) -> String {
+    const KB: f64 = 1024.0;
+    let value = bytes as f64;
+    if value < KB {
+        format!("{bytes} B")
+    } else if value < KB * KB {
+        format!("{:.1} KB", value / KB)
+    } else if value < KB * KB * KB {
+        format!("{:.1} MB", value / (KB * KB))
+    } else {
+        format!("{:.2} GB", value / (KB * KB * KB))
     }
+}
+
+/// Unix 秒 → 本地时间（`yyyy-MM-dd HH:MM`；0/负数返回空串）。
+///
+/// 时区来自 SQLite 的 `localtime` 修饰符（与系统时区一致），不引入额外依赖。
+pub fn local_datetime(conn: &rusqlite::Connection, epoch: i64) -> String {
+    if epoch <= 0 {
+        return String::new();
+    }
+    conn.query_row(
+        "SELECT strftime('%Y-%m-%d %H:%M', ?1, 'unixepoch', 'localtime')",
+        [epoch],
+        |row| row.get::<_, Option<String>>(0),
+    )
+    .ok()
+    .flatten()
+    .unwrap_or_default()
 }
 
 /// 后台任务入口（由 [`crate::bridge::JobChannel`] 调用）。
@@ -104,7 +197,6 @@ mod tests {
 
     #[test]
     fn default_db_path_honours_env_override() {
-        // 只验证环境变量优先级的纯函数行为；不改进程级环境（避免测试互相干扰）。
         let overridden = PathBuf::from("/tmp/nr-dt1/library.db");
         assert_eq!(overridden.file_name().unwrap(), LIBRARY_FILE_NAME);
         assert!(default_db_path().ends_with(LIBRARY_FILE_NAME));
@@ -112,8 +204,6 @@ mod tests {
 
     #[test]
     fn shelf_payload_carries_complete_settings_projection() {
-        // 回归：书架结果会**整体替换** UI 的 settings 投影（`AppState::apply_result`）。
-        // 若这里给的是 `from_settings`（items 为空），设置页会被刷成空列表（真实缺陷）。
         let dir = std::env::temp_dir().join(format!("nr-shelf-settings-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("创建临时目录");
@@ -121,10 +211,13 @@ mod tests {
         match load_shelf(&db_path) {
             BackgroundPayload::Shelf { settings, .. } => {
                 assert!(
-                    !settings.items.is_empty(),
-                    "书架结果必须携带完整的设置投影（items 非空），否则设置页会被清空"
+                    !settings.rows.is_empty(),
+                    "书架结果必须携带完整的设置投影（rows 非空），否则设置页会被清空"
                 );
-                assert_eq!(settings.items.len(), crate::settings::SETTINGS_FIELDS.len());
+                assert!(settings
+                    .rows
+                    .iter()
+                    .any(|row| row.key == crate::settings::KEY_FONT_SIZE));
             }
             other => panic!("书架加载应返回 Shelf，实际 {other:?}"),
         }
@@ -159,5 +252,14 @@ mod tests {
             BackgroundPayload::Failure { message } => assert!(!message.is_empty()),
             other => panic!("期望 Failure 载荷，实际 {other:?}"),
         }
+    }
+
+    #[test]
+    fn size_and_initial_helpers_are_deterministic() {
+        assert_eq!(human_size(512), "512 B");
+        assert_eq!(human_size(2048), "2.0 KB");
+        assert_eq!(human_size(3 * 1024 * 1024), "3.0 MB");
+        assert_eq!(first_char("  三体"), "三");
+        assert_eq!(first_char(""), "书");
     }
 }

@@ -21,18 +21,18 @@ members = [
 exclude = ["experiments"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.98.0"
 publish = false
 
-# 内部 crate 依赖：精确版本锁定（`=0.1.0`），不使用 `*` / `^` / `~` 等浮动区间。
+# 内部 crate 依赖：精确版本锁定（`=0.2.0`），不使用 `*` / `^` / `~` 等浮动区间。
 [workspace.dependencies]
-reading-core = { path = "crates/reading-core", version = "=0.1.0" }
-reading-ffi = { path = "crates/reading-ffi", version = "=0.1.0" }
-reading-index = { path = "crates/reading-index", version = "=0.1.0" }
-reading-source = { path = "crates/reading-source", version = "=0.1.0" }
-reading-storage = { path = "crates/reading-storage", version = "=0.1.0" }
+reading-core = { path = "crates/reading-core", version = "=0.2.0" }
+reading-ffi = { path = "crates/reading-ffi", version = "=0.2.0" }
+reading-index = { path = "crates/reading-index", version = "=0.2.0" }
+reading-source = { path = "crates/reading-source", version = "=0.2.0" }
+reading-storage = { path = "crates/reading-storage", version = "=0.2.0" }
 
 [profile.release]
 opt-level = 3
