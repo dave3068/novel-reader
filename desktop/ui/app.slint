@@ -1329,7 +1329,7 @@ component ShelfPage inherits Rectangle {
     // 卡片列数（3 / 2 / 1）。
     private property <int> card-columns: root.width >= (UiMetrics.card-width * 3 + UiMetrics.space-32 + UiMetrics.space-32) ? 3 : (root.width >= (UiMetrics.card-width * 2 + UiMetrics.space-16 + UiMetrics.space-32) ? 2 : 1);
     private property <length> card-gap: UiMetrics.space-16;
-    private property <length> cards-height: Math.floor((root.rows.length + root.card-columns - 1) / root.card-columns) * (UiMetrics.card-height + root.card-gap) + root.card-gap;
+    private property <length> cards-height: Math.floor((root.rows.length + root.card-columns - 1) / root.card-columns) * (UiMetrics.card-height + root.card-gap) + root.card-gap + (root.menu-index >= 0 ? UiMetrics.list-row-height + UiMetrics.space-4 : 0px);
     private property <length> table-height: root.rows.length * UiMetrics.table-row-height + (root.menu-index >= 0 ? UiMetrics.list-row-height : 0px) + UiMetrics.space-16;
 
     // ---- S4：失效源文件通知（宽 = 内容区）----
@@ -1518,8 +1518,23 @@ component ShelfPage inherits Rectangle {
                     overflow: elide;
                     visible: root.recent-visible;
                 }
-                IconButton {
+                row-open-btn := TextButton {
                     x: root.col-actions-x;
+                    y: (parent.height - self.height) / 2;
+                    width: UiMetrics.column-actions-width - UiMetrics.icon-button-compact-size - UiMetrics.space-4;
+                    compact: true;
+                    variant: row.needs-relink ? 1 : 0;
+                    caption: row.needs-relink ? "重新关联…" : "继续阅读";
+                    activated => {
+                        if (row.needs-relink) {
+                            root.row-action("relink", row.id);
+                        } else {
+                            root.open-book(row.id);
+                        }
+                    }
+                }
+                IconButton {
+                    x: row-open-btn.x + row-open-btn.width + UiMetrics.space-4;
                     y: (parent.height - self.height) / 2;
                     compact: true;
                     caption: "更多操作";
@@ -1533,9 +1548,10 @@ component ShelfPage inherits Rectangle {
 
             // 行级菜单（展开时内联在行下方；破坏性动作已分离）。
             if root.menu-index >= 0 && root.menu-index < root.rows.length : Rectangle {
-                x: 0;
-                y: UiMetrics.table-header-height + (root.menu-index + 1) * UiMetrics.table-row-height;
-                width: parent.width;
+                // 卡片模式：菜单条贴在该卡片下方并与卡片左边缘对齐（与列表模式功能一致）。
+                x: root.view == 1 ? (UiMetrics.space-16 + (root.menu-index - Math.floor(root.menu-index / root.card-columns) * root.card-columns) * (UiMetrics.card-width + root.card-gap)) : 0px;
+                y: root.view == 1 ? (UiMetrics.space-16 + Math.floor(root.menu-index / root.card-columns) * (UiMetrics.card-height + root.card-gap) + UiMetrics.card-height + UiMetrics.space-4) : (UiMetrics.table-header-height + (root.menu-index + 1) * UiMetrics.table-row-height);
+                width: root.view == 1 ? UiMetrics.card-width : parent.width;
                 height: UiMetrics.list-row-height;
                 background: Skin.layer-02;
                 border-width: UiMetrics.hairline;
@@ -1703,7 +1719,7 @@ component ShelfPage inherits Rectangle {
                 TextButton {
                     x: UiMetrics.space-16;
                     y: UiMetrics.space-16 + UiMetrics.cover-size + UiMetrics.space-12 + UiMetrics.space-24 + UiMetrics.space-4 + UiMetrics.tag-height + UiMetrics.space-4 + UiMetrics.space-16 + UiMetrics.space-4 + UiMetrics.progress-bar-height + UiMetrics.space-8;
-                    width: parent.width - 2 * UiMetrics.space-16;
+                    width: parent.width - 2 * UiMetrics.space-16 - UiMetrics.icon-button-compact-size - UiMetrics.space-8;
                     compact: true;
                     variant: row.needs-relink ? 1 : 0;
                     caption: row.needs-relink ? "重新关联…" : "继续阅读";
@@ -1713,6 +1729,16 @@ component ShelfPage inherits Rectangle {
                         } else {
                             root.open-book(row.id);
                         }
+                    }
+                }
+                IconButton {
+                    x: parent.width - UiMetrics.space-16 - self.width;
+                    y: UiMetrics.space-16 + UiMetrics.cover-size + UiMetrics.space-12 + UiMetrics.space-24 + UiMetrics.space-4 + UiMetrics.tag-height + UiMetrics.space-4 + UiMetrics.space-16 + UiMetrics.space-4 + UiMetrics.progress-bar-height + UiMetrics.space-8;
+                    compact: true;
+                    caption: "更多操作";
+                    shape: Icons.more;
+                    activated => {
+                        root.row-menu(i);
                     }
                 }
             }
@@ -1861,7 +1887,7 @@ component ShelfPage inherits Rectangle {
     }
     if root.sort-open : Rectangle {
         x: sort-field.x;
-        y: UiMetrics.page-header-height + UiMetrics.space-4;
+        y: (UiMetrics.page-header-height - UiMetrics.button-height-compact) / 2 + UiMetrics.button-height-compact + UiMetrics.space-4;
         width: UiMetrics.sort-field-width + UiMetrics.space-48;
         height: 3 * UiMetrics.list-row-height + UiMetrics.space-8;
         background: Skin.layer-02;
@@ -2735,6 +2761,8 @@ component ReaderPage inherits Rectangle {
 // ---------------------------------------------------------------------------
 
 component SettingsPage inherits Rectangle {
+    // 表单内容高度（像素；Rust 投影，与行高口径一致）。
+    in property <length> content-height: 0px;
     in property <[SettingsRow]> rows: [];
     in property <string> note: "";
     in property <string> data-path: "";
@@ -2821,7 +2849,7 @@ component SettingsPage inherits Rectangle {
         viewport-width: self.width;
         // 视口高度必须显式给出：若等于窗口高度，则「无内容可滚」→
         // 滚动条拖不动、滚轮无效（真实缺陷回归）。
-        viewport-height: max(self.height, settings-layout.preferred-height);
+        viewport-height: max(self.height, root.content-height);
         interactive: self.viewport-height > self.height;
 
         settings-layout := VerticalLayout {
@@ -3228,6 +3256,10 @@ component ErrorPage inherits Rectangle {
 
 export component AppWindow inherits Window {
     title: "novel-reader";
+    // 窗口图标：编译期内嵌（Slint `@image-url`），资源来源与刷新口径见
+    // `desktop/assets/icons/README.md`（设计事实来源在 `docs/design/icon/`）。
+    // 支持它的窗口管理器会把它显示在标题栏/任务栏；不支持时静默忽略，不影响启动。
+    icon: @image-url("../assets/icons/novel-reader-256.png");
     preferred-width: UiMetrics.default-window-width;
     preferred-height: UiMetrics.default-window-height;
     min-width: UiMetrics.min-window-width;
@@ -3313,6 +3345,8 @@ export component AppWindow inherits Window {
     in property <[SettingsRow]> settings-rows: [];
     in property <string> settings-note: "";
     in property <string> settings-data-path: "";
+    // 设置页表单内容高度（像素；由 Rust 按行高口径求和投影）。
+    in property <length> settings-content-height: 0px;
     // 导入 / 错误
     in property <string> import-file: "";
     in property <string> import-size: "";
@@ -3694,6 +3728,7 @@ export component AppWindow inherits Window {
         rows: root.settings-rows;
         note: root.settings-note;
         data-path: root.settings-data-path;
+        content-height: root.settings-content-height;
         cycle(key) => {
             root.settings-cycle(key);
         }
@@ -3809,9 +3844,13 @@ export component AppWindow inherits Window {
                 vertical-alignment: center;
                 visible: root.current-screen == Screens.reader && !root.reader-immersive && root.status-percent != "";
             }
-            if root.status-meta != "" : Tag {
-                tone: 1;
-                text: root.status-meta;
+            if root.status-meta != "" : VerticalLayout {
+                alignment: center;
+
+                Tag {
+                    tone: 1;
+                    text: root.status-meta;
+                }
             }
             Text {
                 text: root.app-version;

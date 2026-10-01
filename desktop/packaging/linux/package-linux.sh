@@ -102,6 +102,13 @@ REQUIRED_FILES=(
   "bin/novel-reader"
   "bin/novel-reader.sh"
   "share/applications/novel-reader.desktop"
+  "share/icons/hicolor/16x16/apps/novel-reader.png"
+  "share/icons/hicolor/32x32/apps/novel-reader.png"
+  "share/icons/hicolor/48x48/apps/novel-reader.png"
+  "share/icons/hicolor/64x64/apps/novel-reader.png"
+  "share/icons/hicolor/128x128/apps/novel-reader.png"
+  "share/icons/hicolor/256x256/apps/novel-reader.png"
+  "share/icons/hicolor/scalable/apps/novel-reader.svg"
   "share/doc/novel-reader/README.md"
   "share/doc/novel-reader/platform-requirements.md"
   "VERSION"
@@ -111,12 +118,32 @@ REQUIRED_DIRS=(
   "bin"
   "share"
   "share/applications"
+  "share/icons"
+  "share/icons/hicolor"
+  "share/icons/hicolor/48x48/apps"
+  "share/icons/hicolor/128x128/apps"
+  "share/icons/hicolor/256x256/apps"
+  "share/icons/hicolor/scalable/apps"
   "share/doc"
   "share/doc/novel-reader"
 )
 
+# 图标来源：设计事实来源（docs/design/icon/）——本脚本不重复维护图标二进制。
+ICON_SRC_DIR="$REPO_ROOT/docs/design/icon/png"
+ICON_SVG_SRC="$REPO_ROOT/docs/design/icon/svg/novel-reader-icon.svg"
+# hicolor 主题尺寸（图标尺寸 → 源文件）
+ICON_SIZES=(16 32 48 64 128 256)
+
 for tool in cp mkdir rm find sort awk sha256sum; do
   command -v "$tool" >/dev/null 2>&1 || die_precondition "缺少工具 $tool"
+done
+
+# 图标源必须齐备（打包只做复制，不在本脚本内维护图标二进制）
+[ -d "$ICON_SRC_DIR" ] || die_precondition "缺少图标源目录 $ICON_SRC_DIR（设计事实来源：docs/design/icon/）"
+[ -f "$ICON_SVG_SRC" ] || die_precondition "缺少矢量图标 $ICON_SVG_SRC"
+for size in "${ICON_SIZES[@]}"; do
+  [ -f "$ICON_SRC_DIR/novel-reader-icon-${size}.png" ] \
+    || die_precondition "缺少图标 $ICON_SRC_DIR/novel-reader-icon-${size}.png"
 done
 
 echo "package-linux: repo=$REPO_ROOT"
@@ -134,6 +161,8 @@ if [ "$DRY_RUN" -eq 1 ]; then
     echo "    可选  share/fonts/ + etc/fonts/fonts.conf（未使用 --bundle-font，依赖系统字体）"
   fi
   echo "    可选  share/doc/novel-reader/runtime-libraries.txt（ldd 可用时生成）"
+  echo "    图标  share/icons/hicolor/{${ICON_SIZES[*]}}x…/apps/novel-reader.png ← $ICON_SRC_DIR"
+  echo "    图标  share/icons/hicolor/scalable/apps/novel-reader.svg ← $ICON_SVG_SRC"
   echo "[2] 依赖与系统要求文档：$DEPS_DOC"
   [ -f "$DEPS_DOC" ] && echo "    OK  文档存在（$(wc -c <"$DEPS_DOC" | awk '{print $1}') 字节）" \
     || echo "    WARN 文档缺失（依赖说明将不随包分发）"
@@ -191,7 +220,7 @@ if [ -e "$RELEASE_DIR" ]; then
   esac
 fi
 echo "[2] 组装发布目录：$RELEASE_DIR"
-mkdir -p "$RELEASE_DIR/bin" "$RELEASE_DIR/share/applications" "$RELEASE_DIR/share/doc/novel-reader"
+mkdir -p "$RELEASE_DIR/bin" "$RELEASE_DIR/share/applications" "$RELEASE_DIR/share/doc/novel-reader" "$RELEASE_DIR/share/icons/hicolor"
 
 cp -f "$APP_BINARY" "$RELEASE_DIR/bin/novel-reader"
 chmod 0755 "$RELEASE_DIR/bin/novel-reader"
@@ -225,11 +254,28 @@ Type=Application
 Version=1.0
 Name=novel-reader
 Comment=TXT 小说阅读器（Rust + Slint）
+Icon=novel-reader
 Exec=$RELEASE_DIR/bin/novel-reader.sh
 Terminal=false
 Categories=Office;Viewer;
 StartupWMClass=desktop-app
 DESKTOP
+
+# ---------------------------------------------------------------------------
+# [4b] 应用图标（hicolor 主题：按尺寸安装 PNG，另附可缩放矢量）
+# ---------------------------------------------------------------------------
+# 口径：`Icon=novel-reader`（无扩展名）由桌面环境按 hicolor 主题与当前尺寸自动挑选；
+# 因此必须同时安装各尺寸 PNG 与 scalable/apps 下的 SVG。图标二进制不在此维护，
+# 一律取自设计事实来源 docs/design/icon/（缺项时脚本在开头即以 exit 2 拒绝）。
+for size in "${ICON_SIZES[@]}"; do
+  mkdir -p "$RELEASE_DIR/share/icons/hicolor/${size}x${size}/apps"
+  cp -f "$ICON_SRC_DIR/novel-reader-icon-${size}.png" \
+        "$RELEASE_DIR/share/icons/hicolor/${size}x${size}/apps/novel-reader.png"
+done
+mkdir -p "$RELEASE_DIR/share/icons/hicolor/scalable/apps"
+cp -f "$ICON_SVG_SRC" "$RELEASE_DIR/share/icons/hicolor/scalable/apps/novel-reader.svg"
+ICON_COUNT="$(find "$RELEASE_DIR/share/icons" -type f | wc -l | awk '{print $1}')"
+echo "[4b] 应用图标：hicolor ${#ICON_SIZES[@]} 个尺寸 + scalable SVG（共 $ICON_COUNT 个文件）"
 
 # ---------------------------------------------------------------------------
 # [5] 随包字体（可选）
@@ -283,7 +329,13 @@ $RELEASE_DIR/bin/novel-reader.sh
 * 数据目录：\`\${XDG_DATA_HOME:-$HOME/.local/share}/novel-reader/library.db\`（可用 \`NR_DB_PATH\` 覆盖）；
 * 启动包装会自动注入随包字体（存在 \`etc/fonts/fonts.conf\` 时）与随包库（存在 \`lib/\` 时）；
 * 桌面菜单项：\`share/applications/novel-reader.desktop\`（\`Exec\` 指向打包时的绝对路径，
-  目录移动后请重新打包或手工修正该行）。
+  目录移动后请重新打包或手工修正该行）；
+* 应用图标：\`share/icons/hicolor/<N>x<N>/apps/novel-reader.png\`（16/32/48/64/128/256）与
+  \`share/icons/hicolor/scalable/apps/novel-reader.svg\`；菜单项的 \`Icon=novel-reader\` 依赖它们。
+  若要在系统菜单里看到图标，请把 \`share/icons\` 下的 hicolor 树复制到
+  \`~/.local/share/icons\`（或 \`/usr/share/icons\`），并把 .desktop 复制到
+  \`~/.local/share/applications\`（或 \`/usr/share/applications\`）；只运行 \`bin/novel-reader.sh\`
+  时图标仍会出现在窗口标题栏/任务栏（图标已编译期内嵌在二进制中）。
 
 ## 依赖与系统要求
 
@@ -355,6 +407,7 @@ done
 FILE_COUNT="$(find "$RELEASE_DIR" -type f | wc -l | awk '{print $1}')"
 TOTAL_BYTES="$(du -sb "$RELEASE_DIR" | awk '{print $1}')"
 BIN_SHA="$(sha256sum "$RELEASE_DIR/bin/novel-reader" | awk '{print $1}')"
+echo "NR-PKG icons=$ICON_COUNT（hicolor ${#ICON_SIZES[@]} 尺寸 + scalable）"
 echo "NR-PKG files=$FILE_COUNT bytes=$TOTAL_BYTES binary_sha256=$BIN_SHA"
 echo "NR-PKG manifest=$RELEASE_DIR/MANIFEST.sha256"
 
