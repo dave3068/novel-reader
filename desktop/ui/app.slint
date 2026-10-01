@@ -1307,15 +1307,21 @@ component RowMenuStrip inherits Rectangle {
     background: Skin.layer-02;
     border-width: UiMetrics.hairline;
     border-color: Skin.primary-border;
+    // 轻量投影：让内联菜单条有浮层感（不回退为“页面内联元素”的观感）。
+    drop-shadow-color: #00000026;
+    drop-shadow-blur: UiMetrics.space-8;
+    drop-shadow-offset-y: UiMetrics.space-4;
 
                 HorizontalLayout {
-                    x: root.dense ? UiMetrics.space-8 : UiMetrics.space-16;
+                    // 卡片（紧凑）模式：按钮直接顶到最左侧，不显示「行操作」标签。
+                    x: root.dense ? 0px : UiMetrics.space-16;
                     y: 0;
                     width: parent.width - 2 * self.x;
                     spacing: root.dense ? UiMetrics.space-4 : UiMetrics.space-8;
                     alignment: start;
 
                     Text {
+                        visible: !root.dense;
                         text: "行操作";
                         font-size: UiMetrics.caption-font-size;
                         color: Skin.text-placeholder;
@@ -2821,6 +2827,14 @@ component SettingsPage inherits Rectangle {
     in property <length> viewport-height: 0px;
     callback scroll-by(length);
     callback scroll-to(float);
+    // 下拉框（选择型字段）状态与交互。
+    in property <bool> select-open: false;
+    in property <length> select-y: 0px;
+    in property <string> select-key: "";
+    in property <int> select-index: 0;
+    in property <[string]> select-options: [];
+    callback select-toggle(string);
+    callback select-close();
     in property <[SettingsRow]> rows: [];
     in property <string> note: "";
     in property <string> data-path: "";
@@ -2962,7 +2976,7 @@ component SettingsPage inherits Rectangle {
                     }
                     TouchArea {
                         clicked => {
-                            root.cycle(row.key);
+                            root.select-toggle(row.key);
                         }
                     }
                 }
@@ -3077,6 +3091,55 @@ component SettingsPage inherits Rectangle {
                 width: parent.width;
                 height: UiMetrics.space-24;
                 background: transparent;
+            }
+        }
+    }
+
+    // 选择型字段的下拉列表（点击字段展开；点其他处或选中后收起）。
+    if root.select-open : TouchArea {
+        x: 0;
+        y: UiMetrics.page-header-height;
+        width: parent.width;
+        height: parent.height - UiMetrics.page-header-height;
+        clicked => {
+            root.select-close();
+        }
+    }
+    if root.select-open : Rectangle {
+        x: root.control-x;
+        y: UiMetrics.page-header-height + root.select-y - root.scroll-y;
+        width: UiMetrics.search-field-width;
+        height: root.select-options.length * UiMetrics.list-row-height + 2 * UiMetrics.space-4;
+        background: Skin.layer-02;
+        border-width: UiMetrics.hairline;
+        border-color: Skin.border-strong;
+        drop-shadow-color: #00000026;
+        drop-shadow-blur: UiMetrics.space-8;
+        drop-shadow-offset-y: UiMetrics.space-4;
+
+        for option[index] in root.select-options : Rectangle {
+            x: 0;
+            y: UiMetrics.space-4 + index * UiMetrics.list-row-height;
+            width: parent.width;
+            height: UiMetrics.list-row-height;
+            background: index == root.select-index ? Skin.primary-soft : transparent;
+
+            Text {
+                x: UiMetrics.space-8;
+                y: 0;
+                width: parent.width - 2 * UiMetrics.space-8;
+                height: parent.height;
+                text: option;
+                font-size: UiMetrics.ui-font-size;
+                color: index == root.select-index ? Skin.primary : Skin.text-primary;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            TouchArea {
+                clicked => {
+                    root.set-index(root.select-key, index);
+                    root.select-close();
+                }
             }
         }
     }
@@ -3428,6 +3491,12 @@ export component AppWindow inherits Window {
     // 设置页滚动偏移与视口高度（Rust 持有；拖动/键盘/滚轮都经 Rust 计算并夹紧）。
     in property <length> settings-scroll-y: 0px;
     in property <length> settings-viewport-height: 0px;
+    // 设置页下拉框（选择型字段）。
+    in property <bool> settings-select-open: false;
+    in property <length> settings-select-y: 0px;
+    in property <string> settings-select-key: "";
+    in property <int> settings-select-index: 0;
+    in property <[string]> settings-select-options: [];
     // 导入 / 错误
     in property <string> import-file: "";
     in property <string> import-size: "";
@@ -3486,6 +3555,8 @@ export component AppWindow inherits Window {
     callback shelf-sort-set(int);
     callback settings-scroll-by(length);
     callback settings-scroll-to(float);
+    callback settings-select-toggle(string);
+    callback settings-select-close();
     callback shelf-open-book(string);
     callback shelf-row-menu(int);
     callback shelf-row-action(string, string);
@@ -3819,6 +3890,17 @@ export component AppWindow inherits Window {
         }
         scroll-to(ratio) => {
             root.settings-scroll-to(ratio);
+        }
+        select-open: root.settings-select-open;
+        select-y: root.settings-select-y;
+        select-key: root.settings-select-key;
+        select-index: root.settings-select-index;
+        select-options: root.settings-select-options;
+        select-toggle(key) => {
+            root.settings-select-toggle(key);
+        }
+        select-close() => {
+            root.settings-select-close();
         }
         cycle(key) => {
             root.settings-cycle(key);
