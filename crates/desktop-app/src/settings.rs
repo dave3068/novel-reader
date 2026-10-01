@@ -253,6 +253,10 @@ pub struct SettingsRowView {
     pub mono: bool,
     /// 取值范围显示口径（如 `12 … 40`、`1.0 × … 2.4 ×`；空串表示不显示）。
     pub range_label: String,
+    /// 行高（像素；与行内容一致：分组标题 48、滑杆行 72、其余 56）。
+    pub row_height: u32,
+    /// 行在内容坐标系中的 y 偏移（像素；Rust 计算，界面绝对定位）。
+    pub offset_y: u32,
 }
 
 /// 设置来源（证据用）。
@@ -855,6 +859,9 @@ pub fn display_rows(
         checked: settings.control_value(key) != 0,
         mono: false,
         range_label: range_label(key),
+        // 行高与 y 偏移在 `display_rows` 末尾统一计算。
+        row_height: 0,
+        offset_y: 0,
     };
 
     // ---- 排版 ----
@@ -919,6 +926,14 @@ pub fn display_rows(
         section: 4,
         ..SettingsRowView::default()
     });
+    // 逐行计算 y 偏移与行高：界面按此**绝对定位**每一行（不依赖布局引擎）。
+    let mut offset = 0u32;
+    for row in rows.iter_mut() {
+        offset += 8;
+        row.offset_y = offset;
+        row.row_height = row_height(row.kind);
+        offset += row.row_height;
+    }
     rows
 }
 
@@ -945,6 +960,17 @@ fn field_range(key: &str) -> Option<NumericRange> {
     }
 }
 
+/// 单行高度（像素；与 `.slint` 行内容一致）。
+///
+/// 分组标题 48；数值滑杆行 48 + 24；其余单行 48 + 8。
+pub fn row_height(kind: i32) -> u32 {
+    match kind {
+        5 => 48,
+        1 => 48 + 24,
+        _ => 48 + 8,
+    }
+}
+
 /// 设置页内容高度（像素）：与 `app.slint` 的行高公式**逐项一致**。
 ///
 /// 行高口径（`.slint`）：分组标题 48；数值滑杆行 48 + 24；其余单行 48 + 8；
@@ -954,12 +980,7 @@ pub fn content_height(rows: &[SettingsRowView]) -> u32 {
     // 布局为「每行之前一个 8 像素间距」+ 末尾 24 像素留白（与 `.slint` 的 spacing/尾部占位一致）。
     let mut total: u32 = 0;
     for row in rows {
-        total += 8;
-        total += match row.kind {
-            5 => 48,
-            1 => 48 + 24,
-            _ => 48 + 8,
-        };
+        total += 8 + row_height(row.kind);
     }
     total + 24
 }
