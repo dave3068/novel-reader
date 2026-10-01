@@ -618,6 +618,8 @@ pub fn apply_snapshot(ui: &AppWindow, snapshot: &UiSnapshot) {
             checked: row.checked,
             mono: row.mono,
             range_label: row.range_label.as_str().into(),
+            row_height: row.row_height as f32,
+            offset_y: row.offset_y as f32,
         })
         .collect();
     ui.set_settings_rows(ModelRc::new(VecModel::from(settings_rows)));

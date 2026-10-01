@@ -85,6 +85,9 @@ export struct SettingsRow {
     mono: bool,
     // 取值范围显示口径（如 `12 … 40`、`1.0 × … 2.4 ×`；空串隐藏）。
     range-label: string,
+    // 行高与内容坐标 y（Rust 投影；界面按此绝对定位每一行）。
+    row-height: length,
+    offset-y: length,
 }
 
 // 快捷键说明一行（action/keys 由 Rust 生成；available=false 为建议项）。
@@ -249,6 +252,8 @@ export global Screens {
 
 // 自绘几何线框图标（16 单位坐标系；零依赖，不引入图标库资源）。
 export global Icons {
+    // 向右三角形（播放 / 继续阅读）。
+    out property <string> play: "M 4 2 L 14 8 L 4 14 Z";
     out property <string> chevron-left: "M 10 3 L 5 8 L 10 13";
     out property <string> chevron-right: "M 6 3 L 11 8 L 6 13";
     out property <string> chevron-up: "M 4 10 L 8 6 L 12 10";
@@ -321,12 +326,14 @@ component Icon inherits Path {
     in property <string> shape: "";
     in property <length> size: UiMetrics.icon-size;
     in property <color> color: Skin.text-primary;
+    // 填充色（默认透明 = 线框图标；三角等实心图标传入与 stroke 同色）。
+    in property <color> fill-color: transparent;
     width: root.size;
     height: root.size;
     commands: root.shape;
     stroke: root.color;
     stroke-width: UiMetrics.hairline;
-    fill: transparent;
+    fill: root.fill-color;
     viewbox-width: 16;
     viewbox-height: 16;
 }
@@ -369,6 +376,8 @@ component IconButton inherits Rectangle {
     in property <bool> tip-below: false;
     // 位于深色顶栏（前景取 header-text，与品牌图标一致）。
     in property <bool> on-header: false;
+    // 实心图标（三角等）。
+    in property <bool> filled: false;
     in property <length> button-size: root.compact ? UiMetrics.icon-button-compact-size : UiMetrics.icon-button-size;
     callback activated();
 
@@ -395,6 +404,7 @@ component IconButton inherits Rectangle {
         shape: root.shape;
         size: UiMetrics.icon-size;
         color: !root.enabled ? Skin.disabled-text : (root.danger ? Skin.support-error : (root.on-header ? Skin.header-text : (root.selected ? Skin.primary : Skin.text-primary)));
+        fill-color: root.filled ? (!root.enabled ? Skin.disabled-text : (root.danger ? Skin.support-error : (root.on-header ? Skin.header-text : (root.selected ? Skin.primary : Skin.text-primary)))) : transparent;
     }
 
     if (area.has-hover || area.pressed) && root.caption != "" : Rectangle {
@@ -1310,7 +1320,7 @@ component RowMenuStrip inherits Rectangle {
                     TextButton {
                         variant: 1;
                         compact: true;
-                        caption: "重新关联…";
+                        caption: "重新关联";
                         activated => {
                             root.picked("relink");
                         }
@@ -1318,7 +1328,7 @@ component RowMenuStrip inherits Rectangle {
                     TextButton {
                         variant: 1;
                         compact: true;
-                        caption: "重命名…";
+                        caption: "重命名";
                         activated => {
                             root.picked("rename");
                         }
@@ -1326,7 +1336,7 @@ component RowMenuStrip inherits Rectangle {
                     TextButton {
                         variant: 3;
                         compact: true;
-                        caption: "移出书架…";
+                        caption: "移出";
                         activated => {
                             root.picked("remove");
                         }
@@ -1334,7 +1344,7 @@ component RowMenuStrip inherits Rectangle {
                     TextButton {
                         variant: 3;
                         compact: true;
-                        caption: "彻底删除记录…";
+                        caption: "彻底删除";
                         activated => {
                             root.picked("purge");
                         }
@@ -1392,6 +1402,8 @@ component ShelfPage inherits Rectangle {
     private property <length> col-recent-x: root.col-actions-x - (root.recent-visible ? UiMetrics.column-recent-width : 0px);
     private property <length> col-progress-x: root.col-recent-x - UiMetrics.column-progress-width;
     private property <length> col-status-x: root.col-progress-x - UiMetrics.column-status-width;
+    // 卡片模式菜单条的可用右边界（可视区内；右侧留出滚动条与页边距）。
+    private property <length> cards-menu-max-x: root.width - UiMetrics.scrollbar-gutter - 2 * UiMetrics.space-16;
     // 卡片列数（3 / 2 / 1）。
     private property <int> card-columns: root.width >= (UiMetrics.card-width * 3 + UiMetrics.space-32 + UiMetrics.space-32) ? 3 : (root.width >= (UiMetrics.card-width * 2 + UiMetrics.space-16 + UiMetrics.space-32) ? 2 : 1);
     private property <length> card-gap: UiMetrics.space-16;
@@ -1600,9 +1612,10 @@ component ShelfPage inherits Rectangle {
                     x: root.col-actions-x;
                     y: (parent.height - self.height) / 2;
                     compact: true;
-                    caption: row.needs-relink ? "重新关联…" : "继续阅读";
+                    caption: row.needs-relink ? "重新关联" : "继续阅读";
                     selected: false;
-                    shape: Icons.book;
+                    shape: row.needs-relink ? Icons.error : Icons.play;
+                    filled: !row.needs-relink;
                     activated => {
                         if (row.needs-relink) {
                             root.row-action("relink", row.id);
@@ -1638,11 +1651,12 @@ component ShelfPage inherits Rectangle {
                 // 注意：Slint 的 `/` 对整数是**浮点**除法，网格下标必须显式取整
                 // （否则卡片会单列堆叠、逐张盖住 —— 真实缺陷回归）。
                 x: UiMetrics.space-16 + (i - Math.floor(i / root.card-columns) * root.card-columns) * (UiMetrics.card-width + root.card-gap);
-                // 卡片模式下菜单条只出现在卡片下方（与列表模式互不影响）。
+                // 卡片模式下菜单条只出现在卡片下方（与列表模式互不影响）；
+                // 最右一列会**左对齐夹紧**，避免按钮条超出可视区（真实缺陷回归）。
                 if i == root.menu-index : RowMenuStrip {
-                    x: 0;
+                    x: min(0px, root.cards-menu-max-x - self.width - (i - Math.floor(i / root.card-columns) * root.card-columns) * (UiMetrics.card-width + root.card-gap));
                     y: UiMetrics.card-height + UiMetrics.space-4;
-                    width: UiMetrics.card-width;
+                    width: min(UiMetrics.card-width, root.cards-menu-max-x);
                     picked(action) => {
                         if (action == "close") {
                             root.row-menu(-2);
@@ -1746,7 +1760,7 @@ component ShelfPage inherits Rectangle {
                     width: parent.width - 2 * UiMetrics.space-16 - UiMetrics.icon-button-compact-size - UiMetrics.space-8;
                     compact: true;
                     variant: row.needs-relink ? 1 : 0;
-                    caption: row.needs-relink ? "重新关联…" : "继续阅读";
+                    caption: row.needs-relink ? "重新关联" : "继续阅读";
                     activated => {
                         if (row.needs-relink) {
                             root.row-action("relink", row.id);
@@ -2787,8 +2801,6 @@ component ReaderPage inherits Rectangle {
 component SettingsPage inherits Rectangle {
     // 表单内容高度（像素；Rust 投影，与行高口径一致）。
     in property <length> content-height: 0px;
-    // 当前滚动偏移（自绘滚动；拖动/滚轮/键盘共用）。
-    private property <length> scroll-y: 0px;
     in property <[SettingsRow]> rows: [];
     in property <string> note: "";
     in property <string> data-path: "";
@@ -2832,40 +2844,29 @@ component SettingsPage inherits Rectangle {
     }
 
     // 键盘翻动（PageUp/PageDown/↑/↓/Home/End）；滚轮与拖动由 Flickable 负责。
-    // 设置内容视口：**自绘滚动**（scroll-y），不依赖 Flickable 的视口语义。
-    Rectangle {
+    // 设置内容视口：Flickable 负责**滚轮与拖动**（原生行为），内容为**绝对定位行**
+    // （每行 y/height 由 Rust 投影），不使用布局引擎 —— 滚动时控件不会错位。
+    settings-view := Flickable {
         x: 0;
         y: UiMetrics.page-header-height;
         width: parent.width;
         height: parent.height - UiMetrics.page-header-height;
-        background: transparent;
-        clip: true;
+        viewport-width: self.width;
+        viewport-height: max(self.height, root.content-height);
+        interactive: self.viewport-height > self.height;
 
-        // 滚轮 + 空白处点击夺焦（声明在下层：行内控件优先）。
-        scroll-area := TouchArea {
-            x: 0;
-            y: 0;
-            width: parent.width;
-            height: parent.height;
-            clicked => {
-                settings-keys.focus();
-            }
-            scroll-event(event) => {
-                root.scroll-y = min(max(0px, root.scroll-y + event.delta-y), max(0px, root.content-height - parent.height));
-                accept
-            }
-        }
-
-        settings-layout := VerticalLayout {
+        settings-layout := Rectangle {
             x: UiMetrics.space-16;
-            y: 0px - root.scroll-y;
+            y: 0;
             width: parent.width - 2 * UiMetrics.space-16;
-            spacing: UiMetrics.space-8;
+            height: max(root.content-height, parent.height);
+            background: transparent;
 
             for row in root.rows : Rectangle {
+                x: 0;
+                y: row.offset-y;
                 width: parent.width;
-                // kind：5=分组标题 1=数值滑杆（两行）其余单行。
-                height: row.kind == 5 ? UiMetrics.space-48 : (row.kind == 1 ? UiMetrics.space-48 + UiMetrics.space-24 : UiMetrics.space-48 + UiMetrics.space-8);
+                height: row.row-height;
                 background: row.kind == 5 ? transparent : Skin.layer-02;
                 border-width: row.kind == 5 ? 0px : UiMetrics.hairline;
                 border-color: Skin.border-subtle;
@@ -2977,7 +2978,7 @@ component SettingsPage inherits Rectangle {
 
                     for option[index] in row.options : RadioItem {
                         x: index * (UiMetrics.space-48 * 2 + UiMetrics.space-24);
-                        y: 0px - root.scroll-y;
+                        y: 0;
                         width: UiMetrics.space-48 * 2 + UiMetrics.space-24 - UiMetrics.space-8;
                         caption: option;
                         checked: index == row.current-index;
@@ -3040,6 +3041,8 @@ component SettingsPage inherits Rectangle {
             }
 
             Rectangle {
+                x: 0;
+                y: root.content-height - UiMetrics.space-24;
                 width: parent.width;
                 height: UiMetrics.space-24;
                 background: transparent;
@@ -3060,22 +3063,22 @@ component SettingsPage inherits Rectangle {
 
         key-pressed(event) => {
             if (event.text == Key.PageDown) {
-                root.scroll-y = min(max(0px, root.scroll-y + self.height - UiMetrics.list-row-height), max(0px, root.content-height - self.height));
+                settings-view.viewport-y = min(settings-view.viewport-height - settings-view.height, settings-view.viewport-y + settings-view.height - UiMetrics.list-row-height);
                 accept
             } else if (event.text == Key.PageUp) {
-                root.scroll-y = max(0px, root.scroll-y - self.height + UiMetrics.list-row-height);
+                settings-view.viewport-y = max(0px, settings-view.viewport-y - settings-view.height + UiMetrics.list-row-height);
                 accept
             } else if (event.text == Key.DownArrow) {
-                root.scroll-y = min(max(0px, root.scroll-y + UiMetrics.list-row-height), max(0px, root.content-height - self.height));
+                settings-view.viewport-y = min(settings-view.viewport-height - settings-view.height, settings-view.viewport-y + UiMetrics.list-row-height);
                 accept
             } else if (event.text == Key.UpArrow) {
-                root.scroll-y = max(0px, root.scroll-y - UiMetrics.list-row-height);
+                settings-view.viewport-y = max(0px, settings-view.viewport-y - UiMetrics.list-row-height);
                 accept
             } else if (event.text == Key.Home) {
-                root.scroll-y = 0px;
+                settings-view.viewport-y = 0px;
                 accept
             } else if (event.text == Key.End) {
-                root.scroll-y = max(0px, root.content-height - self.height);
+                settings-view.viewport-y = settings-view.viewport-height - settings-view.height;
                 accept
             } else {
                 reject
@@ -3083,15 +3086,15 @@ component SettingsPage inherits Rectangle {
         }
     }
 
-    // 设置区滚动条（自绘：拖动/点击直接改 scroll-y）。
+    // 设置区滚动条（自绘：拖动/点击直接改 Flickable 的 viewport-y）。
     ScrollBar {
         x: parent.width - UiMetrics.scrollbar-gutter;
         y: UiMetrics.page-header-height;
         height: parent.height - UiMetrics.page-header-height;
-        ratio: root.scroll-y / max(UiMetrics.hairline, root.content-height - (parent.height - UiMetrics.page-header-height));
-        handle-ratio: min(1, (parent.height - UiMetrics.page-header-height) / max(UiMetrics.hairline, root.content-height));
+        ratio: settings-view.viewport-y / max(UiMetrics.hairline, settings-view.viewport-height - settings-view.height);
+        handle-ratio: min(1, settings-view.height / max(UiMetrics.hairline, settings-view.viewport-height));
         seek(ratio) => {
-            root.scroll-y = max(0px, ratio * max(0px, root.content-height - (parent.height - UiMetrics.page-header-height)));
+            settings-view.viewport-y = max(0px, ratio * (settings-view.viewport-height - settings-view.height));
         }
     }
 
