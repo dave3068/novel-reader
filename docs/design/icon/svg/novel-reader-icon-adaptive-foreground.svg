@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="432" height="432" role="img" aria-labelledby="nr-fg-t">
+  <title id="nr-fg-t">novel-reader</title>
+  <desc id="nr-fg-d">novel-reader：本地 TXT 小说阅读器。蓝色书封上的白色合书与书签。</desc>
+  <g transform="translate(54 54) scale(2.45) translate(-16 -16.4)">
+    <path fill="#ffffff" fill-rule="evenodd" d="M5.8 8.4H26.2V25.2H22V28.6L19 26.8 16 28.6V25.2H5.8Z M5.8 8.4H9.4V25.2H5.8Z"/>
+  </g>
+</svg>

@@ -298,6 +298,8 @@ pub struct ShelfView {
     pub search: String,
     /// 排序显示名。
     pub sort_label: String,
+    /// 排序序号（0=最近阅读 1=书名 2=导入时间；下拉高亮用）。
+    pub sort_index: i32,
     /// 计数 Tag 文案。
     pub count_label: String,
     /// 是否显示失效源通知。
@@ -323,6 +325,7 @@ impl Default for ShelfView {
             view: 0,
             search: String::new(),
             sort_label: String::new(),
+            sort_index: 0,
             count_label: String::new(),
             notice: false,
             notice_title: String::new(),
@@ -1264,6 +1267,7 @@ impl AppState {
             view: self.shelf_view,
             search: self.shelf_search.clone(),
             sort_label: sort_label(self.shelf_sort).to_string(),
+            sort_index: self.shelf_sort,
             count_label: if shelf_empty {
                 "0 本".to_string()
             } else if self.shelf_removed > 0 {

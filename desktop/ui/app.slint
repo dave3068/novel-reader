@@ -218,6 +218,7 @@ export global Skin {
     in property <color> focus: #00000000;
     in property <color> header: #00000000;
     in property <color> header-text: #00000000;
+    in property <color> header-hover: #00000000;
     in property <color> support-success: #00000000;
     in property <color> success-soft: #00000000;
     in property <color> support-warning: #00000000;
@@ -373,7 +374,7 @@ component IconButton inherits Rectangle {
 
     width: root.button-size;
     height: root.button-size;
-    background: !root.enabled ? Skin.disabled-bg : (area.has-hover ? (root.selected ? Skin.primary-soft : Skin.layer-01) : (root.selected ? Skin.primary-soft : transparent));
+    background: !root.enabled ? Skin.disabled-bg : (area.has-hover ? (root.selected ? Skin.primary-soft : (root.on-header ? Skin.header-hover : Skin.layer-01)) : (root.selected ? Skin.primary-soft : transparent));
     border-width: UiMetrics.hairline;
     border-color: !root.enabled ? Skin.disabled-border : (root.selected ? Skin.primary : (root.danger ? Skin.support-error : Skin.border-strong));
     border-radius: self.height / 2;
@@ -714,7 +715,12 @@ component ScrollBar inherits Rectangle {
         background: area.has-hover ? Skin.primary : Skin.scrollbar-handle;
         border-radius: self.width / 2;
     }
+    // 命中区比视觉条更宽（8 像素太窄，鼠标很难抓住）；纵向与轨道一致。
     area := TouchArea {
+        x: 0px - UiMetrics.scrollbar-width;
+        y: 0;
+        width: parent.width + 2 * UiMetrics.scrollbar-width;
+        height: parent.height;
         clicked => {
             root.seek((self.mouse-y - handle.height / 2) / max(UiMetrics.hairline, parent.height - handle.height));
         }
@@ -1294,10 +1300,15 @@ component ShelfPage inherits Rectangle {
     in property <string> notice-body: "";
     // 展开行级菜单的行下标（-1 = 未展开；由 Rust 依据 id 投影）。
     in property <int> menu-index: -1;
+    // 排序序号（0=最近阅读 1=书名 2=导入时间；下拉高亮）。
+    in property <int> sort-current: 0;
+    // 排序下拉是否展开（纯界面局部状态）。
+    private property <bool> sort-open: false;
     callback import-txt();
     callback search-edited(string);
     callback view-set(int);
     callback sort-cycle();
+    callback sort-set(int);
     callback open-book(string);
     callback row-menu(int);
     callback row-action(string, string);
@@ -1318,7 +1329,7 @@ component ShelfPage inherits Rectangle {
     // 卡片列数（3 / 2 / 1）。
     private property <int> card-columns: root.width >= (UiMetrics.card-width * 3 + UiMetrics.space-32 + UiMetrics.space-32) ? 3 : (root.width >= (UiMetrics.card-width * 2 + UiMetrics.space-16 + UiMetrics.space-32) ? 2 : 1);
     private property <length> card-gap: UiMetrics.space-16;
-    private property <length> cards-height: ((root.rows.length + root.card-columns - 1) / root.card-columns) * (UiMetrics.card-height + root.card-gap) + root.card-gap;
+    private property <length> cards-height: Math.floor((root.rows.length + root.card-columns - 1) / root.card-columns) * (UiMetrics.card-height + root.card-gap) + root.card-gap;
     private property <length> table-height: root.rows.length * UiMetrics.table-row-height + (root.menu-index >= 0 ? UiMetrics.list-row-height : 0px) + UiMetrics.space-16;
 
     // ---- S4：失效源文件通知（宽 = 内容区）----
@@ -1425,6 +1436,11 @@ component ShelfPage inherits Rectangle {
             for row[i] in root.rows : Rectangle {
                 x: 0;
                 y: UiMetrics.table-header-height + i * UiMetrics.table-row-height + (root.menu-index >= 0 && i > root.menu-index ? UiMetrics.list-row-height : 0px);
+                row-area := TouchArea {
+                    double-clicked => {
+                        root.open-book(row.id);
+                    }
+                }
                 width: parent.width;
                 height: UiMetrics.table-row-height;
                 background: row-area.has-hover ? Skin.layer-01 : (root.menu-index == i ? Skin.primary-soft : transparent);
@@ -1513,11 +1529,6 @@ component ShelfPage inherits Rectangle {
                     }
                 }
 
-                row-area := TouchArea {
-                    clicked => {
-                        root.open-book(row.id);
-                    }
-                }
             }
 
             // 行级菜单（展开时内联在行下方；破坏性动作已分离）。
@@ -1597,8 +1608,15 @@ component ShelfPage inherits Rectangle {
             background: transparent;
 
             for row[i] in root.rows : Rectangle {
-                x: UiMetrics.space-16 + (i - (i / root.card-columns) * root.card-columns) * (UiMetrics.card-width + root.card-gap);
-                y: UiMetrics.space-16 + (i / root.card-columns) * (UiMetrics.card-height + root.card-gap);
+                // 注意：Slint 的 `/` 对整数是**浮点**除法，网格下标必须显式取整
+                // （否则卡片会单列堆叠、逐张盖住 —— 真实缺陷回归）。
+                x: UiMetrics.space-16 + (i - Math.floor(i / root.card-columns) * root.card-columns) * (UiMetrics.card-width + root.card-gap);
+                card-area := TouchArea {
+                    double-clicked => {
+                        root.open-book(row.id);
+                    }
+                }
+                y: UiMetrics.space-16 + Math.floor(i / root.card-columns) * (UiMetrics.card-height + root.card-gap);
                 width: UiMetrics.card-width;
                 height: UiMetrics.card-height;
                 background: Skin.layer-02;
@@ -1695,11 +1713,6 @@ component ShelfPage inherits Rectangle {
                         } else {
                             root.open-book(row.id);
                         }
-                    }
-                }
-                card-area := TouchArea {
-                    double-clicked => {
-                        root.open-book(row.id);
                     }
                 }
             }
@@ -1802,7 +1815,7 @@ component ShelfPage inherits Rectangle {
             }
             sort-area := TouchArea {
                 clicked => {
-                    root.sort-cycle();
+                    root.sort-open = !root.sort-open;
                 }
             }
         }
@@ -1837,6 +1850,47 @@ component ShelfPage inherits Rectangle {
             label: "搜索书架";
             edited(text) => {
                 root.search-edited(text);
+            }
+        }
+    }
+    // 排序下拉（点击字段展开；点其他处或选中后收起）。
+    if root.sort-open : TouchArea {
+        clicked => {
+            root.sort-open = false;
+        }
+    }
+    if root.sort-open : Rectangle {
+        x: sort-field.x;
+        y: UiMetrics.page-header-height + UiMetrics.space-4;
+        width: UiMetrics.sort-field-width + UiMetrics.space-48;
+        height: 3 * UiMetrics.list-row-height + UiMetrics.space-8;
+        background: Skin.layer-02;
+        border-width: UiMetrics.hairline;
+        border-color: Skin.border-strong;
+
+        for option[index] in ["按最近阅读", "按书名", "按导入时间"] : Rectangle {
+            x: 0;
+            y: UiMetrics.space-4 + index * UiMetrics.list-row-height;
+            width: parent.width;
+            height: UiMetrics.list-row-height;
+            background: index == root.sort-current ? Skin.primary-soft : transparent;
+
+            Text {
+                x: UiMetrics.space-12;
+                y: 0;
+                width: parent.width - 2 * UiMetrics.space-12;
+                height: parent.height;
+                text: option;
+                font-size: UiMetrics.ui-font-size;
+                color: index == root.sort-current ? Skin.primary : Skin.text-primary;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            TouchArea {
+                clicked => {
+                    root.sort-open = false;
+                    root.sort-set(index);
+                }
             }
         }
     }
@@ -1911,13 +1965,13 @@ component ReaderPage inherits Rectangle {
     private property <length> bar-h: root.immersive ? 0px : (root.toolbar-open ? (root.width >= UiMetrics.breakpoint-narrow ? UiMetrics.toolbar-height : UiMetrics.toolbar-height-compact) : 0px);
 
     // ---- S5：阅读工具条（左 3 图标 + 居中「书名 · 章节」+ 右 3 图标）----
+    // 注意：工具条**不得** clip（否则按钮浮层提示会被自身裁掉下半截）。
     Rectangle {
         x: 0;
         y: 0;
         width: parent.width;
         height: root.bar-h;
         background: Skin.layer-01;
-        clip: true;
 
         Rectangle {
             x: 0;
@@ -1934,30 +1988,39 @@ component ReaderPage inherits Rectangle {
             spacing: UiMetrics.space-4;
             alignment: start;
 
-            IconButton {
-                caption: "目录";
-                shape: Icons.toc;
-                selected: root.toc-open;
-                tip-below: true;
-                activated => {
-                    root.toc-toggle();
+            VerticalLayout {
+                alignment: center;
+                IconButton {
+                    caption: "目录";
+                    shape: Icons.toc;
+                    selected: root.toc-open;
+                    tip-below: true;
+                    activated => {
+                        root.toc-toggle();
+                    }
                 }
             }
-            IconButton {
-                caption: "书签";
-                shape: Icons.mark;
-                selected: root.marks-open;
-                tip-below: true;
-                activated => {
-                    root.marks-toggle();
+            VerticalLayout {
+                alignment: center;
+                IconButton {
+                    caption: "书签";
+                    shape: Icons.mark;
+                    selected: root.marks-open;
+                    tip-below: true;
+                    activated => {
+                        root.marks-toggle();
+                    }
                 }
             }
-            IconButton {
-                caption: "选项";
-                shape: Icons.options;
-                tip-below: true;
-                activated => {
-                    root.options-clicked();
+            VerticalLayout {
+                alignment: center;
+                IconButton {
+                    caption: "选项";
+                    shape: Icons.options;
+                    tip-below: true;
+                    activated => {
+                        root.options-clicked();
+                    }
                 }
             }
             Rectangle {
@@ -1979,29 +2042,38 @@ component ReaderPage inherits Rectangle {
                     overflow: elide;
                 }
             }
-            IconButton {
-                caption: "保存进度";
-                shape: Icons.save;
-                tip-below: true;
-                activated => {
-                    root.save-progress();
+            VerticalLayout {
+                alignment: center;
+                IconButton {
+                    caption: "保存进度";
+                    shape: Icons.save;
+                    tip-below: true;
+                    activated => {
+                        root.save-progress();
+                    }
                 }
             }
-            IconButton {
-                caption: "沉浸阅读";
-                shortcut: root.shortcut-immersive;
-                shape: Icons.expand;
-                tip-below: true;
-                activated => {
-                    root.immersive-toggle();
+            VerticalLayout {
+                alignment: center;
+                IconButton {
+                    caption: "沉浸阅读";
+                    shortcut: root.shortcut-immersive;
+                    shape: Icons.expand;
+                    tip-below: true;
+                    activated => {
+                        root.immersive-toggle();
+                    }
                 }
             }
-            IconButton {
-                caption: "收起工具条";
-                shape: Icons.collapse;
-                tip-below: true;
-                activated => {
-                    root.toolbar-toggle();
+            VerticalLayout {
+                alignment: center;
+                IconButton {
+                    caption: "收起工具条";
+                    shape: Icons.collapse;
+                    tip-below: true;
+                    activated => {
+                        root.toolbar-toggle();
+                    }
                 }
             }
         }
@@ -2169,28 +2241,37 @@ component ReaderPage inherits Rectangle {
                     color: Skin.text-primary;
                     vertical-alignment: center;
                 }
-                Tag {
-                    tone: 1;
-                    text: root.toc-count;
-                }
-                Rectangle { horizontal-stretch: 1; background: transparent; }
-                TextField {
-                    width: UiMetrics.search-field-panel-width;
-                    compact: true;
-                    leading-icon: true;
-                    text: root.toc-search;
-                    placeholder: "按章节名过滤";
-                    label: "搜索章节";
-                    edited(text) => {
-                        root.toc-search-edited(text);
+                VerticalLayout {
+                    alignment: center;
+                    Tag {
+                        tone: 1;
+                        text: root.toc-count;
                     }
                 }
-                IconButton {
-                    compact: true;
-                    caption: "关闭目录";
-                    shape: Icons.close;
-                    activated => {
-                        root.toc-toggle();
+                Rectangle { horizontal-stretch: 1; background: transparent; }
+                VerticalLayout {
+                    alignment: center;
+                    TextField {
+                        width: UiMetrics.search-field-panel-width;
+                        compact: true;
+                        leading-icon: true;
+                        text: root.toc-search;
+                        placeholder: "按章节名过滤";
+                        label: "搜索章节";
+                        edited(text) => {
+                            root.toc-search-edited(text);
+                        }
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    IconButton {
+                        compact: true;
+                        caption: "关闭目录";
+                        shape: Icons.close;
+                        activated => {
+                            root.toc-toggle();
+                        }
                     }
                 }
             }
@@ -2199,6 +2280,11 @@ component ReaderPage inherits Rectangle {
         // 行（40）：序号 mono + 章节名 + 偏移量 mono；整行可点（跳转）。
         for row[i] in root.toc-rows : Rectangle {
             x: UiMetrics.space-8;
+            toc-row-area := TouchArea {
+                clicked => {
+                    root.chapter-jump(row.sequence);
+                }
+            }
             y: UiMetrics.panel-header-height + i * UiMetrics.list-row-height;
             width: parent.width - UiMetrics.space-8 - UiMetrics.scrollbar-width - UiMetrics.space-8;
             height: UiMetrics.list-row-height;
@@ -2246,11 +2332,6 @@ component ReaderPage inherits Rectangle {
                 font-size: UiMetrics.mono-font-size;
                 color: Skin.text-placeholder;
                 vertical-alignment: center;
-            }
-            toc-row-area := TouchArea {
-                clicked => {
-                    root.chapter-jump(row.sequence);
-                }
             }
         }
 
@@ -2333,36 +2414,48 @@ component ReaderPage inherits Rectangle {
                     color: Skin.text-primary;
                     vertical-alignment: center;
                 }
-                Tag {
-                    tone: 1;
-                    text: root.mark-count;
+                VerticalLayout {
+                    alignment: center;
+                    Tag {
+                        tone: 1;
+                        text: root.mark-count;
+                    }
                 }
                 Rectangle { horizontal-stretch: 1; background: transparent; }
-                TextField {
-                    width: UiMetrics.search-field-panel-width;
-                    compact: true;
-                    leading-icon: true;
-                    text: root.mark-search;
-                    placeholder: "按标题过滤";
-                    label: "搜索书签";
-                    edited(text) => {
-                        root.mark-search-edited(text);
+                VerticalLayout {
+                    alignment: center;
+                    TextField {
+                        width: UiMetrics.search-field-panel-width;
+                        compact: true;
+                        leading-icon: true;
+                        text: root.mark-search;
+                        placeholder: "按标题过滤";
+                        label: "搜索书签";
+                        edited(text) => {
+                            root.mark-search-edited(text);
+                        }
                     }
                 }
-                TextButton {
-                    compact: true;
-                    variant: 0;
-                    caption: "在当前页新增书签";
-                    activated => {
-                        root.mark-add();
+                VerticalLayout {
+                    alignment: center;
+                    TextButton {
+                        compact: true;
+                        variant: 0;
+                        caption: "在当前页新增书签";
+                        activated => {
+                            root.mark-add();
+                        }
                     }
                 }
-                IconButton {
-                    compact: true;
-                    caption: "关闭书签";
-                    shape: Icons.close;
-                    activated => {
-                        root.marks-toggle();
+                VerticalLayout {
+                    alignment: center;
+                    IconButton {
+                        compact: true;
+                        caption: "关闭书签";
+                        shape: Icons.close;
+                        activated => {
+                            root.marks-toggle();
+                        }
                     }
                 }
             }
@@ -2371,6 +2464,14 @@ component ReaderPage inherits Rectangle {
         // 行（40）：章节读数 mono + 标题 + 位置 + 行尾图标（跳转 / 重命名 / 删除）。
         for row[i] in root.mark-rows : Rectangle {
             x: UiMetrics.space-8;
+            mark-row-area := TouchArea {
+                clicked => {
+                    root.mark-select(row.id);
+                }
+                double-clicked => {
+                    root.mark-jump(row.id);
+                }
+            }
             y: UiMetrics.panel-header-height + i * UiMetrics.list-row-height;
             width: parent.width - UiMetrics.space-8 - UiMetrics.scrollbar-width - UiMetrics.space-8;
             height: UiMetrics.list-row-height;
@@ -2464,14 +2565,6 @@ component ReaderPage inherits Rectangle {
                     activated => {
                         root.mark-delete(row.id);
                     }
-                }
-            }
-            mark-row-area := TouchArea {
-                clicked => {
-                    root.mark-select(row.id);
-                }
-                double-clicked => {
-                    root.mark-jump(row.id);
                 }
             }
         }
@@ -2684,13 +2777,52 @@ component SettingsPage inherits Rectangle {
         }
     }
 
+    // 键盘翻动（PageUp/PageDown/↑/↓/Home/End）；滚轮与拖动由 Flickable 负责。
+    settings-keys := FocusScope {
+        x: 0;
+        y: UiMetrics.page-header-height;
+        width: parent.width;
+        height: parent.height - UiMetrics.page-header-height;
+
+        init => {
+            self.focus();
+        }
+
+        key-pressed(event) => {
+            if (event.text == Key.PageDown) {
+                settings-view.viewport-y = min(settings-view.viewport-height - settings-view.height, settings-view.viewport-y + settings-view.height - UiMetrics.list-row-height);
+                accept
+            } else if (event.text == Key.PageUp) {
+                settings-view.viewport-y = max(0px, settings-view.viewport-y - settings-view.height + UiMetrics.list-row-height);
+                accept
+            } else if (event.text == Key.DownArrow) {
+                settings-view.viewport-y = min(settings-view.viewport-height - settings-view.height, settings-view.viewport-y + UiMetrics.list-row-height);
+                accept
+            } else if (event.text == Key.UpArrow) {
+                settings-view.viewport-y = max(0px, settings-view.viewport-y - UiMetrics.list-row-height);
+                accept
+            } else if (event.text == Key.Home) {
+                settings-view.viewport-y = 0px;
+                accept
+            } else if (event.text == Key.End) {
+                settings-view.viewport-y = settings-view.viewport-height - settings-view.height;
+                accept
+            } else {
+                reject
+            }
+        }
+    }
+
     settings-view := Flickable {
         x: 0;
         y: UiMetrics.page-header-height;
         width: parent.width;
         height: parent.height - UiMetrics.page-header-height;
         viewport-width: self.width;
-        interactive: settings-layout.preferred-height > self.height;
+        // 视口高度必须显式给出：若等于窗口高度，则「无内容可滚」→
+        // 滚动条拖不动、滚轮无效（真实缺陷回归）。
+        viewport-height: max(self.height, settings-layout.preferred-height);
+        interactive: self.viewport-height > self.height;
 
         settings-layout := VerticalLayout {
             x: UiMetrics.space-16;
@@ -3170,6 +3302,8 @@ export component AppWindow inherits Window {
     in property <int> shelf-view: 0;
     in property <string> shelf-search: "";
     in property <string> shelf-sort-value: "";
+    // 书架排序序号（0=最近阅读 1=书名 2=导入时间）。
+    in property <int> shelf-sort-current: 0;
     in property <string> shelf-count: "";
     in property <bool> shelf-notice: false;
     in property <string> shelf-notice-title: "";
@@ -3234,6 +3368,7 @@ export component AppWindow inherits Window {
     callback shelf-search-edited(string);
     callback shelf-view-set(int);
     callback shelf-sort-cycle();
+    callback shelf-sort-set(int);
     callback shelf-open-book(string);
     callback shelf-row-menu(int);
     callback shelf-row-action(string, string);
@@ -3297,10 +3432,13 @@ export component AppWindow inherits Window {
             alignment: start;
 
             // 品牌（16 图标 + 15/600 文字）。
-            Icon {
-                shape: Icons.book;
-                size: UiMetrics.icon-size;
-                color: Skin.header-text;
+            VerticalLayout {
+                alignment: center;
+                Icon {
+                    shape: Icons.book;
+                    size: UiMetrics.icon-size;
+                    color: Skin.header-text;
+                }
             }
             Text {
                 text: "novel-reader";
@@ -3339,31 +3477,40 @@ export component AppWindow inherits Window {
             Rectangle { horizontal-stretch: 1; background: transparent; }
 
             // 全局动作：主题 / 快捷键 / 退出。
-            IconButton {
-                caption: "切换主题";
-                on-header: true;
-                shape: Icons.sun;
-                tip-below: true;
-                activated => {
-                    root.theme-toggle();
+            VerticalLayout {
+                alignment: center;
+                IconButton {
+                    caption: "切换主题";
+                    on-header: true;
+                    shape: Icons.sun;
+                    tip-below: true;
+                    activated => {
+                        root.theme-toggle();
+                    }
                 }
             }
-            IconButton {
-                caption: "快捷键说明";
-                on-header: true;
-                shape: Icons.help;
-                tip-below: true;
-                activated => {
-                    root.shortcuts-toggle();
+            VerticalLayout {
+                alignment: center;
+                IconButton {
+                    caption: "快捷键说明";
+                    on-header: true;
+                    shape: Icons.help;
+                    tip-below: true;
+                    activated => {
+                        root.shortcuts-toggle();
+                    }
                 }
             }
-            IconButton {
-                caption: "退出";
-                on-header: true;
-                shape: Icons.power;
-                tip-below: true;
-                activated => {
-                    root.quit-requested();
+            VerticalLayout {
+                alignment: center;
+                IconButton {
+                    caption: "退出";
+                    on-header: true;
+                    shape: Icons.power;
+                    tip-below: true;
+                    activated => {
+                        root.quit-requested();
+                    }
                 }
             }
         }
@@ -3383,6 +3530,7 @@ export component AppWindow inherits Window {
         view: root.shelf-view;
         search: root.shelf-search;
         sort-value: root.shelf-sort-value;
+        sort-current: root.shelf-sort-current;
         count-label: root.shelf-count;
         notice: root.shelf-notice;
         notice-title: root.shelf-notice-title;
@@ -3399,6 +3547,9 @@ export component AppWindow inherits Window {
         }
         sort-cycle => {
             root.shelf-sort-cycle();
+        }
+        sort-set(index) => {
+            root.shelf-sort-set(index);
         }
         open-book(id) => {
             root.shelf-open-book(id);
@@ -3670,24 +3821,30 @@ export component AppWindow inherits Window {
                 vertical-alignment: center;
                 visible: root.width >= UiMetrics.breakpoint-narrow;
             }
-            IconButton {
-                compact: true;
-                caption: "上一页";
-                shortcut: root.reader-shortcut-prev;
-                shape: Icons.rewind;
-                visible: root.current-screen == Screens.reader && !root.reader-gesture-mode;
-                activated => {
-                    root.reader-prev-page();
+            VerticalLayout {
+                alignment: center;
+                IconButton {
+                    compact: true;
+                    caption: "上一页";
+                    shortcut: root.reader-shortcut-prev;
+                    shape: Icons.rewind;
+                    visible: root.current-screen == Screens.reader && !root.reader-gesture-mode;
+                    activated => {
+                        root.reader-prev-page();
+                    }
                 }
             }
-            IconButton {
-                compact: true;
-                caption: "下一页";
-                shortcut: root.reader-shortcut-next;
-                shape: Icons.forward;
-                visible: root.current-screen == Screens.reader && !root.reader-gesture-mode;
-                activated => {
-                    root.reader-next-page();
+            VerticalLayout {
+                alignment: center;
+                IconButton {
+                    compact: true;
+                    caption: "下一页";
+                    shortcut: root.reader-shortcut-next;
+                    shape: Icons.forward;
+                    visible: root.current-screen == Screens.reader && !root.reader-gesture-mode;
+                    activated => {
+                        root.reader-next-page();
+                    }
                 }
             }
         }
