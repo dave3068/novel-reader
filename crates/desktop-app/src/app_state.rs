@@ -1262,7 +1262,12 @@ impl AppState {
         };
         self.settings.select_open = true;
         self.settings.select_key = key.to_string();
-        self.settings.select_y = row.offset_y + row.row_height + 4;
+        // 锚点 = 字段底边 + 4：选择型字段在行内位于 y = space-8、高 = button-height-compact，
+        // 故不能用行高（会把列表推到字段下方约 16 像素之外，观感“离得太远”）。
+        self.settings.select_y = row.offset_y
+            + crate::layout::SPACE_8
+            + crate::layout::BUTTON_HEIGHT_COMPACT
+            + crate::layout::SPACE_4;
         self.settings.select_index = row.current_index;
         self.settings.select_options = row.options.clone();
     }
