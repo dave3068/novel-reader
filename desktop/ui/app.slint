@@ -1284,6 +1284,72 @@ component RenameDialog inherits Rectangle {
 // S1 / S2 / S3 / S4：书架（表格 / 卡片 / 空态 / 失效通知）
 // ---------------------------------------------------------------------------
 
+// 行级菜单条（内联在**当前模式**的列表项下方；破坏性动作已分离）。
+component RowMenuStrip inherits Rectangle {
+    callback picked(string);
+
+    height: UiMetrics.list-row-height;
+    background: Skin.layer-02;
+    border-width: UiMetrics.hairline;
+    border-color: Skin.primary-border;
+
+                HorizontalLayout {
+                    x: UiMetrics.space-16;
+                    y: 0;
+                    width: parent.width - 2 * UiMetrics.space-16;
+                    spacing: UiMetrics.space-8;
+                    alignment: start;
+
+                    Text {
+                        text: "行操作";
+                        font-size: UiMetrics.caption-font-size;
+                        color: Skin.text-placeholder;
+                        vertical-alignment: center;
+                        width: UiMetrics.space-48 * 2;
+                    }
+                    TextButton {
+                        variant: 1;
+                        compact: true;
+                        caption: "重新关联…";
+                        activated => {
+                            root.picked("relink");
+                        }
+                    }
+                    TextButton {
+                        variant: 1;
+                        compact: true;
+                        caption: "重命名…";
+                        activated => {
+                            root.picked("rename");
+                        }
+                    }
+                    TextButton {
+                        variant: 3;
+                        compact: true;
+                        caption: "移出书架…";
+                        activated => {
+                            root.picked("remove");
+                        }
+                    }
+                    TextButton {
+                        variant: 3;
+                        compact: true;
+                        caption: "彻底删除记录…";
+                        activated => {
+                            root.picked("purge");
+                        }
+                    }
+                    TextButton {
+                        variant: 2;
+                        compact: true;
+                        caption: "关闭";
+                        activated => {
+                            root.picked("close");
+                        }
+                    }
+                }
+}
+
 component ShelfPage inherits Rectangle {
     in property <[BookRow]> rows: [];
     in property <bool> is-empty: false;
@@ -1444,6 +1510,18 @@ component ShelfPage inherits Rectangle {
                 width: parent.width;
                 height: UiMetrics.table-row-height;
                 background: row-area.has-hover ? Skin.layer-01 : (root.menu-index == i ? Skin.primary-soft : transparent);
+                if i == root.menu-index : RowMenuStrip {
+                    x: 0;
+                    y: parent.height;
+                    width: parent.width;
+                    picked(action) => {
+                        if (action == "close") {
+                            root.row-menu(-2);
+                        } else {
+                            root.row-action(action, row.id);
+                        }
+                    }
+                }
                 accessible-role: list-item;
                 accessible-label: row.title;
 
@@ -1518,13 +1596,13 @@ component ShelfPage inherits Rectangle {
                     overflow: elide;
                     visible: root.recent-visible;
                 }
-                row-open-btn := TextButton {
+                row-open-btn := IconButton {
                     x: root.col-actions-x;
                     y: (parent.height - self.height) / 2;
-                    width: UiMetrics.column-actions-width - UiMetrics.icon-button-compact-size - UiMetrics.space-4;
                     compact: true;
-                    variant: row.needs-relink ? 1 : 0;
                     caption: row.needs-relink ? "重新关联…" : "继续阅读";
+                    selected: false;
+                    shape: Icons.book;
                     activated => {
                         if (row.needs-relink) {
                             root.row-action("relink", row.id);
@@ -1546,73 +1624,6 @@ component ShelfPage inherits Rectangle {
 
             }
 
-            // 行级菜单（展开时内联在行下方；破坏性动作已分离）。
-            if root.menu-index >= 0 && root.menu-index < root.rows.length : Rectangle {
-                // 卡片模式：菜单条贴在该卡片下方并与卡片左边缘对齐（与列表模式功能一致）。
-                x: root.view == 1 ? (UiMetrics.space-16 + (root.menu-index - Math.floor(root.menu-index / root.card-columns) * root.card-columns) * (UiMetrics.card-width + root.card-gap)) : 0px;
-                y: root.view == 1 ? (UiMetrics.space-16 + Math.floor(root.menu-index / root.card-columns) * (UiMetrics.card-height + root.card-gap) + UiMetrics.card-height + UiMetrics.space-4) : (UiMetrics.table-header-height + (root.menu-index + 1) * UiMetrics.table-row-height);
-                width: root.view == 1 ? UiMetrics.card-width : parent.width;
-                height: UiMetrics.list-row-height;
-                background: Skin.layer-02;
-                border-width: UiMetrics.hairline;
-                border-color: Skin.primary-border;
-
-                HorizontalLayout {
-                    x: UiMetrics.space-16;
-                    y: 0;
-                    width: parent.width - 2 * UiMetrics.space-16;
-                    spacing: UiMetrics.space-8;
-                    alignment: start;
-
-                    Text {
-                        text: "行操作";
-                        font-size: UiMetrics.caption-font-size;
-                        color: Skin.text-placeholder;
-                        vertical-alignment: center;
-                        width: UiMetrics.space-48 * 2;
-                    }
-                    TextButton {
-                        variant: 1;
-                        compact: true;
-                        caption: "重新关联…";
-                        activated => {
-                            root.row-action("relink", root.rows[root.menu-index].id);
-                        }
-                    }
-                    TextButton {
-                        variant: 1;
-                        compact: true;
-                        caption: "重命名…";
-                        activated => {
-                            root.row-action("rename", root.rows[root.menu-index].id);
-                        }
-                    }
-                    TextButton {
-                        variant: 3;
-                        compact: true;
-                        caption: "移出书架…";
-                        activated => {
-                            root.row-action("remove", root.rows[root.menu-index].id);
-                        }
-                    }
-                    TextButton {
-                        variant: 3;
-                        compact: true;
-                        caption: "彻底删除记录…";
-                        activated => {
-                            root.row-action("purge", root.rows[root.menu-index].id);
-                        }
-                    }
-                    TextButton {
-                        variant: 2;
-                        compact: true;
-                        caption: "关闭";
-                        activated => {
-                            root.row-menu(-2);
-                        }
-                    }
-                }
-            }
         }
 
         // ---- S2：卡片视图 ----
@@ -1627,6 +1638,19 @@ component ShelfPage inherits Rectangle {
                 // 注意：Slint 的 `/` 对整数是**浮点**除法，网格下标必须显式取整
                 // （否则卡片会单列堆叠、逐张盖住 —— 真实缺陷回归）。
                 x: UiMetrics.space-16 + (i - Math.floor(i / root.card-columns) * root.card-columns) * (UiMetrics.card-width + root.card-gap);
+                // 卡片模式下菜单条只出现在卡片下方（与列表模式互不影响）。
+                if i == root.menu-index : RowMenuStrip {
+                    x: 0;
+                    y: UiMetrics.card-height + UiMetrics.space-4;
+                    width: UiMetrics.card-width;
+                    picked(action) => {
+                        if (action == "close") {
+                            root.row-menu(-2);
+                        } else {
+                            root.row-action(action, row.id);
+                        }
+                    }
+                }
                 card-area := TouchArea {
                     double-clicked => {
                         root.open-book(row.id);
@@ -2763,6 +2787,8 @@ component ReaderPage inherits Rectangle {
 component SettingsPage inherits Rectangle {
     // 表单内容高度（像素；Rust 投影，与行高口径一致）。
     in property <length> content-height: 0px;
+    // 当前滚动偏移（自绘滚动；拖动/滚轮/键盘共用）。
+    private property <length> scroll-y: 0px;
     in property <[SettingsRow]> rows: [];
     in property <string> note: "";
     in property <string> data-path: "";
@@ -2806,55 +2832,33 @@ component SettingsPage inherits Rectangle {
     }
 
     // 键盘翻动（PageUp/PageDown/↑/↓/Home/End）；滚轮与拖动由 Flickable 负责。
-    settings-keys := FocusScope {
+    // 设置内容视口：**自绘滚动**（scroll-y），不依赖 Flickable 的视口语义。
+    Rectangle {
         x: 0;
         y: UiMetrics.page-header-height;
         width: parent.width;
         height: parent.height - UiMetrics.page-header-height;
+        background: transparent;
+        clip: true;
 
-        init => {
-            self.focus();
-        }
-
-        key-pressed(event) => {
-            if (event.text == Key.PageDown) {
-                settings-view.viewport-y = min(settings-view.viewport-height - settings-view.height, settings-view.viewport-y + settings-view.height - UiMetrics.list-row-height);
+        // 滚轮 + 空白处点击夺焦（声明在下层：行内控件优先）。
+        scroll-area := TouchArea {
+            x: 0;
+            y: 0;
+            width: parent.width;
+            height: parent.height;
+            clicked => {
+                settings-keys.focus();
+            }
+            scroll-event(event) => {
+                root.scroll-y = min(max(0px, root.scroll-y + event.delta-y), max(0px, root.content-height - parent.height));
                 accept
-            } else if (event.text == Key.PageUp) {
-                settings-view.viewport-y = max(0px, settings-view.viewport-y - settings-view.height + UiMetrics.list-row-height);
-                accept
-            } else if (event.text == Key.DownArrow) {
-                settings-view.viewport-y = min(settings-view.viewport-height - settings-view.height, settings-view.viewport-y + UiMetrics.list-row-height);
-                accept
-            } else if (event.text == Key.UpArrow) {
-                settings-view.viewport-y = max(0px, settings-view.viewport-y - UiMetrics.list-row-height);
-                accept
-            } else if (event.text == Key.Home) {
-                settings-view.viewport-y = 0px;
-                accept
-            } else if (event.text == Key.End) {
-                settings-view.viewport-y = settings-view.viewport-height - settings-view.height;
-                accept
-            } else {
-                reject
             }
         }
-    }
-
-    settings-view := Flickable {
-        x: 0;
-        y: UiMetrics.page-header-height;
-        width: parent.width;
-        height: parent.height - UiMetrics.page-header-height;
-        viewport-width: self.width;
-        // 视口高度必须显式给出：若等于窗口高度，则「无内容可滚」→
-        // 滚动条拖不动、滚轮无效（真实缺陷回归）。
-        viewport-height: max(self.height, root.content-height);
-        interactive: self.viewport-height > self.height;
 
         settings-layout := VerticalLayout {
             x: UiMetrics.space-16;
-            y: 0;
+            y: 0px - root.scroll-y;
             width: parent.width - 2 * UiMetrics.space-16;
             spacing: UiMetrics.space-8;
 
@@ -2973,7 +2977,7 @@ component SettingsPage inherits Rectangle {
 
                     for option[index] in row.options : RadioItem {
                         x: index * (UiMetrics.space-48 * 2 + UiMetrics.space-24);
-                        y: 0;
+                        y: 0px - root.scroll-y;
                         width: UiMetrics.space-48 * 2 + UiMetrics.space-24 - UiMetrics.space-8;
                         caption: option;
                         checked: index == row.current-index;
@@ -3043,17 +3047,56 @@ component SettingsPage inherits Rectangle {
         }
     }
 
-    // 设置区滚动条（8）。
-    ScrollBar {
-        x: parent.width - UiMetrics.scrollbar-gutter - self.width;
-        y: UiMetrics.page-header-height + UiMetrics.space-8;
-        height: parent.height - UiMetrics.page-header-height - 2 * UiMetrics.space-8;
-        ratio: settings-view.viewport-y / max(UiMetrics.hairline, settings-view.viewport-height - settings-view.height);
-        handle-ratio: min(1, settings-view.height / max(UiMetrics.hairline, settings-view.viewport-height));
-        seek(ratio) => {
-            settings-view.viewport-y = max(0px, ratio * (settings-view.viewport-height - settings-view.height));
+    // 键盘翻动（PageUp/PageDown/↑/↓/Home/End）；焦点在页面空白处点击时夺回。
+    settings-keys := FocusScope {
+        x: 0;
+        y: UiMetrics.page-header-height;
+        width: parent.width;
+        height: parent.height - UiMetrics.page-header-height;
+
+        init => {
+            self.focus();
+        }
+
+        key-pressed(event) => {
+            if (event.text == Key.PageDown) {
+                root.scroll-y = min(max(0px, root.scroll-y + self.height - UiMetrics.list-row-height), max(0px, root.content-height - self.height));
+                accept
+            } else if (event.text == Key.PageUp) {
+                root.scroll-y = max(0px, root.scroll-y - self.height + UiMetrics.list-row-height);
+                accept
+            } else if (event.text == Key.DownArrow) {
+                root.scroll-y = min(max(0px, root.scroll-y + UiMetrics.list-row-height), max(0px, root.content-height - self.height));
+                accept
+            } else if (event.text == Key.UpArrow) {
+                root.scroll-y = max(0px, root.scroll-y - UiMetrics.list-row-height);
+                accept
+            } else if (event.text == Key.Home) {
+                root.scroll-y = 0px;
+                accept
+            } else if (event.text == Key.End) {
+                root.scroll-y = max(0px, root.content-height - self.height);
+                accept
+            } else {
+                reject
+            }
         }
     }
+
+    // 设置区滚动条（自绘：拖动/点击直接改 scroll-y）。
+    ScrollBar {
+        x: parent.width - UiMetrics.scrollbar-gutter;
+        y: UiMetrics.page-header-height;
+        height: parent.height - UiMetrics.page-header-height;
+        ratio: root.scroll-y / max(UiMetrics.hairline, root.content-height - (parent.height - UiMetrics.page-header-height));
+        handle-ratio: min(1, (parent.height - UiMetrics.page-header-height) / max(UiMetrics.hairline, root.content-height));
+        seek(ratio) => {
+            root.scroll-y = max(0px, ratio * max(0px, root.content-height - (parent.height - UiMetrics.page-header-height)));
+        }
+    }
+
+
+    // 设置区滚动条（8）。
 }
 
 // ---------------------------------------------------------------------------
@@ -3253,6 +3296,7 @@ component ErrorPage inherits Rectangle {
 // ---------------------------------------------------------------------------
 // 主窗口：UI Shell 顶栏 + 页面切换 + 状态栏 + 弹窗 + Toast
 // ---------------------------------------------------------------------------
+
 
 export component AppWindow inherits Window {
     title: "novel-reader";
