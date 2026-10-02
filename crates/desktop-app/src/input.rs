@@ -75,10 +75,24 @@ pub fn escape_key_text() -> SharedString {
 /// 便携名称：沉浸阅读的退出键（`Esc`；程序化验证用 `NR_KEY_EVENTS=escape`）。
 pub const ESCAPE_KEY_NAME: &str = "escape";
 
+/// `F11` 的 `KeyEvent.text` 取值（切换沉浸阅读）。
+///
+/// 与 Esc 一样**不属于翻页键表**：本模块只提供按键取值，「F11 = 切换沉浸」的语义
+/// 由 `crate::ui` 决定（见模块边界说明）。
+pub fn immersive_toggle_key_text() -> SharedString {
+    SharedString::from(char::from(Key::F11))
+}
+
+/// 便携名称：切换沉浸阅读（`F11`；程序化验证用 `NR_KEY_EVENTS=f11`）。
+pub const IMMERSIVE_TOGGLE_KEY_NAME: &str = "f11";
+
 /// 便携名称 → Slint `KeyEvent.text` 的实际取值（程序化验证用；与真实按键同值）。
 pub fn key_text(name: &str) -> Option<SharedString> {
     if name == ESCAPE_KEY_NAME {
         return Some(escape_key_text());
+    }
+    if name == IMMERSIVE_TOGGLE_KEY_NAME {
+        return Some(immersive_toggle_key_text());
     }
     PAGING_KEYS
         .iter()
@@ -285,5 +299,28 @@ mod tests {
         assert_eq!(PageTurn::Next.delta(), 1);
         assert_eq!(PageTurn::Prev.log_name(), "prev");
         assert_eq!(PageTurn::Next.log_name(), "next");
+    }
+
+
+    /// F11 的按键取值与便携名（程序化验证入口）。
+    #[test]
+    fn f11_maps_to_immersive_toggle_name() {
+        let text = immersive_toggle_key_text();
+        assert_eq!(
+            key_text(IMMERSIVE_TOGGLE_KEY_NAME).as_deref(),
+            Some(text.as_str())
+        );
+        // F11 不属于翻页键表（语义由 ui 层决定）。
+        assert_eq!(key_intent(text.as_str(), false), None);
+        assert!(matches!(
+            key_event(IMMERSIVE_TOGGLE_KEY_NAME),
+            Some(WindowEvent::KeyPressed { .. })
+        ));
+    }
+
+    /// F11 与 Esc 取值必须不同（否则两条快捷键无法区分）。
+    #[test]
+    fn f11_and_escape_are_distinct() {
+        assert_ne!(immersive_toggle_key_text(), escape_key_text());
     }
 }
