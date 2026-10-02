@@ -7,6 +7,7 @@
 |---|---|---|
 | `novel-reader-256.png` | `docs/design/icon/png/novel-reader-icon-256.png` | 窗口图标（标题栏 / 任务栏），由窗口管理器缩放 |
 | `novel-reader-128.png` | `docs/design/icon/png/novel-reader-icon-128.png` | 备用（较小尺寸内嵌需求） |
+| `novel-reader-mono-white-32.png` | `docs/design/icon/png/novel-reader-icon-mono-white-32.png` | 顶栏品牌图标（深色 UI Shell，16 显示尺寸） |
 
 **刷新方式**（设计改动后同步；复制后 `sha256sum` 应一致）：
 

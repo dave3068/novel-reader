@@ -3614,6 +3614,7 @@ export component AppWindow inherits Window {
         visible: !root.reader-immersive;
         background: Skin.header;
 
+        // 左：品牌 + 全局导航（横向布局）。
         HorizontalLayout {
             x: UiMetrics.space-16;
             y: 0;
@@ -3622,13 +3623,14 @@ export component AppWindow inherits Window {
             spacing: UiMetrics.space-4;
             alignment: start;
 
-            // 品牌（16 图标 + 15/600 文字）。
+            // 品牌（16 应用图标 + 15/600 文字）。图标取自设计事实来源
+            // `docs/design/icon/`（单色白版，用于深色顶栏；设计稿即应用图标）。
             VerticalLayout {
                 alignment: center;
-                Icon {
-                    shape: Icons.book;
-                    size: UiMetrics.icon-size;
-                    color: Skin.header-text;
+                Image {
+                    source: @image-url("../assets/icons/novel-reader-mono-white-32.png");
+                    width: UiMetrics.icon-size;
+                    height: UiMetrics.icon-size;
                 }
             }
             Text {
@@ -3668,42 +3670,53 @@ export component AppWindow inherits Window {
             Rectangle { horizontal-stretch: 1; background: transparent; }
 
             // 全局动作：主题 / 快捷键 / 退出。
-            VerticalLayout {
-                alignment: center;
-                IconButton {
-                    caption: "切换主题";
-                    on-header: true;
-                    shape: Icons.sun;
-                    tip-below: true;
-                    activated => {
-                        root.theme-toggle();
+        }
+
+        // 右：全局动作（主题 / 快捷键 / 退出）——**绝对贴右**。
+        // 依赖布局拉伸时会被压到中间（真实缺陷回归），故显式定位：
+        // x = 顶栏宽 - 页边距 16 - 自身宽；间距按设计口径 2。
+        HorizontalLayout {
+            x: parent.width - UiMetrics.space-16 - self.width;
+            y: 0;
+            height: parent.height;
+            spacing: UiMetrics.hairline * 2;
+            alignment: center;
+                    VerticalLayout {
+                        alignment: center;
+                        IconButton {
+                            caption: "切换主题";
+                            on-header: true;
+                            shape: Icons.sun;
+                            tip-below: true;
+                            activated => {
+                                root.theme-toggle();
+                            }
+                        }
                     }
-                }
-            }
-            VerticalLayout {
-                alignment: center;
-                IconButton {
-                    caption: "快捷键说明";
-                    on-header: true;
-                    shape: Icons.help;
-                    tip-below: true;
-                    activated => {
-                        root.shortcuts-toggle();
+                    VerticalLayout {
+                        alignment: center;
+                        IconButton {
+                            caption: "快捷键说明";
+                            on-header: true;
+                            shape: Icons.help;
+                            tip-below: true;
+                            activated => {
+                                root.shortcuts-toggle();
+                            }
+                        }
                     }
-                }
-            }
-            VerticalLayout {
-                alignment: center;
-                IconButton {
-                    caption: "退出";
-                    on-header: true;
-                    shape: Icons.power;
-                    tip-below: true;
-                    activated => {
-                        root.quit-requested();
+                    VerticalLayout {
+                        alignment: center;
+                        IconButton {
+                            caption: "退出";
+                            on-header: true;
+                            shape: Icons.power;
+                            tip-below: true;
+                            activated => {
+                                root.quit-requested();
+                            }
+                        }
                     }
-                }
-            }
         }
     }
 
