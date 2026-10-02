@@ -251,7 +251,7 @@
         "kind": "gate-result-json",
         "path": "results/desktop/smoke-desktop.json",
         "gate": "smoke-desktop",
-        "run_id": "20261002T021338Z",
+        "run_id": "20261002T021604Z",
         "result": "PASS",
         "backend": "x11",
         "display": ":0",
