@@ -303,6 +303,7 @@ pub fn apply_layout_metrics(ui: &AppWindow, metrics: &LayoutMetrics) {
     globals.set_top_bar_height(metrics.top_bar_height as f32);
     globals.set_toolbar_height(metrics.toolbar_height as f32);
     globals.set_toolbar_height_compact(metrics.toolbar_height_compact as f32);
+    globals.set_collapsed_toolbar_height(metrics.collapsed_toolbar_height as f32);
     globals.set_status_bar_height(metrics.status_bar_height as f32);
     globals.set_progress_bar_height(metrics.progress_bar_height as f32);
     globals.set_progress_bar_hover_height(metrics.progress_bar_hover_height as f32);
