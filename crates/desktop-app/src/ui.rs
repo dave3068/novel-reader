@@ -154,6 +154,8 @@ pub const SHORTCUT_NEXT: &str = "PageDown / ↓ / →";
 pub const SHORTCUT_WHEEL: &str = "鼠标滚轮";
 /// 已实现：退出沉浸。
 pub const SHORTCUT_ESCAPE: &str = "Esc";
+/// 已实现：切换沉浸阅读（进入 / 退出；与 Esc 同一入口）。
+pub const SHORTCUT_IMMERSIVE: &str = "F11";
 
 /// 快捷键清单（只承诺核心已实现的按键；建议项如实标注）。
 pub const SHORTCUTS: &[ShortcutSpec] = &[
@@ -178,6 +180,11 @@ pub const SHORTCUTS: &[ShortcutSpec] = &[
         implemented: true,
     },
     ShortcutSpec {
+        action: "切换沉浸阅读",
+        keys: SHORTCUT_IMMERSIVE,
+        implemented: true,
+    },
+    ShortcutSpec {
         action: "目录",
         keys: "T",
         implemented: false,
@@ -190,11 +197,6 @@ pub const SHORTCUTS: &[ShortcutSpec] = &[
     ShortcutSpec {
         action: "保存进度",
         keys: "Ctrl+S",
-        implemented: false,
-    },
-    ShortcutSpec {
-        action: "沉浸阅读",
-        keys: "F11",
         implemented: false,
     },
 ];
@@ -304,6 +306,7 @@ pub fn apply_layout_metrics(ui: &AppWindow, metrics: &LayoutMetrics) {
     globals.set_toolbar_height(metrics.toolbar_height as f32);
     globals.set_toolbar_height_compact(metrics.toolbar_height_compact as f32);
     globals.set_collapsed_toolbar_height(metrics.collapsed_toolbar_height as f32);
+    globals.set_floating_toolbar_height(metrics.floating_toolbar_height as f32);
     globals.set_status_bar_height(metrics.status_bar_height as f32);
     globals.set_progress_bar_height(metrics.progress_bar_height as f32);
     globals.set_progress_bar_hover_height(metrics.progress_bar_hover_height as f32);
@@ -470,7 +473,7 @@ pub fn apply_snapshot(ui: &AppWindow, snapshot: &UiSnapshot) {
     ui.set_reader_progress_permille(snapshot.reader.progress_permille as i32);
     ui.set_reader_shortcut_prev(SHORTCUT_PREV.into());
     ui.set_reader_shortcut_next(SHORTCUT_NEXT.into());
-    ui.set_reader_shortcut_immersive(SHORTCUT_ESCAPE.into());
+    ui.set_reader_shortcut_immersive(format!("{} / {}", SHORTCUT_ESCAPE, SHORTCUT_IMMERSIVE).into());
     // 目录面板
     ui.set_reader_toc_open(snapshot.reader.toc_open);
     let toc_rows: Vec<TocRow> = snapshot
@@ -3070,6 +3073,29 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 if changed {
                     log_line("NR-INPUT kind=key key=escape intent=close-panel");
                 }
+                return;
+            }
+            if key_text == input::immersive_toggle_key_text() {
+                // F11：切换沉浸阅读（进入 / 退出）——与工具条按钮、Esc 同一入口。
+                // 文本输入框聚焦时不触发（避免与重命名输入冲突）。
+                if input::text_input_focused(scope_focus_lost, lock(&state).reader().marks_open) {
+                    return;
+                }
+                if lock(&state).dialog_kind() != 0 {
+                    return;
+                }
+                let target = !lock(&state).immersive();
+                let mut guard = lock(&reader);
+                match guard.as_mut() {
+                    Some(session) => apply_immersive(&ui, &state, &db_path, session, &tracker, target),
+                    None => mutate_and_refresh(&ui, &state, |guard| {
+                        guard.set_immersive(target);
+                    }),
+                }
+                log_line(&format!(
+                    "NR-INPUT kind=key key=f11 intent=toggle-immersive immersive={}",
+                    u8::from(target)
+                ));
                 return;
             }
             let marks_open = lock(&state).reader().marks_open;

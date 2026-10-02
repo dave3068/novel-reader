@@ -113,6 +113,7 @@ export global UiMetrics {
     in property <length> toolbar-height: 0px;
     in property <length> toolbar-height-compact: 0px;
     in property <length> collapsed-toolbar-height: 0px;
+    in property <length> floating-toolbar-height: 0px;
     in property <length> status-bar-height: 0px;
     in property <length> progress-bar-height: 0px;
     in property <length> progress-bar-hover-height: 0px;
@@ -264,10 +265,10 @@ export global Icons {
     out property <string> options: "M 2 5 H 14 M 2 11 H 14 M 6 3 V 7 M 10 9 V 13";
     out property <string> save: "M 3 2 H 11 L 14 5 V 14 H 2 V 2 Z M 5 2 V 6 H 10 V 2";
     out property <string> expand: "M 3 6 V 3 H 6 M 13 6 V 3 H 10 M 3 10 V 13 H 6 M 13 10 V 13 H 10";
-    // 工具条「展开」：向下箭头（与「沉浸」的四角全屏图形区分）。
-    out property <string> toolbar-expand: "M 4 6 L 8 10 L 12 6";
-    // 工具条「收起」：向上箭头。
-    out property <string> toolbar-collapse: "M 4 10 L 8 6 L 12 10";
+    // 工具条「展开」：向下**钝角**（宽而扁的箭头，非尖峰；与「沉浸」的四角全屏图形区分）。
+    out property <string> toolbar-expand: "M 2 6 L 8 11 L 14 6";
+    // 工具条「收起」：向上**钝角**。
+    out property <string> toolbar-collapse: "M 2 11 L 8 6 L 14 11";
     out property <string> collapse: "M 4 10 L 8 6 L 12 10";
     out property <string> close: "M 4 4 L 12 12 M 12 4 L 4 12";
     out property <string> search: "M 7 2 A 5 5 0 1 0 7 12 A 5 5 0 1 0 7 2 M 10.6 10.6 L 14 14";
@@ -2062,14 +2063,18 @@ component ReaderPage inherits Rectangle {
 
     // ---- S5：阅读工具条（左 3 图标 + 居中「书名 · 章节」+ 右 3 图标）----
     // 注意：工具条**不得** clip（否则按钮浮层提示会被自身裁掉下半截）。
-    Rectangle {
+    // 沉浸态**整块不渲染**：仅把高度归零不够——内部控件仍会按自身高度画在正文上
+    // （主人反馈：沉浸后 6 个按钮依旧可见）。沉浸态改由顶部浮出工具条承载。
+    if !root.immersive : Rectangle {
         x: 0;
         y: 0;
         width: parent.width;
         height: root.bar-h;
-        background: Skin.layer-01;
+        // 收起态整行透明：只留右上角的「展开工具条」按钮，
+        // 避免留下一条无用的灰条（主人反馈）。
+        background: root.collapsed ? transparent : Skin.layer-01;
 
-        Rectangle {
+        if !root.collapsed : Rectangle {
             x: 0;
             y: parent.height - self.height;
             width: parent.width;
@@ -2257,7 +2262,8 @@ component ReaderPage inherits Rectangle {
     }
 
     // 收起态：右上角唯一的「展开工具条」按钮（其余控件隐藏，见上方条件元素）。
-    if root.collapsed : IconButton {
+    // 沉浸态不显示（沉浸由顶部浮出工具条承载）。
+    if root.collapsed && !root.immersive : IconButton {
         x: parent.width - UiMetrics.space-8 - self.width;
         y: (root.bar-h - self.height) / 2;
         caption: "展开工具条";
@@ -2771,7 +2777,7 @@ component ReaderPage inherits Rectangle {
             x: 0;
             y: 0;
             width: parent.width;
-            height: root.show-floating ? UiMetrics.toolbar-height : UiMetrics.space-24;
+            height: root.show-floating ? UiMetrics.floating-toolbar-height : UiMetrics.space-24;
 
             changed has-hover => {
                 root.zone-hover(self.has-hover);
@@ -2782,7 +2788,8 @@ component ReaderPage inherits Rectangle {
             x: 0;
             y: 0;
             width: parent.width;
-            height: UiMetrics.toolbar-height;
+            // 设计 §5 S9：浮出工具条 40（不是常驻工具条的 48）。
+            height: UiMetrics.floating-toolbar-height;
 
             Rectangle {
                 x: 0;
@@ -2799,42 +2806,64 @@ component ReaderPage inherits Rectangle {
                 height: UiMetrics.hairline;
                 background: Skin.border-subtle;
             }
+            // 左 3 个：垂直居中（包裹布局）。
             HorizontalLayout {
+                width: self.preferred-width;
                 x: UiMetrics.space-8;
                 y: 0;
-                width: parent.width - 2 * UiMetrics.space-8;
                 height: parent.height;
                 spacing: UiMetrics.space-4;
-                alignment: start;
+                alignment: center;
 
-                IconButton {
-                    caption: "目录";
-                    shape: Icons.toc;
-                    activated => {
-                        root.toc-toggle();
+                VerticalLayout {
+                    alignment: center;
+                    IconButton {
+                        caption: "目录";
+                        shape: Icons.toc;
+                        activated => {
+                            root.toc-toggle();
+                        }
                     }
                 }
-                IconButton {
-                    caption: "书签";
-                    shape: Icons.mark;
-                    activated => {
-                        root.marks-toggle();
+                VerticalLayout {
+                    alignment: center;
+                    IconButton {
+                        caption: "书签";
+                        shape: Icons.mark;
+                        activated => {
+                            root.marks-toggle();
+                        }
                     }
                 }
-                IconButton {
-                    caption: "保存进度";
-                    shape: Icons.save;
-                    activated => {
-                        root.save-progress();
+                VerticalLayout {
+                    alignment: center;
+                    IconButton {
+                        caption: "保存进度";
+                        shape: Icons.save;
+                        activated => {
+                            root.save-progress();
+                        }
                     }
                 }
-                Rectangle { horizontal-stretch: 1; background: transparent; }
-                IconButton {
-                    caption: "退出沉浸";
-                    shortcut: root.shortcut-immersive;
-                    shape: Icons.collapse;
-                    activated => {
-                        root.immersive-toggle();
+            }
+            // 右 1 个「退出沉浸」：绝对贴右并垂直居中。
+            HorizontalLayout {
+                width: self.preferred-width;
+                x: parent.width - UiMetrics.space-8 - self.width;
+                y: 0;
+                height: parent.height;
+                spacing: UiMetrics.space-4;
+                alignment: center;
+
+                VerticalLayout {
+                    alignment: center;
+                    IconButton {
+                        caption: "退出沉浸";
+                        shortcut: root.shortcut-immersive;
+                        shape: Icons.collapse;
+                        activated => {
+                            root.immersive-toggle();
+                        }
                     }
                 }
             }
