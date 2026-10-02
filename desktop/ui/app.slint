@@ -266,6 +266,7 @@ export global Icons {
     out property <string> collapse: "M 4 10 L 8 6 L 12 10";
     out property <string> close: "M 4 4 L 12 12 M 12 4 L 4 12";
     out property <string> search: "M 7 2 A 5 5 0 1 0 7 12 A 5 5 0 1 0 7 2 M 10.6 10.6 L 14 14";
+    out property <string> moon: "M 11.6 2.4 A 6 6 0 1 0 13.4 11.6 A 7 7 0 0 1 11.6 2.4 Z";
     out property <string> sun: "M 8 4.5 A 3.5 3.5 0 1 0 8 11.5 A 3.5 3.5 0 1 0 8 4.5 M 8 1 V 2.5 M 8 13.5 V 15 M 1 8 H 2.5 M 13.5 8 H 15 M 3 3 L 4 4 M 12 12 L 13 13 M 13 3 L 12 4 M 4 12 L 3 13";
     out property <string> table: "M 2 3 H 14 M 2 6.5 H 14 M 2 10 H 14 M 2 13 H 14";
     out property <string> cards: "M 2 3 H 7 V 8 H 2 Z M 9 3 H 14 V 8 H 9 Z M 2 9 H 7 V 14 H 2 Z M 9 9 H 14 V 14 H 9 Z";
@@ -2066,13 +2067,15 @@ component ReaderPage inherits Rectangle {
             height: UiMetrics.hairline;
             background: Skin.border-subtle;
         }
+        // 左：目录 / 书签 / 选项。**绝对定位**：本代码库中布局的 horizontal-stretch
+        // 实测不生效（工具条 6 个图标曾全部挤在左侧、中间标题宽度为 0 不渲染）。
         HorizontalLayout {
+            width: self.preferred-width;
             x: UiMetrics.space-8;
             y: 0;
-            width: parent.width - 2 * UiMetrics.space-8;
             height: parent.height;
             spacing: UiMetrics.space-4;
-            alignment: start;
+            alignment: center;
 
             VerticalLayout {
                 alignment: center;
@@ -2109,25 +2112,28 @@ component ReaderPage inherits Rectangle {
                     }
                 }
             }
-            Rectangle {
-                horizontal-stretch: 1;
-                min-width: 0px;
-                clip: true;
-                background: transparent;
-
-                Text {
-                    x: 0;
-                    y: 0;
-                    width: 100%;
-                    height: parent.height;
-                    text: root.heading;
-                    font-size: UiMetrics.ui-font-size;
-                    color: Skin.text-secondary;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                    overflow: elide;
-                }
-            }
+        }
+        // 中：书名 · 章节（绝对居中 + 省略号；宽度上限给两侧按钮组留白）。
+        Text {
+            width: min(self.preferred-width, parent.width - 2 * (UiMetrics.space-8 + 3 * UiMetrics.icon-button-size + 3 * UiMetrics.space-4 + UiMetrics.space-8));
+            x: (parent.width - self.width) / 2;
+            y: 0;
+            height: parent.height;
+            text: root.heading;
+            font-size: UiMetrics.ui-font-size;
+            color: Skin.text-secondary;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        // 右：保存进度 / 沉浸 / 收起（绝对贴右）。
+        HorizontalLayout {
+            width: self.preferred-width;
+            x: parent.width - UiMetrics.space-8 - self.width;
+            y: 0;
+            height: parent.height;
+            spacing: UiMetrics.space-4;
+            alignment: center;
             VerticalLayout {
                 alignment: center;
                 IconButton {
@@ -3689,7 +3695,8 @@ export component AppWindow inherits Window {
                         IconButton {
                             caption: "切换主题";
                             on-header: true;
-                            shape: Icons.sun;
+                            // 模式切换按钮：亮色显示「月亮」（切到暗色），暗色显示「太阳」。
+                            shape: root.theme-dark ? Icons.sun : Icons.moon;
                             tip-below: true;
                             activated => {
                                 root.theme-toggle();
@@ -3989,22 +3996,32 @@ export component AppWindow inherits Window {
             height: UiMetrics.hairline;
             background: Skin.border-subtle;
         }
+        // 左：状态文本（绝对定位；右组绝对贴右 —— 与工具条同一模式）。
         HorizontalLayout {
+            width: self.preferred-width;
             x: UiMetrics.space-16;
             y: 0;
-            width: parent.width - 2 * UiMetrics.space-16;
             height: parent.height;
             spacing: UiMetrics.space-8;
-            alignment: start;
+            alignment: center;
 
             Text {
+                width: min(self.preferred-width, UiMetrics.search-field-width * 2);
                 text: root.status-text;
                 font-size: UiMetrics.caption-font-size;
                 color: Skin.text-secondary;
                 vertical-alignment: center;
-                horizontal-stretch: 1;
                 overflow: elide;
             }
+        }
+        // 右：章节 / 页码 / 百分比 / 编码 Tag / 版本 / 翻页按钮（绝对贴右）。
+        HorizontalLayout {
+            width: self.preferred-width;
+            x: parent.width - UiMetrics.space-16 - self.width;
+            y: 0;
+            height: parent.height;
+            spacing: UiMetrics.space-8;
+            alignment: center;
             Text {
                 text: root.status-reflow;
                 font-size: UiMetrics.caption-font-size;
