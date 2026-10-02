@@ -112,6 +112,7 @@ export global UiMetrics {
     in property <length> top-bar-height: 0px;
     in property <length> toolbar-height: 0px;
     in property <length> toolbar-height-compact: 0px;
+    in property <length> collapsed-toolbar-height: 0px;
     in property <length> status-bar-height: 0px;
     in property <length> progress-bar-height: 0px;
     in property <length> progress-bar-hover-height: 0px;
@@ -263,6 +264,10 @@ export global Icons {
     out property <string> options: "M 2 5 H 14 M 2 11 H 14 M 6 3 V 7 M 10 9 V 13";
     out property <string> save: "M 3 2 H 11 L 14 5 V 14 H 2 V 2 Z M 5 2 V 6 H 10 V 2";
     out property <string> expand: "M 3 6 V 3 H 6 M 13 6 V 3 H 10 M 3 10 V 13 H 6 M 13 10 V 13 H 10";
+    // 工具条「展开」：向下箭头（与「沉浸」的四角全屏图形区分）。
+    out property <string> toolbar-expand: "M 4 6 L 8 10 L 12 6";
+    // 工具条「收起」：向上箭头。
+    out property <string> toolbar-collapse: "M 4 10 L 8 6 L 12 10";
     out property <string> collapse: "M 4 10 L 8 6 L 12 10";
     out property <string> close: "M 4 4 L 12 12 M 12 4 L 4 12";
     out property <string> search: "M 7 2 A 5 5 0 1 0 7 12 A 5 5 0 1 0 7 2 M 10.6 10.6 L 14 14";
@@ -2049,7 +2054,11 @@ component ReaderPage inherits Rectangle {
     background: Skin.background;
 
     // 工具条高度（沉浸态 0；收起态 0；紧凑档 40）。
-    private property <length> bar-h: root.immersive ? 0px : (root.toolbar-open ? (root.width >= UiMetrics.breakpoint-narrow ? UiMetrics.toolbar-height : UiMetrics.toolbar-height-compact) : 0px);
+    // 收起态仍保留一行高度（只放「展开工具条」按钮），避免窄窗下按钮压住正文；
+    // 沉浸态为 0（沉浸是整体隐去两条栏）。
+    private property <length> bar-h: root.immersive ? 0px : (root.toolbar-open ? (root.width >= UiMetrics.breakpoint-narrow ? UiMetrics.toolbar-height : UiMetrics.toolbar-height-compact) : UiMetrics.collapsed-toolbar-height);
+    // 收起态：仅右上角一个「展开工具条」按钮（其余控件与标题不显示）。
+    private property <bool> collapsed: !root.toolbar-open;
 
     // ---- S5：阅读工具条（左 3 图标 + 居中「书名 · 章节」+ 右 3 图标）----
     // 注意：工具条**不得** clip（否则按钮浮层提示会被自身裁掉下半截）。
@@ -2069,7 +2078,7 @@ component ReaderPage inherits Rectangle {
         }
         // 左：目录 / 书签 / 选项。**绝对定位**：本代码库中布局的 horizontal-stretch
         // 实测不生效（工具条 6 个图标曾全部挤在左侧、中间标题宽度为 0 不渲染）。
-        HorizontalLayout {
+        if !root.collapsed : HorizontalLayout {
             width: self.preferred-width;
             x: UiMetrics.space-8;
             y: 0;
@@ -2114,7 +2123,7 @@ component ReaderPage inherits Rectangle {
             }
         }
         // 中：书名 · 章节（绝对居中 + 省略号；宽度上限给两侧按钮组留白）。
-        Text {
+        if !root.collapsed : Text {
             width: min(self.preferred-width, parent.width - 2 * (UiMetrics.space-8 + 3 * UiMetrics.icon-button-size + 3 * UiMetrics.space-4 + UiMetrics.space-8));
             x: (parent.width - self.width) / 2;
             y: 0;
@@ -2127,7 +2136,7 @@ component ReaderPage inherits Rectangle {
             overflow: elide;
         }
         // 右：保存进度 / 沉浸 / 收起（绝对贴右）。
-        HorizontalLayout {
+        if !root.collapsed : HorizontalLayout {
             width: self.preferred-width;
             x: parent.width - UiMetrics.space-8 - self.width;
             y: 0;
@@ -2160,8 +2169,9 @@ component ReaderPage inherits Rectangle {
             VerticalLayout {
                 alignment: center;
                 IconButton {
-                    caption: "收起工具条";
-                    shape: Icons.collapse;
+                    // 模式切换按钮：展开态显示「向上收起」，收起态显示「向下展开」。
+                    caption: root.toolbar-open ? "收起工具条" : "展开工具条";
+                    shape: root.toolbar-open ? Icons.toolbar-collapse : Icons.toolbar-expand;
                     tip-below: true;
                     activated => {
                         root.toolbar-toggle();
@@ -2243,6 +2253,18 @@ component ReaderPage inherits Rectangle {
         key-pressed(event) => {
             root.key-input(event.text, !self.has-focus);
             reject
+        }
+    }
+
+    // 收起态：右上角唯一的「展开工具条」按钮（其余控件隐藏，见上方条件元素）。
+    if root.collapsed : IconButton {
+        x: parent.width - UiMetrics.space-8 - self.width;
+        y: (root.bar-h - self.height) / 2;
+        caption: "展开工具条";
+        shape: Icons.toolbar-expand;
+        tip-below: true;
+        activated => {
+            root.toolbar-toggle();
         }
     }
 

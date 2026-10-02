@@ -29,6 +29,8 @@ pub const TOP_BAR_HEIGHT: u32 = 48;
 pub const TOOLBAR_HEIGHT: u32 = 48;
 /// 紧凑模式（窗口宽 < [`BREAKPOINT_NARROW`]）下的工具条高度。
 pub const TOOLBAR_HEIGHT_COMPACT: u32 = 40;
+/// 工具条收起态的行高（只承载右上角「展开工具条」按钮；不压正文）。
+pub const COLLAPSED_TOOLBAR_HEIGHT: u32 = 40;
 /// 底部状态栏高度（像素）。
 pub const STATUS_BAR_HEIGHT: u32 = 32;
 /// 阅读进度条高度（像素；跨整宽，可点击/拖拽跳转）。
@@ -238,6 +240,8 @@ pub struct LayoutMetrics {
     pub toolbar_height: u32,
     /// 紧凑模式工具条高度。
     pub toolbar_height_compact: u32,
+    /// 工具条收起态行高（只承载右上角「展开工具条」按钮）。
+    pub collapsed_toolbar_height: u32,
     /// 底部状态栏高度。
     pub status_bar_height: u32,
     /// 阅读进度条高度。
@@ -424,6 +428,7 @@ impl LayoutMetrics {
         top_bar_height: TOP_BAR_HEIGHT,
         toolbar_height: TOOLBAR_HEIGHT,
         toolbar_height_compact: TOOLBAR_HEIGHT_COMPACT,
+        collapsed_toolbar_height: COLLAPSED_TOOLBAR_HEIGHT,
         status_bar_height: STATUS_BAR_HEIGHT,
         progress_bar_height: PROGRESS_BAR_HEIGHT,
         progress_bar_hover_height: PROGRESS_BAR_HOVER_HEIGHT,
@@ -701,6 +706,11 @@ pub const LAYOUT_METRIC_FIELDS: &[MetricField] = &[
         "toolbar-height-compact",
         "TOOLBAR_HEIGHT_COMPACT",
         TOOLBAR_HEIGHT_COMPACT,
+    ),
+    m(
+        "collapsed-toolbar-height",
+        "COLLAPSED_TOOLBAR_HEIGHT",
+        COLLAPSED_TOOLBAR_HEIGHT,
     ),
     m("status-bar-height", "STATUS_BAR_HEIGHT", STATUS_BAR_HEIGHT),
     m("progress-bar-height", "PROGRESS_BAR_HEIGHT", PROGRESS_BAR_HEIGHT),
