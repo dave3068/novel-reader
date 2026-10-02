@@ -2218,6 +2218,18 @@ pub fn run() -> Result<(), slint::PlatformError> {
             });
         }
     });
+    // 顶栏按钮提示（窗口顶层浮层）：只更新投影，不触碰阅读语义。
+    ui.on_header_tip_request({
+        let weak = ui.as_weak();
+        move |text, anchor, prefer| {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            ui.set_header_tip_text(text.as_str().into());
+            ui.set_header_tip_anchor_x(anchor as f32);
+            ui.set_header_tip_prefer(prefer);
+        }
+    });
     ui.on_quit_requested(|| {
         let _ = slint::quit_event_loop();
     });

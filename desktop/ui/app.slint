@@ -385,6 +385,12 @@ component IconButton inherits Rectangle {
     in property <bool> on-header: false;
     // 实心图标（三角等）。
     in property <bool> filled: false;
+    // 提示交由**窗口顶层**渲染（顶栏按钮用：其下方的阅读工具条会遮住自绘提示）。
+    in property <bool> tip-host: false;
+    // 按钮左缘在**窗口坐标**中的 x（使用点按令牌反推；顶层据此定位并夹紧）。
+    in property <length> tip-anchor-x: 0px;
+    // 悬停变化时上报提示：文本（空串 = 收回）/ 锚点 x / 期望方位（1=下 0=上）。
+    callback tip-request(string, length, int);
     in property <length> button-size: root.compact ? UiMetrics.icon-button-compact-size : UiMetrics.icon-button-size;
     callback activated();
 
@@ -403,6 +409,18 @@ component IconButton inherits Rectangle {
         clicked => {
             root.activated();
         }
+        changed has-hover => {
+            // tip-host 模式：只上报，由窗口顶层渲染（避免被同层更高的条带遮挡）。
+            if (root.tip-host) {
+                root.tip-request(
+                    self.has-hover && root.caption != ""
+                        ? (root.shortcut == "" ? root.caption : root.caption + "（" + root.shortcut + "）")
+                        : "",
+                    root.tip-anchor-x,
+                    root.tip-below ? 1 : 0
+                );
+            }
+        }
     }
 
     Icon {
@@ -414,8 +432,11 @@ component IconButton inherits Rectangle {
         fill-color: root.filled ? (!root.enabled ? Skin.disabled-text : (root.danger ? Skin.support-error : (root.on-header ? Skin.header-text : (root.selected ? Skin.primary : Skin.text-primary)))) : transparent;
     }
 
-    if (area.has-hover || area.pressed) && root.caption != "" : Rectangle {
-        x: 0;
+    // 提示：宽度按文案自适应；横向**贴按钮对齐并夹紧在父级内**（靠右按钮不再出窗），
+    // 纵向按 `tip-below` 放置（条带/页头的按钮向下、状态栏的按钮向上）。
+    if (area.has-hover || area.pressed) && root.caption != "" && !root.tip-host : Rectangle {
+        // 贴右侧时右对齐、否则左对齐（x 固定 0 会让靠右按钮的提示伸出窗口）。
+        x: min(0px, parent.width - self.width);
         y: root.tip-below ? parent.height + UiMetrics.space-4 : 0px - self.height - UiMetrics.space-4;
         width: tip-text.preferred-width + UiMetrics.space-12;
         height: UiMetrics.space-24;
@@ -3567,6 +3588,12 @@ export component AppWindow inherits Window {
     in property <string> error-reason: "";
     in property <string> error-details: "";
     in property <string> placeholder-status: "";
+    // 顶栏按钮提示（窗口顶层浮层；避免被阅读工具条遮挡）
+    in property <string> header-tip-text: "";
+    in property <length> header-tip-anchor-x: 0px;
+    in property <int> header-tip-prefer: 1;
+    callback header-tip-request(string, length, int);
+
     // Toast
     in property <bool> toast-visible: false;
     in property <string> toast-text: "";
@@ -3741,6 +3768,8 @@ export component AppWindow inherits Window {
             height: parent.height;
             spacing: UiMetrics.hairline * 2;
             alignment: center;
+                    // 锚点 = 按钮**中心**的窗口 x（组右缘 = 顶栏宽 - 16，向左逐钮累加间距）。
+                    // 提示交窗口顶层渲染：顶栏仅 48 高，自绘提示会被下方阅读工具条遮住。
                     VerticalLayout {
                         alignment: center;
                         IconButton {
@@ -3749,6 +3778,11 @@ export component AppWindow inherits Window {
                             // 模式切换按钮：亮色显示「月亮」（切到暗色），暗色显示「太阳」。
                             shape: root.theme-dark ? Icons.sun : Icons.moon;
                             tip-below: true;
+                            tip-host: true;
+                            tip-anchor-x: root.width - UiMetrics.space-16 - 2 * UiMetrics.icon-button-size - 4 * UiMetrics.hairline * 2 + UiMetrics.icon-button-size / 2;
+                            tip-request(text, anchor, prefer) => {
+                                root.header-tip-request(text, anchor, prefer);
+                            }
                             activated => {
                                 root.theme-toggle();
                             }
@@ -3761,6 +3795,11 @@ export component AppWindow inherits Window {
                             on-header: true;
                             shape: Icons.help;
                             tip-below: true;
+                            tip-host: true;
+                            tip-anchor-x: root.width - UiMetrics.space-16 - UiMetrics.icon-button-size - 2 * UiMetrics.hairline * 2 + UiMetrics.icon-button-size / 2;
+                            tip-request(text, anchor, prefer) => {
+                                root.header-tip-request(text, anchor, prefer);
+                            }
                             activated => {
                                 root.shortcuts-toggle();
                             }
@@ -3773,6 +3812,11 @@ export component AppWindow inherits Window {
                             on-header: true;
                             shape: Icons.power;
                             tip-below: true;
+                            tip-host: true;
+                            tip-anchor-x: root.width - UiMetrics.space-16 - UiMetrics.icon-button-size / 2;
+                            tip-request(text, anchor, prefer) => {
+                                root.header-tip-request(text, anchor, prefer);
+                            }
                             activated => {
                                 root.quit-requested();
                             }
@@ -4207,6 +4251,31 @@ export component AppWindow inherits Window {
         }
         saved(text) => {
             root.dialog-rename-save(text);
+        }
+    }
+
+    // ---- 顶栏按钮提示（**顶层**：声明在页面与弹窗之后，任何条带都盖不住）----
+    // 按窗口坐标定位并夹紧：靠右按钮右对齐不越窗；向下落在顶栏之下（工具条在其后，故被它盖住？
+    // 否——本浮层声明更晚，层级更高）。
+    if root.header-tip-text != "" : Rectangle {
+        // 贴顶栏下沿、位于工具条**之上**（顶层声明 → 层级最高）。
+        // 夹紧：不越过窗口左右缘，各留 8 像素。
+        x: max(UiMetrics.space-8, min(parent.width - self.width - UiMetrics.space-8, root.header-tip-anchor-x - self.width / 2));
+        y: UiMetrics.top-bar-height + UiMetrics.space-4;
+        width: header-tip-label.preferred-width + UiMetrics.space-12;
+        height: UiMetrics.space-24;
+        // 不透明 + 描边：确保叠在浅色工具条上仍清晰可读。
+        background: Skin.toast-bg;
+        border-width: UiMetrics.hairline;
+        border-color: Skin.border-strong;
+        border-radius: UiMetrics.toast-radius;
+
+        header-tip-label := Text {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            text: root.header-tip-text;
+            font-size: UiMetrics.caption-font-size;
+            color: Skin.toast-text;
         }
     }
 
