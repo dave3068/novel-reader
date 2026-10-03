@@ -1,18 +1,34 @@
 # 真机（Android）安装与延期验收说明 — AN6 分发包
 
 适用卡片：AN6（`t_66d593c6`，交付构建产物与分发包）；延期验收卡片：V-AN2（`t_45b1cd70`）。
-范围：把 `dist/app-debug.apk` 装到**物理 Android 设备**并按步骤核对。
+范围：把 APK 装到**物理 Android 设备**并按步骤核对。
 
 > **诚实口径**：本文件只描述「怎么装、怎么核对、期望看到什么」，**不包含任何真机结论**。
 > AN6 的完成定义只覆盖「可构建 + 可校验」；所有真机观察项在下表一律标记 `待验证`，
 > 由 V-AN2 卡在具备设备后执行并写入 `results/verify/android-device-verify.md`。
 
+> **2026-10-02 人工确认（不改变上述口径）**：主人已在真实 Android 真机人工确认
+> **`android/app/build/outputs/apk/debug/app-debug.apk`**（**注意：不是 `dist/app-debug.apk`**）
+> 「可正常使用」。该 APK 的实测指纹：sha256 `[LOCAL_APK_SHA256]`、
+> 26848391 B、`BUILD_MARKER=v1-gbk-resume-2026-09-30`（标记实测在 **`classes5.dex`**）、
+> 内嵌 `lib/arm64-v8a/libnr_jni.so` sha256 `[LOCAL_JNI_SHA256]c6d126ee6a60a7a89d9113f1f3d4d02331e954327d272329479480e4`
+> （**等于**源码树 `android/app/src/main/jniLibs/arm64-v8a/libnr_jni.so`，即代码确已入包）。
+> 记录见 `results/verify/manual-verification-windows-android.md`。
+> **未逐项复核、仍为「待验证」**：旋转 / 后台恢复 / 系统返回 / JNI 取消 / 权限失效 / 进程重建 /
+> SAF 持久授权细项 / DPI 与字体回退 / 功耗；**机型与系统版本未记录**。
+
 ## 1. 分发包与构建标记（BUILD_MARKER）核对方式
 
 | 文件 | 用途 | 签名状态 | 安装方式 |
 |---|---|---|---|
-| `dist/app-debug.apk` | 真机调试包（本文件全部步骤都用它） | 已签名（Android Debug 调试签名） | `adb install -r` 直接安装 |
-| `dist/app-release-unsigned.apk` | Release 产物 | **未签名**（工程未配置 signingConfig，属预期） | 需自行签名后才能安装 |
+| `android/app/build/outputs/apk/debug/app-debug.apk` | **2026-10-02 主人人工确认可正常使用的包**（sha256 `[LOCAL_APK_SHA256]…`，26848391 B） | 已签名（Android Debug 调试签名） | `adb install -r` 或拷入手机点击安装 |
+| `dist/app-debug.apk` | 历史分发包（sha256 `[LOCAL_APK_SHA256]…`，26813023 B，标记同为 `v1-gbk-resume-2026-09-30`） | 已签名（Android Debug 调试签名） | `adb install -r` 或拷入手机点击安装 |
+| `dist/app-release-signed.apk` | **Release 正式签名包（L1 已闭环）** | **已签名**（APK Signature Scheme **v3**；证书 SHA-256 `[LOCAL_CERT_FINGERPRINT]…6982dd`） | `adb install -r dist/app-release-signed.apk`（可安装） |
+
+> ⚠️ **两个 `app-debug.apk` 并不同源**：构建标记相同，但 `dist/app-debug.apk` 内嵌
+> `libnr_jni.so` 为 `[LOCAL_JNI_SHA256]…`，**不等于**源码树当前的 `[LOCAL_JNI_SHA256]…`（源码树 `.so` 于 2026-10-02 20:27 重编）。
+> 这是 `scripts/verify-v1-release.py` 报「APK 内 JNI `.so` 与源码树预编译 `.so` sha256 不一致」的成因。
+> **人工确认与程序化门禁都指向同一结论**：`dist/` 下的分发包已过期，需重新出包（见 `dist/BUILD-INFO.md`）。
 
 APK 大小、sha256 与本次构建标记以 `dist/BUILD-INFO.md` 为准（由 `scripts/build-android-apk.sh` 自动写入）。
 
@@ -90,10 +106,45 @@ adb install -r ${NR_PROJECT_DIR}/dist/app-debug.apk
 
 ## 6. 判读要点（避免误判）
 
-- **未签名 Release 不是失败**：`dist/app-release-unsigned.apk` 未配置 signingConfig，`apksigner verify`
-  报 `Missing META-INF/MANIFEST.MF` 属预期；真机安装请用 `dist/app-debug.apk`。
+- **Release 签名状态看文件名**：本机已配 `nrSigning.*`，故产物为 `dist/app-release-signed.apk`（已签名 v3）；
+  若在**未配置签名参数**的环境构建，产物名为 `app-release-unsigned.apk`，此时 `apksigner verify`
+  报 `Missing META-INF/MANIFEST.MF` 属**预期**（不是构建失败），且该包**不得**当发布包分发。
+  真机日常安装用 `dist/app-debug.apk`。
 - **只看 `classes.dex` 会误判**：本项目的构建标记只出现在靠后的 dex（Debug 在 `classes5.dex`、
   Release 在 `classes2.dex`），判定「新代码是否入包」必须扫全部 `classes*.dex`（校验脚本已如此实现）。
 - **shell 崩溃 ≠ 应用崩溃**：`logcat` 中 `com.android.commands.svc`、`uiautomator` 等 shell 进程的
   `FATAL EXCEPTION` 与本应用无关，判定前先确认 PID/进程名。
 - **模拟器结论不能替代物理设备**：本文件所有步骤均以物理设备为准。
+
+## 7. Release 正式签名（L1）
+
+Release 包**必须**用正式签名后才可作为发布包分发。密钥与口令**一律不入版本库**。
+
+| 项 | 约定 |
+|---|---|
+| keystore 存放 | 仓库外（本机为 `~/.config/novel-reader/novel-reader-release.jks`，PKCS12，RSA 4096，alias `novel-reader`）；也可自备并用环境变量 `NR_MINGW_PREFIX` 同类的外部路径 |
+| 口令存放 | 仓库外（`~/.config/novel-reader/signing.env`，权限 600，**不要提交**） |
+| Gradle 读取 | `android/local.properties`（**已被 `.gitignore` 忽略**）中的四个键：`nrSigning.storeFile` / `nrSigning.storePassword` / `nrSigning.keyAlias` / `nrSigning.keyPassword` |
+| 缺参数时 | `build.gradle.kts` 的 `signingConfigs.releaseSigned` 不会被挂上 → 产物名为 `app-release-unsigned.apk`（**未签名属预期**，不得当发布包分发） |
+| 签名方案 | v1 + v2 + v3 同时启用 |
+
+配置模板（写入 `android/local.properties`，**勿提交**）：
+
+```properties
+nrSigning.storeFile=/绝对路径/novel-reader-release.jks
+nrSigning.storePassword=<storepass>
+nrSigning.keyAlias=novel-reader
+nrSigning.keyPassword=<keypass>
+```
+
+重新出包并校验签名：
+
+```bash
+cd ${NR_PROJECT_DIR}
+bash scripts/build-android-apk.sh --abi arm64-v8a
+# 校验器会自动跑 apksigner；也可单独执行：
+/opt/dev-tools/android-sdk/build-tools/36.0.0/apksigner verify --verbose --print-certs \
+  dist/app-release-signed.apk
+```
+
+**不得**把口令、`signing.env`、`.jks` 文件写入仓库或提交信息。

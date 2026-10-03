@@ -1070,10 +1070,41 @@ def section_licenses(root: Path, rep: Report, ctx: dict[str, object]) -> None:
     # 项目自身许可证（规格延期项）
     print("     项目自身发行许可证：未定（规格「开放问题与延期决定」登记为延期项）")
     rep.unverified_item("项目自身发行许可证未定（规格延期项；发布前必须确定并写入发布说明）")
-    rep.unverified_item(
-        "Android 传递依赖许可未逐项登记（本门禁只覆盖 build.gradle.kts 直接声明；"
-        "闭环命令：cd android && ./gradlew :app:dependencies --configuration releaseRuntimeClasspath）"
-    )
+    # Android 传递依赖许可：**已闭环**（2026-10-02）。本门禁不再无条件登记该项为未验证，
+    # 改为**按实际产物核对**：若 results/verify/android-transitive-licenses.md 存在且已登记，
+    # 则只把「查不到许可声明」的模块作为剩余人工核对项列出（据实，不沿用旧文案）。
+    _transitive = root / "results" / "verify" / "android-transitive-licenses.md"
+    _transitive_text = _transitive.read_text(encoding="utf-8") if _transitive.is_file() else ""
+    if _transitive_text:
+        # 模块坐标：group:artifact:version。版本允许点号/连字符（1.0 / 2.8.7 / 1.9.0）。
+        _mod_re = r"`([A-Za-z0-9_.\-]+:[A-Za-z0-9_.\-]+:[0-9][A-Za-z0-9_.\-]*)`"
+        _all_mods = sorted(set(re.findall(_mod_re, _transitive_text)))
+        # 「未声明」行判定：按**行内**许可列标记识别，不依赖行首格式
+        #（实测清单表格行首带序号「| 76 | `模块` | **未声明** | …」，用 startswith("| `") 会漏掉）。
+        _undeclared_mods = [
+            m.group(1)
+            for ln in _transitive_text.splitlines()
+            if ln.startswith("|") and "**未声明**" in ln
+            for m in [re.search(_mod_re, ln)]
+            if m
+        ]
+        print(f"     Android 传递依赖许可：已闭环（清单 {_transitive.relative_to(root)}）")
+        rep.ok(
+            f"Android 传递依赖许可清单已登记（{len(_all_mods)} 个模块，"
+            f"其中「未声明」{len(_undeclared_mods)} 个）"
+        )
+        if _undeclared_mods:
+            rep.unverified_item(
+                "Android 传递依赖许可「未声明」项需人工核对上游 LICENSE："
+                + "、".join(_undeclared_mods)
+                + "（构建产物中查不到许可声明；核对前不得宣称「全部 Apache-2.0」。"
+                "全量清单见 results/verify/android-transitive-licenses.md）"
+            )
+    else:
+        rep.unverified_item(
+            "Android 传递依赖许可未逐项登记（本门禁只覆盖 build.gradle.kts 直接声明；"
+            "闭环命令：cd android && ./gradlew :app:dependencies --configuration releaseRuntimeClasspath）"
+        )
 
 
 def section_release_docs(root: Path, rep: Report, ctx: dict[str, object]) -> None:

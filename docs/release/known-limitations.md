@@ -7,8 +7,8 @@
 
 | # | 项目 | 当前状态 | 说明 / 闭环前置 |
 |---|---|---|---|
-| D1 | Android 真机（SAF 选择与持久授权、旋转、后台恢复、系统返回、JNI 取消、功耗） | 待验证 | 需 Android 12+ 真机；步骤见 `docs/android/device-runbook.md`，证据约定写入 `results/verify/android-device-verify.md`；就绪度由 `scripts/verify-android-device-readiness.py` 校验（真机执行前保持「待验证（文件未写入）」） |
-| D2 | Windows 10/11 x86_64 构建、打包与启动 | 待验证 | 本机为 Deepin 20.9/Linux，无 pwsh、无 MSVC 工具链；状态与未验证项见 `desktop/packaging/targets.json` 的 `windows-x86_64` |
+| D1 | Android 真机（SAF 选择与持久授权、旋转、后台恢复、系统返回、JNI 取消、功耗） | 待验证 | 需 Android 12+ 真机；步骤见 `docs/android/device-runbook.md`，证据约定写入 `results/verify/android-device-verify.md`；就绪度由 `scripts/verify-android-device-readiness.py` 校验（真机执行前保持「待验证（文件未写入）」）。**2026-10-02 补充**：主人已人工确认 `android/app/build/outputs/apk/debug/app-debug.apk`（sha256 `[LOCAL_APK_SHA256]`，26848391 B，标记 `v1-gbk-resume-2026-09-30`，内嵌 `.so` 与源码树一致）在真机「可正常使用」；记录见 `results/verify/manual-verification-windows-android.md`。**旋转/后台恢复/系统返回/JNI 取消/功耗等细项未逐项复核，仍为待验证**（机型与系统版本未记录） |
+| D2 | Windows 10/11 x86_64 构建、打包与启动 | 待验证 | 本机为 Deepin 20.9/Linux，无 pwsh、无 MSVC 工具链；状态与未验证项见 `desktop/packaging/targets.json` 的 `windows-x86_64`。**2026-10-02 补充**：主人已人工确认 `dist/novel-reader-0.2.0-windows-x86_64`（mingw-gnu 交叉编译产物，`novel-reader.exe` sha256 `[LOCAL_WINDOWS_BINARY_SHA256]`）在 Windows 主机「可正常使用」；记录见 `results/verify/manual-verification-windows-android.md`。**MSVC 构建/打包口径与各细项未逐项复核，仍为待验证**（Windows 具体版本未记录） |
 | D3 | Linux Wayland 构建产物启动与渲染/输入一致性 | 待验证 | 本机无 Wayland 合成器会话；见 `targets.json` 的 `linux-wayland` |
 | D4 | 桌面完整发布目录在**干净目标发行版**（无 Slint 编译依赖、仅系统运行库）上的安装与启动 | 待验证 | 现有证据只在构建机 `/tmp` 组装并启动；口径：`bash desktop/packaging/linux/package-linux.sh --backend x11 --out dist` |
 | D5 | 100%/125%/150% DPI、字体回退（无 `fonts-noto-cjk` 时的 tofu 表现） | 待验证 | 需人工与目标环境实测；程序化回退见桌面 checklist C4/C5/C6 |
@@ -18,9 +18,9 @@
 
 | # | 限制 | 影响 | 处理口径 |
 |---|---|---|---|
-| L1 | Android Release APK **未签名**（无正式签名配置） | 不能作为发布包分发 | 未签名属当前预期（`dist/BUILD-INFO.md` 已标注）；按规格 §15.2，发布前必须配置正式签名并重新出包，签名密钥不入版本库 |
+| L1 | ~~Android Release APK **未签名**~~ → **已闭环（2026-10-02）** | ~~不能作为发布包分发~~ → **已可分发**：`dist/app-release-signed.apk`（22416815 B，sha256 `[LOCAL_APK_SHA256]`），`apksigner verify` → **Verifies**，`Verified using v3 scheme: true`，证书 SHA-256 `[LOCAL_CERT_FINGERPRINT]…6982dd` | 已闭环。密钥与口令**一律不入库**：keystore 在仓库外（`~/.config/novel-reader/novel-reader-release.jks`，PKCS12），口令在 `~/.config/novel-reader/signing.env`（600），Gradle 经 `android/local.properties`（`.gitignore` 已忽略）的 `nrSigning.*` → 脚本转环境变量 `NR_SIGNING_*` 注入；配置模板见 `docs/android/device-runbook.md` §7。**缺参数时构建仍产出未签名包（属预期，不得当发布包）**；重出包时产物名按实际签名状态自动取 `app-release-signed.apk` / `app-release-unsigned.apk` |
 | L2 | 项目自身**发行许可证未定** | 无法对外声明整体许可 | 规格登记为延期项；发布前必须确定并写入发布说明 |
-| L3 | Android **传递依赖**许可未逐项登记 | 许可清单只覆盖直接声明 | 闭环命令：`cd android && ./gradlew :app:dependencies --configuration releaseRuntimeClasspath`，产物并入发布说明 |
+| L3 | Android **传递依赖**许可未逐项登记 | ~~许可清单只覆盖直接声明~~ → **已闭环（2026-10-02）**：执行 `./gradlew :app:dependencies --configuration releaseRuntimeClasspath`（exit 0），解析 **83 个模块 / FAILED 0**；逐个读 Gradle 缓存 POM 的 `<licenses>`：**83 个均为 Apache-2.0**。其中 `com.google.guava:listenablefuture:1.0` 的 POM/JAR 内确实无声明，已**核对上游权威登记**（NuGet `Xamarin.Google.Guava.ListenableFuture` 包元数据 + Maven 索引）认定为 Apache-2.0，并在清单 §2 留痕。全量清单见 `results/verify/android-transitive-licenses.md`，原始输出见 `results/verify/logs/android-releaseRuntimeClasspath-deps.txt` | **已闭环**。口径提醒：该条依据来自**上游登记**而非构建产物内声明，发布说明引用时不得写成「产物内已声明」 |
 | L4 | 平台专用依赖（Windows/macOS/iOS/Android 专用 crate）的许可未在本地解析 | 许可清单覆盖 Linux 发布物，不覆盖其他平台 | 证据：这些包不在 `crates/desktop-app/target/release/deps/*.d` 的编译集合内；发布对应平台时重新解析 |
 | L5 | 未包含连续滚动、全文搜索、云同步、ZIP/EPUB 等能力 | 功能范围限制 | 规格「范围外」，非缺陷 |
 | L6 | 桌面发布目录为「完整发布目录」口径，不是单可执行文件 | 移动目录后需按 README 修正 `.desktop` 的 Exec 绝对路径 | `desktop/packaging/targets.json` 的 `packaging_mode_forbidden` 明确禁止单文件口径 |
@@ -50,18 +50,24 @@
 自身纳入指纹）：不得以该字段作为「产品源码未变」的判据，改用冻结产物哈希与 `gate-1-core.md` §4.3 的
 产品哈希审计。
 
-## 4. 阻塞项（未关闭，**不得**计为通过，也不得并入「已知限制」）
+## 4. 阻塞项（**当前无未关闭阻塞项**）
 
-| # | 阻塞项 | 取证（真实命令 / 退出码） | 关闭条件 |
+> **2026-10-02 更新**：原 B1（AC-A2 Kotlin 侧锁违规）**已关闭** —— 实测
+> `python3 scripts/verify-android-boundary.py --header include/novel_reader.h --kotlin android/app/src/main/java`
+> → **exit 0**（`RESULT: PASS … 断言 32 项，跳过项 0 个`；`reader/` 的 2 个取消入口不再取状态串行化门）。
+> 下方保留关闭记录以供审计，**不再作为阻塞项**。
+
+| # | 阻塞项（**已关闭**） | 原取证 | 关闭证据（2026-10-02 实测） |
 |---|---|---|---|
-| B1 | **AC-A2 未关闭**：`scripts/verify-android-boundary.py` 默认口径 **exit 1**（2 项 Kotlin 侧锁违规：`reader/ReaderViewModel.kt` 的 `Mutex` / `synchronized`） | `python3 scripts/verify-android-boundary.py --header include/novel_reader.h --kotlin android/app/src/main/java` → exit 1（`RESULT: FAIL (2 项违规)`）；裁定与作用域核证见 `results/gates/gate-3-android.md` §4 | 修复卡 `t_15bbd0e6` 闭环：默认口径 exit 0，且全量单测不低于基线 186 tests / 0 failures / 0 errors |
+| B1 | ~~AC-A2 未关闭~~：`scripts/verify-android-boundary.py` 默认口径曾 **exit 1**（2 项 Kotlin 侧锁违规：`reader/ReaderViewModel.kt` 的 `Mutex` / `synchronized`） | 曾 exit 1（`RESULT: FAIL (2 项违规)`）；裁定见 `results/gates/gate-3-android.md` §4 | **exit 0**，32 断言 PASS，跳过项 0（含 `[6b]` 取消入口不得取串行化门） |
 
-约束（由 `results/gates/gate-final.md` 裁定）：
+约束（由 `results/gates/gate-final.md` 裁定，B1 关闭前生效；现 B1 已关闭，但下列第 1 条仍成立）：
 
-- V1 结论只能是「**TXT 桌面可用 + Android 可构建**」；Android 侧只能声明「可构建 / 可测试 / 可校验」。
-- 在 B1 关闭前，**不得**宣称 Android 侧验收完成或全平台发布（含发布说明、README、提交信息）。
-- `scripts/verify-v1-release.py` 每次运行都会**真实执行**该边界门禁，并把未关闭状态登记为「阻塞项」
-  （既不写入「未验证项」延期口径，也不计为「已通过」，且不改变该脚本的退出码语义）。
+- ~~在 B1 关闭前，**不得**宣称 Android 侧验收完成或全平台发布~~ → **B1 已于 2026-10-02 关闭**；
+  但因 D1/D2/D3 仍为「待验证」，**仍不得**宣称全平台发布（含发布说明、README、提交信息）。
+- V1 结论仍只能是「**TXT 桌面可用 + Android 可构建**」——本限制**不因** B1 关闭而放宽。
+- `scripts/verify-v1-release.py` 每次运行都会**真实执行**该边界门禁；边界门禁现 exit 0，故不再登记阻塞项
+  （该脚本退出码语义 = 发布清单是否完整，与本项无关）。
 
 ## 5. 数据安全与回滚
 
