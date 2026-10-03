@@ -285,6 +285,9 @@ impl Typography {
         // 签名里的视口尺寸是**像素**（与 Slint 的 `width` / `height` 同口径）；
         // 派生参数统一折算成毫像素，避免「像素 × 毫像素」混算（会把 564 px 当成 564 毫像素）。
         let content_height_milli = signature.viewport_height.saturating_mul(1_000);
+        // 限宽的唯一来源是 `LayoutMetrics::text_column`（40 × 字号、居中）——
+        // 它已在上面把它折算进 `signature.viewport_width`，故此处**不再二次限宽**
+        // （否则会出现第二处限宽来源，违反版式常量单一来源纪律）。
         let line_width_milli = signature.viewport_width.saturating_mul(1_000);
         if content_height_milli < line_pitch_milli {
             return Err(TypographyError::WindowTooSmall {
