@@ -903,7 +903,7 @@ dependencies = [
 
 [[package]]
 name = "desktop-app"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "reading-core",
  "reading-source",
@@ -3463,7 +3463,7 @@ dependencies = [
 
 [[package]]
 name = "reading-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "reading-index",
  "reading-source",
@@ -3472,21 +3472,21 @@ dependencies = [
 
 [[package]]
 name = "reading-index"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "reading-source",
 ]
 
 [[package]]
 name = "reading-source"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "encoding_rs",
 ]
 
 [[package]]
 name = "reading-storage"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "rusqlite",
 ]
