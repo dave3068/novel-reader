@@ -51,6 +51,8 @@ pub const CONTENT_PADDING_COMPACT: u32 = 24;
 pub const BREAKPOINT_WIDE: u32 = 1440;
 /// 紧凑断点（像素；书架隐藏次要列 / 卡片两列）。
 pub const BREAKPOINT_COMPACT: u32 = 960;
+/// 紧凑模式上限（设计 §2.5 的 560–719 档：书架切卡片视图，避免固定列把书名挤窄换行）。
+pub const BREAKPOINT_TIGHT: u32 = 720;
 /// 窄屏断点（像素；书架卡片单列 / 紧凑留白）。
 pub const BREAKPOINT_NARROW: u32 = 720;
 /// 默认窗口宽度（像素）。
@@ -264,6 +266,8 @@ pub struct LayoutMetrics {
     pub breakpoint_wide: u32,
     /// 紧凑断点。
     pub breakpoint_compact: u32,
+    /// 紧凑模式上限断点（书架切卡片视图）。
+    pub breakpoint_tight: u32,
     /// 窄屏断点。
     pub breakpoint_narrow: u32,
     /// 默认窗口宽度。
@@ -443,6 +447,7 @@ impl LayoutMetrics {
         content_padding_compact: CONTENT_PADDING_COMPACT,
         breakpoint_wide: BREAKPOINT_WIDE,
         breakpoint_compact: BREAKPOINT_COMPACT,
+        breakpoint_tight: BREAKPOINT_TIGHT,
         breakpoint_narrow: BREAKPOINT_NARROW,
         default_window_width: DEFAULT_WINDOW_WIDTH,
         default_window_height: DEFAULT_WINDOW_HEIGHT,
@@ -743,6 +748,7 @@ pub const LAYOUT_METRIC_FIELDS: &[MetricField] = &[
     ),
     m("breakpoint-wide", "BREAKPOINT_WIDE", BREAKPOINT_WIDE),
     m("breakpoint-compact", "BREAKPOINT_COMPACT", BREAKPOINT_COMPACT),
+    m("breakpoint-tight", "BREAKPOINT_TIGHT", BREAKPOINT_TIGHT),
     m("breakpoint-narrow", "BREAKPOINT_NARROW", BREAKPOINT_NARROW),
     m(
         "default-window-width",

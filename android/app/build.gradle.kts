@@ -41,7 +41,40 @@ android {
         }
     }
 
-    buildTypes {
+    // 正式签名（L1）：仅当 android/local.properties 提供签名参数时才启用。
+    // 注意：signingConfigs 必须定义在 `android { }` 这一层（AGP DSL 的 signingConfigs
+    // 不属于 buildTypes 的作用域；写进 buildTypes.release 里会被忽略 → signingReport 显示
+    // `Config: null`，Release 产物永远是 app-release-unsigned.apk）。
+    // 密钥与口令**一律不入版本库**（local.properties 已被 .gitignore 忽略；
+    // 配置模板见 docs/android/device-runbook.md「Release 正式签名」）。
+    signingConfigs {
+        create("releaseSigned") {
+            // AGP **不会**把 local.properties 的任意键暴露为 project property，
+            // 因此优先读环境变量（NR_SIGNING_STORE_FILE / _PASSWORD / _KEY_ALIAS / _KEY_PASSWORD），
+            // 其次读 gradle.properties 的 nrSigning.* 键，最后读 local.properties 的
+            // nrSigning.* 键（后者便于本机开发，需 build-android-apk.sh 显式转成环境变量）。
+            fun nrSigningProp(name: String): String? =
+                System.getenv("NR_SIGNING_" + name)
+                    ?: (project.findProperty("nrSigning." + name) as String?)
+
+            val nrStore = nrSigningProp("STORE_FILE")
+            val nrStorePass = nrSigningProp("STORE_PASSWORD")
+            val nrAlias = nrSigningProp("KEY_ALIAS")
+            val nrKeyPass = nrSigningProp("KEY_PASSWORD")
+            if (nrStore != null && nrStorePass != null && nrAlias != null && nrKeyPass != null) {
+                storeFile = file(nrStore)
+                storePassword = nrStorePass
+                keyAlias = nrAlias
+                keyPassword = nrKeyPass
+                // v1+v2+v3：minSdk 31 实际上 v2/v3 足够，但同时启用 v1 以兼容旧校验工具。
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
+            }
+        }
+    }
+
+buildTypes {
         debug {
             // Debug 与 Release 使用同一 applicationId，便于按同一包名校验两个产物。
             isMinifyEnabled = false
@@ -52,6 +85,14 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            // 仅在参数齐备**且** keystore 文件真实存在时才挂上签名配置；
+            // 否则保持未签名（产物名 app-release-unsigned.apk，属预期，不得当发布包分发）。
+            // 注意：不能写 `nrSigned.storeFile.isFile` —— storeFile 是可变属性，Kotlin 不允许智能转换。
+            val nrSigned = signingConfigs.findByName("releaseSigned")
+            val nrSignedFile = nrSigned?.storeFile
+            if (nrSigned != null && nrSignedFile != null && nrSignedFile.isFile) {
+                signingConfig = nrSigned
+            }
         }
     }
 

@@ -124,6 +124,8 @@ export global UiMetrics {
     in property <length> breakpoint-wide: 0px;
     in property <length> breakpoint-compact: 0px;
     in property <length> breakpoint-narrow: 0px;
+    // 紧凑模式上限（设计 §2.5：560–719 档 → 书架切卡片视图，避免表格列把书名挤到换行）。
+    in property <length> breakpoint-tight: 0px;
     in property <length> default-window-width: 0px;
     in property <length> default-window-height: 0px;
     in property <length> min-window-width: 0px;
@@ -1440,6 +1442,11 @@ component ShelfPage inherits Rectangle {
     background: transparent;
 
     // 列可见性（§2.5 断点：窗口 < 960 隐藏「最近阅读」列）。
+    // 紧凑档（<720）：设计 §2.5 规定「书架切卡片视图」——
+    // 表格的固定列（状态/进度/最近/操作 共 486px）会把书名列压到极窄，
+    // 文字反复换行后溢出行容器被裁，表现为「字只显示一半」（主人 Windows 11 窄窗反馈）。
+    private property <bool> tight: root.width < UiMetrics.breakpoint-tight;
+    private property <bool> table-visible: !root.tight;
     private property <bool> recent-visible: root.width >= UiMetrics.breakpoint-compact;
     // 列表区起始 y（页头 80 + 可选通知条 96）。
     private property <length> list-top: UiMetrics.page-header-height + (root.notice ? UiMetrics.space-48 * 2 : 0px);
@@ -1486,7 +1493,7 @@ component ShelfPage inherits Rectangle {
         interactive: self.viewport-height > self.height;
 
         // ---- S1：表格视图 ----
-        if root.view == 0 : Rectangle {
+        if root.view == 0 && root.table-visible : Rectangle {
             x: 0;
             y: 0;
             width: parent.width;
@@ -1593,24 +1600,32 @@ component ShelfPage inherits Rectangle {
                     background: Skin.border-subtle;
                 }
 
+                // 书名 + 副标题：**显式高度 + 垂直居中**。
+                // 不设 height 时 Slint 取自身度量高度，窄窗下换行会溢出 48 高的行容器并被裁，
+                // 表现为「字只显示一半」（主人反馈，Windows 11 窄窗复现）。
+                // overflow: elide 保证不换行、不切字，超长以省略号收尾。
                 Text {
                     x: UiMetrics.space-16;
                     y: UiMetrics.space-4;
-                    width: root.col-status-x - UiMetrics.space-16 - UiMetrics.space-16;
+                    width: root.col-status-x - 2 * UiMetrics.space-16;
+                    height: UiMetrics.space-16 + UiMetrics.space-4;
                     text: row.title;
                     font-size: UiMetrics.ui-font-size;
                     font-weight: 500;
                     color: row.can-open ? Skin.text-primary : Skin.text-disabled;
+                    vertical-alignment: center;
                     overflow: elide;
                 }
                 Text {
                     x: UiMetrics.space-16;
                     y: UiMetrics.space-4 + UiMetrics.space-16 + UiMetrics.space-2;
-                    width: root.col-status-x - UiMetrics.space-16 - UiMetrics.space-16;
+                    width: root.col-status-x - 2 * UiMetrics.space-16;
+                    height: UiMetrics.mono-font-size + UiMetrics.space-4;
                     text: row.meta;
                     font-size: UiMetrics.mono-font-size;
                     font-family: "monospace";
                     color: Skin.text-placeholder;
+                    vertical-alignment: center;
                     overflow: elide;
                 }
                 Tag {
@@ -1626,6 +1641,9 @@ component ShelfPage inherits Rectangle {
                     width: UiMetrics.column-progress-width - UiMetrics.space-16;
                     text: row.progress;
                     font-size: UiMetrics.tag-font-size;
+                    // 显式高度 + 垂直居中：窄窗下不设高度会溢出行容器被裁，字只显示一半。
+                    height: (UiMetrics.tag-font-size) + UiMetrics.space-4;
+                    vertical-alignment: center;
                     color: Skin.text-secondary;
                     overflow: elide;
                 }

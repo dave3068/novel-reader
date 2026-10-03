@@ -158,7 +158,17 @@ sha_exe="$(sha256sum "$RELEASE_DIR/novel-reader.exe" | awk '{print $1}')"
   echo "packaging_script=desktop/packaging/windows/package-windows-gnu.sh（实验性；正式口径为 package-windows.ps1 / MSVC）"
   echo "packaging_mode=release-directory"
   echo "binary_sha256=$sha_exe"
-  echo "verification_status=未实测（交叉编译产物；未在 Windows 主机运行）"
+  # verification_status 分两种口径，不得混写：
+  #   ·人工实测（主人 2026-10-02 在真实 Windows 主机确认本 mingw-gnu 产物「可正常使用」）：
+  #     如实记录人工确认，但**不**升级为程序化「通过」（targets.json 的 status 仍为 pending，
+  #     人工确认不满足 status=verified 所需的 result=PASS 程序化证据）。
+  #   ·未人工实测：保持「未实测（交叉编译产物；未在 Windows 主机运行）」。
+  # 设置 NR_WINDOWS_MANUAL_VERIFIED=1 时取前者；默认后者（不得无证据宣称已验证）。
+  if [ "${NR_WINDOWS_MANUAL_VERIFIED:-0}" = "1" ]; then
+    echo "verification_status=人工实测可用（$(date -u +%Y-%m-%d) 主人在 Windows 主机人工确认「可正常使用」；未做程序化门禁复核，targets.json status 仍为 pending/待验证）"
+  else
+    echo "verification_status=未实测（交叉编译产物；未在 Windows 主机运行）"
+  fi
 } > "$RELEASE_DIR/VERSION"
 
 # ---- [6] MANIFEST + 自校验 ----

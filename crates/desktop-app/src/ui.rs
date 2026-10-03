@@ -316,6 +316,7 @@ pub fn apply_layout_metrics(ui: &AppWindow, metrics: &LayoutMetrics) {
     globals.set_content_padding_compact(metrics.content_padding_compact as f32);
     globals.set_breakpoint_wide(metrics.breakpoint_wide as f32);
     globals.set_breakpoint_compact(metrics.breakpoint_compact as f32);
+    globals.set_breakpoint_tight(metrics.breakpoint_tight as f32);
     globals.set_breakpoint_narrow(metrics.breakpoint_narrow as f32);
     globals.set_default_window_width(metrics.default_window_width as f32);
     globals.set_default_window_height(metrics.default_window_height as f32);
