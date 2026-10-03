@@ -593,19 +593,40 @@ def check_environment(targets: list[dict], env: dict) -> None:
         if not recorded_sha:
             note(f"{target.get('id')}：证据未记录 binary_sha256，跳过新鲜度核对")
             continue
-        if not BUILD_ARTIFACT.is_file():
-            note(f"{target.get('id')}：本机构件 {BUILD_ARTIFACT.relative_to(REPO_ROOT)} 不存在，跳过新鲜度核对")
+        # 新鲜度必须核对**该目标自己的**构件，不能一律用 Linux 构件
+        # （2026-10-02 实测踩中：windows-x86_64 的 MSVC 证据被拿去和 Linux 构件比，
+        #  二者本就不同构建、不可能相等 → 假报「证据过期」）。
+        # 证据可自带 artifact_path；缺省才回退到仓库默认构件。
+        ev_artifact = evidence.get("artifact_path")
+        if ev_artifact:
+            artifact = REPO_ROOT / str(ev_artifact)
+            origin = "证据登记的构件"
+        else:
+            artifact = BUILD_ARTIFACT
+            origin = "仓库默认构件"
+        # 跨平台目标（host_os != 本机）在本机没有对应构件可比，跳过并如实说明。
+        host_os = str(target.get("host_os") or "")
+        local_os = probe_environment().get("host_os")
+        if host_os and local_os and host_os != local_os:
+            note(
+                f"{target.get('id')}：目标 host_os={host_os} 与本机 {local_os} 不同，"
+                f"本机无该平台构件可比，跳过 sha256 新鲜度核对"
+                f"（证据 host={evidence.get('host', '未记录')}）"
+            )
             continue
-        rc, out = run(["sha256sum", str(BUILD_ARTIFACT)])
+        if not artifact.is_file():
+            note(f"{target.get('id')}：{origin} {artifact} 不存在，跳过新鲜度核对")
+            continue
+        rc, out = run(["sha256sum", str(artifact)])
         if rc != 0:
             note(f"{target.get('id')}：无法计算构件 sha256，跳过新鲜度核对")
             continue
         actual = out.split()[0] if out.split() else ""
         if actual == recorded_sha:
-            ok(f"{target.get('id')}：证据新鲜度通过（构件 sha256 与证据一致 {actual[:16]}…）")
+            ok(f"{target.get('id')}：证据新鲜度通过（{origin} sha256 与证据一致 {actual[:16]}…）")
         else:
             fail(
-                f"{target.get('id')}：证据过期 —— 构件 sha256={actual[:16]}…，"
+                f"{target.get('id')}：证据过期 —— {origin} sha256={actual[:16]}…，"
                 f"证据记录={recorded_sha[:16]}…（需重跑 {target.get('verification_gate')}）"
             )
     record("T7_environment", "本机环境探测与证据新鲜度", 1, 0)

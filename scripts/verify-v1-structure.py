@@ -372,7 +372,54 @@ def check_root_and_workspace(rep: Report, root: Path) -> None:
         rep.fact("workspace_version", ver.group(1))
         rep.ok(f"workspace.package.version = {ver.group(1)}")
     else:
-        rep.fail("根 Cargo.toml 未声明 workspace.package.version（版本唯一来源缺失）")
+        rep.fail("根 Cargo.toml 的 [workspace.package] 未声明 version")
+        return
+
+    # ---- 发行许可（L2，2026-10-02 主人裁定 GPL-3.0-only）----
+    # 判据：①根目录存在 LICENSE 且含 GPLv3 标题；②[workspace.package] 声明 license；
+    #③各 crate 的 license 与之一致（desktop-app 是独立嵌套 workspace，不能继承，须单独核对）。
+    lic_file = root / "LICENSE"
+    if not lic_file.is_file():
+        rep.fail("根目录缺少 LICENSE（项目发行许可为 GPL-3.0-only，发布物必须附带）")
+    else:
+        lic_text = read_text(lic_file)
+        if "GNU GENERAL PUBLIC LICENSE" in lic_text and "Version 3" in lic_text:
+            rep.ok(f"LICENSE 存在且为 GPLv3 原文（{lic_file.stat().st_size} 字节）")
+        else:
+            rep.fail("LICENSE 内容不是 GPLv3 原文（缺 'GNU GENERAL PUBLIC LICENSE' / 'Version 3'）")
+
+    ws_lic = re.search(r'^license\s*=\s*"([^"]+)"', text.split("[workspace.package]")[-1], re.M)
+    if ws_lic and ws_lic.group(1) == "GPL-3.0-only":
+        rep.ok("workspace.package.license = GPL-3.0-only")
+    else:
+        rep.fail(f"[workspace.package].license 应为 GPL-3.0-only（当前 {ws_lic.group(1) if ws_lic else '未声明'}）")
+
+    lic_mismatch = []
+    for d in CORE_MEMBER_DIRS:
+        cm = root / d / "Cargo.toml"
+        if not cm.is_file():
+            lic_mismatch.append(f"{d}: 缺 Cargo.toml")
+            continue
+        ctext = read_text(cm)
+        head = ctext.split("[package]")[1].split("[")[0] if "[package]" in ctext else ""
+        if "license.workspace = true" not in head:
+            lic_mismatch.append(f"{d}: 未继承 workspace 许可")
+    dm = root / "crates" / "desktop-app" / "Cargo.toml"
+    if dm.is_file():
+        dtext = read_text(dm)
+        # 自检/合成 fixture 里的 desktop-app/Cargo.toml 是**占位文件**（非真实清单），
+        # 不该要求它带许可字段；真实仓库里该文件是有 version/edition 的完整清单。
+        is_placeholder = "[package]" not in dtext
+        # 注意：不能按 "[package]" 段切到下一个 "[" 再匹配 —— desktop-app 的 license 字段
+        # 之后还有 description，段内会先遇到别的键；直接全文判定更稳。
+        if not is_placeholder and (
+            'license = "GPL-3.0-only"' not in dtext or 'license-file = "../../LICENSE"' not in dtext
+        ):
+            lic_mismatch.append("desktop-app: 未声明 GPL-3.0-only / license-file")
+    if lic_mismatch:
+        rep.fail("以下 crate 的许可标注与 GPL-3.0-only 不一致：" + "；".join(lic_mismatch))
+    else:
+        rep.ok(f"{len(CORE_MEMBER_DIRS) + 1} 个 crate 的许可标注一致（GPL-3.0-only）")
 
     lock = root / "Cargo.lock"
     if nonempty_file(rep, lock, "锁定文件"):
@@ -678,7 +725,18 @@ def build_fixture(root: Path) -> None:
     (root / "Cargo.toml").write_text(
         "[workspace]\nresolver = \"2\"\nmembers = [\n    "
         + member_list
-        + "\n]\nexclude = [\"experiments\"]\n\n[workspace.package]\nversion = \"0.1.0\"\n",
+        + "\n]\nexclude = [\"experiments\"]\n\n[workspace.package]\nversion = \"0.1.0\"\n"
+        + "license = \"GPL-3.0-only\"\nlicense-file = \"LICENSE\"\n",
+        encoding="utf-8",
+    )
+    # LICENSE：GPLv3 标题片段即可（fixture 只需满足判据，不需全文 35KB）
+    (root / "LICENSE").write_text(
+        "                    GNU GENERAL PUBLIC LICENSE\n"
+        "                       Version 3, 29 June 2007\n\n"
+        "  This program is free software: you can redistribute it and/or modify\n"
+        "  it under the terms of the GNU General Public License as published by\n"
+        "  the Free Software Foundation, either version 3 of the License, or\n"
+        "  (at your option) any later version.\n",
         encoding="utf-8",
     )
     (root / "Cargo.lock").write_text(
@@ -694,7 +752,8 @@ def build_fixture(root: Path) -> None:
         pkg = root / d
         (pkg / "src").mkdir(parents=True, exist_ok=True)
         (pkg / "Cargo.toml").write_text(
-            f'[package]\nname = "{Path(d).name}"\nversion = "0.1.0"\n', encoding="utf-8"
+            f'[package]\nname = "{Path(d).name}"\nversion = "0.1.0"\n'
+            f'license.workspace = true\nlicense-file.workspace = true\n', encoding="utf-8"
         )
         (pkg / "src/lib.rs").write_text("// fixture lib\n", encoding="utf-8")
     (root / DESKTOP_CRATE_DIR / "src/main.rs").write_text("fn main() {}\n", encoding="utf-8")
