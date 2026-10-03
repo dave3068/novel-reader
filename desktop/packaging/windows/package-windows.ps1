@@ -22,7 +22,7 @@
 
 [CmdletBinding()]
 param(
-    [string]$OutDir = (Join-Path $PSScriptRoot '..\..\dist'),
+    [string]$OutDir = (Join-Path $PSScriptRoot '..\..\..\dist'),
     [ValidateSet('x86_64-pc-windows-msvc', 'aarch64-pc-windows-msvc')]
     [string]$Target = 'x86_64-pc-windows-msvc',
     [string]$Version = '',
@@ -37,7 +37,10 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+# 仓库根：脚本位于 desktop/packaging/windows/，故需上溯**三级**（..\..\..）。
+# 此前误写 ..\..（只到 desktop/），导致 $AppManifest 解析成 desktop\crates\... 而 exit 2
+# （2026-10-02 在真实 Windows 主机实测暴露；Linux 侧 package-linux.sh 用 ../../.. 是正确的）。
+$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
 $AppManifest = Join-Path $RepoRoot 'crates\desktop-app\Cargo.toml'
 $DepsDoc = Join-Path $RepoRoot 'docs\desktop\platform-requirements.md'
 # 应用图标（设计事实来源：docs\design\icon\novel-reader.ico）；随包分发，
