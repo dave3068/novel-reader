@@ -6,7 +6,7 @@ REM 注意：改LogPixels 后必须**发 WM_SETTINGCHANGE 通知**，否则已�
 REM 取证判据：LogPixels 值 + 应用侧 NR-PAGE 的 window/viewport/lines 是否随之变化。
 setlocal EnableDelayedExpansion
 
-set "EXE=%USERPROFILE%\nr-verify\dist\novel-reader-0.2.0-windows-x86_64\novel-reader.exe"
+set "EXE=%USERPROFILE%\nr-verify\dist\novel-reader-0.3.0-windows-x86_64\novel-reader.exe"
 set "BOOK=%USERPROFILE%\nr-verify\book.txt"
 set "OUT=%USERPROFILE%\nr-verify\dpilog"
 if not exist "%OUT%" mkdir "%OUT%"

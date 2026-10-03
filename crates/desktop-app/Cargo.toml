@@ -10,7 +10,7 @@
 
 [package]
 name = "desktop-app"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.98.0"
 publish = false
@@ -32,9 +32,9 @@ path = "src/main.rs"
 # 依赖策略与核心一致：一律精确锁定版本（`=X.Y.Z`），不使用浮动区间。
 [dependencies]
 slint = { version = "=1.17.1", default-features = true }
-reading-core = { version = "=0.2.0", path = "../reading-core" }
-reading-source = { version = "=0.2.0", path = "../reading-source" }
-reading-storage = { version = "=0.2.0", path = "../reading-storage" }
+reading-core = { version = "=0.3.0", path = "../reading-core" }
+reading-source = { version = "=0.3.0", path = "../reading-source" }
+reading-storage = { version = "=0.3.0", path = "../reading-storage" }
 # 版本从既有 Cargo.lock（reading-storage 的传递依赖）取，精确锁定；仅用于本地时间格式化查询。
 rusqlite = { version = "=0.40.2", default-features = false }
 
