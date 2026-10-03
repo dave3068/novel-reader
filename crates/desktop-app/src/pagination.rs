@@ -1596,6 +1596,16 @@ impl ReaderRuntime {
         self.reflow_now()
     }
 
+    /// 运行时更新版式常量（正文留白等）并按当前位置重排。
+    ///
+    /// 用于设置页改动「左右/上下边距」——留白变了，正文区的行宽与每页行数都变，
+    /// 必须重排，否则界面留白已变而排版没变（口径不一致）。
+    /// 与 [`Self::set_typography_settings`] 走同一条 `reflow_now()` 路径。
+    pub fn set_layout_metrics(&mut self, metrics: LayoutMetrics) -> Result<ReflowOutcome, SessionError> {
+        self.metrics = metrics;
+        self.reflow_now()
+    }
+
     /// 一行分页状态（`NR-PAGE` 日志与状态栏证据）。
     pub fn state_log(&self) -> String {
         let stats = self.session.cache_stats();

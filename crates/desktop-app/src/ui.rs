@@ -300,7 +300,32 @@ fn exit_after_ms_from_env() -> Option<u64> {
 ///
 /// 顺序与 `desktop/ui/app.slint` 的 `UiMetrics` 声明一致，字段集合由
 /// `tests/layout_constants.rs::layout_constants_single_source` 核对。
+/// 正文留白覆盖（用户设置；`None` = 用版式常量）。
+///
+/// 为什么是「覆盖」而不是新增 `LayoutMetrics` 字段：用户设置**不是版式常量**，
+/// 放进 `LayoutMetrics` 会污染「版式常量单一来源」契约（`tests/layout_constants.rs` 强制
+/// 「新增常量须同步四处」）。故这里只做**投影层的覆盖**，`content_padding_*` 四档断点选档逻辑保持不变。
+///
+/// **默认值对齐**：调用方须把「未设置」映射成 `None`，此时行为与引入本覆盖前**逐像素一致**
+/// （用 `LayoutMetrics` 原有的 48/32/64/24 四档）。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ReaderMargins {
+    /// 左右边距（像素）；`None` = 跟随断点选档。
+    pub x: Option<u32>,
+    /// 上下边距（像素）；`None` = 跟随断点选档。
+    pub y: Option<u32>,
+}
+
 pub fn apply_layout_metrics(ui: &AppWindow, metrics: &LayoutMetrics) {
+    apply_layout_metrics_with_margins(ui, metrics, ReaderMargins::default());
+}
+
+/// 同 [`apply_layout_metrics`]，但带用户留白覆盖（设置页的「左右/上下边距」）。
+pub fn apply_layout_metrics_with_margins(
+    ui: &AppWindow,
+    metrics: &LayoutMetrics,
+    margins: ReaderMargins,
+) {
     let globals = ui.global::<UiMetrics>();
     globals.set_top_bar_height(metrics.top_bar_height as f32);
     globals.set_toolbar_height(metrics.toolbar_height as f32);
@@ -310,10 +335,12 @@ pub fn apply_layout_metrics(ui: &AppWindow, metrics: &LayoutMetrics) {
     globals.set_status_bar_height(metrics.status_bar_height as f32);
     globals.set_progress_bar_height(metrics.progress_bar_height as f32);
     globals.set_progress_bar_hover_height(metrics.progress_bar_hover_height as f32);
-    globals.set_content_padding_h(metrics.content_padding_h as f32);
-    globals.set_content_padding_v(metrics.content_padding_v as f32);
-    globals.set_content_padding_h_wide(metrics.content_padding_h_wide as f32);
-    globals.set_content_padding_compact(metrics.content_padding_compact as f32);
+    // 正文留白：用户覆盖**四档全替换**（含宽屏/紧凑档）——若只覆盖基线档，
+    // 宽屏窗口会仍用 64，用户拖滑杆却「看起来没反应」。未设置时逐项回落到版式常量。
+    globals.set_content_padding_h(margins.x.unwrap_or(metrics.content_padding_h) as f32);
+    globals.set_content_padding_v(margins.y.unwrap_or(metrics.content_padding_v) as f32);
+    globals.set_content_padding_h_wide(margins.x.unwrap_or(metrics.content_padding_h_wide) as f32);
+    globals.set_content_padding_compact(margins.x.unwrap_or(metrics.content_padding_compact) as f32);
     globals.set_breakpoint_wide(metrics.breakpoint_wide as f32);
     globals.set_breakpoint_compact(metrics.breakpoint_compact as f32);
     globals.set_breakpoint_tight(metrics.breakpoint_tight as f32);
@@ -1775,9 +1802,22 @@ fn apply_settings_value(
     let typography = lock(settings).typography();
     let gesture = lock(settings).gesture_mode();
     let dark = lock(settings).theme_dark();
+    let margins = reader_margins(&lock(settings));
     let view = settings::view_for(db_path, &lock(settings));
+    // 边距变了 → **两处**必须同步，否则「界面留白已变、排版没变」：
+    //   ①投影层 `UiMetrics`（决定 Slint 渲染的正文区位置）；
+    //   ②阅读侧的 `LayoutMetrics` 副本（决定分页的行宽 / 每页行数）。
+    let margins_touched = key == settings::KEY_MARGIN_X || key == settings::KEY_MARGIN_Y;
+    let runtime_metrics = LayoutMetrics::DESKTOP.with_reader_margins(margins.x, margins.y);
+    if margins_touched {
+        apply_layout_metrics_with_margins(ui, &LayoutMetrics::DESKTOP, margins);
+    }
     if let Some(session) = session {
-        if let Ok(result) = session.runtime.set_typography_settings(typography) {
+        if margins_touched {
+            if let Ok(result) = session.runtime.set_layout_metrics(runtime_metrics) {
+                project_reader_outcome(ui, state, session, &result.outcome, "边距");
+            }
+        } else if let Ok(result) = session.runtime.set_typography_settings(typography) {
             project_reader_outcome(ui, state, session, &result.outcome, "设置");
         }
     }
@@ -1822,6 +1862,24 @@ fn parse_setting_pairs(text: &str) -> Result<Vec<(String, String)>, String> {
         return Err("设置驱动串为空".to_string());
     }
     Ok(pairs)
+}
+
+/// 从全局设置读出正文留白覆盖（`None` = 未设置 → 跟随版式常量）。
+///
+/// **默认口径（2026-10-03 方案 A）**：核心 `ReaderSettings::default()` 的边距已对齐
+/// 桌面基线档（48px / 32px）。但**默认值视为「未覆盖」**（返回 `None`）——
+/// 否则默认 48 会把宽屏档 64 顶掉，等于「不改设置也改变排版」。
+fn reader_margins(settings: &GlobalSettings) -> ReaderMargins {
+    let default = GlobalSettings::default();
+    let x = settings.control_value(settings::KEY_MARGIN_X);
+    let y = settings.control_value(settings::KEY_MARGIN_Y);
+    // **只有「与核心默认不同」才算用户覆盖**。
+    // 若把默认值也当覆盖：默认 48 会把宽屏档 64 顶掉（宽屏留白由 64 变 48），
+    // 等于「不改设置也改变排版」。判定为覆盖后，默认情形走 `None` → 四档保持原样。
+    ReaderMargins {
+        x: (x >= 0 && x != default.control_value(settings::KEY_MARGIN_X)).then_some(x as u32),
+        y: (y >= 0 && y != default.control_value(settings::KEY_MARGIN_Y)).then_some(y as u32),
+    }
 }
 
 /// 阅读页当前几何（真实窗口尺寸 + 实测字体度量 + 工具条状态）。
@@ -2085,7 +2143,8 @@ pub fn run() -> Result<(), slint::PlatformError> {
     let settings_slot = Arc::new(Mutex::new(global_settings));
 
     let ui = AppWindow::new()?;
-    apply_layout_metrics(&ui, &metrics);
+    // 启动即按**已保存的**边距设置投影（否则「重启后留白恢复成默认值」）。
+    apply_layout_metrics_with_margins(&ui, &metrics, reader_margins(&lock(&settings_slot)));
     apply_palette(&ui, lock(&settings_slot).theme_dark());
 
     // ---- 分页运行时与视口状态（窗口映射后才取真实尺寸）----

@@ -57,8 +57,12 @@ impl Default for ReaderSettings {
             line_spacing_milli: 400,
             paragraph_spacing_milli: 0,
             first_line_indent_milli: 2_000,
-            margin_x_milli: 16_000,
-            margin_y_milli: 16_000,
+            // 正文留白默认值（2026-10-03 主人裁定方案 A）：对齐桌面版式常量
+            // CONTENT_PADDING_H=48 / CONTENT_PADDING_V=32，使「不改设置」时桌面排版
+            // 与引入留白设置前**逐像素一致**（此前是 16_000=16px，与桌面 48/32 不符，
+            // 直接接线会导致未改设置时正文列突然变宽）。Android 侧随之采用同一默认值。
+            margin_x_milli: 48_000,
+            margin_y_milli: 32_000,
             theme: THEME_SYSTEM.to_string(),
             operation_mode: MODE_PAGED.to_string(),
             default_encoding: "utf-8".to_string(),

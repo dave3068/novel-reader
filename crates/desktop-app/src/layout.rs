@@ -598,6 +598,25 @@ impl LayoutMetrics {
         }
     }
 
+    /// 正文留白覆盖（用户设置；`None` = 沿用本结构里的四档常量）。
+    ///
+    /// **为什么不加字段**：用户设置不是版式常量。塞进 `LayoutMetrics` 会污染
+    /// 「版式常量单一来源」契约（`tests/layout_constants.rs` 强制「新增常量须同步四处」）。
+    /// 故这里用**构造期覆盖**：`None` 时逐项回落到原常量，行为与引入本方法前**完全一致**。
+    ///
+    /// 覆盖**四档全替换**（含宽屏/紧凑档）——否则宽屏窗口仍用 64，用户拖滑杆「看起来没反应」。
+    pub const fn with_reader_margins(mut self, x: Option<u32>, y: Option<u32>) -> Self {
+        if let Some(value) = x {
+            self.content_padding_h = value;
+            self.content_padding_h_wide = value;
+            self.content_padding_compact = value;
+        }
+        if let Some(value) = y {
+            self.content_padding_v = value;
+        }
+        self
+    }
+
     /// 沉浸阅读的版式派生：顶栏 / 工具条 / 状态栏与进度条不再占位
     /// （正文区 = 整个窗口，保留 48 留白；见设计 §5 S9）。**只派生取值、不新增常量**，
     /// 因此 `UiMetrics` 的字段集合与 Slint 侧仍保持单一来源。
@@ -946,6 +965,58 @@ mod tests {
         assert_eq!(narrow.width, 160);
         assert_eq!(narrow.x, area.x + (area.width - narrow.width) / 2);
         assert!(narrow.width < area.width);
+    }
+
+    /// 正文留白设置（2026-10-03 方案 A）：默认零变化 + 用户覆盖真实生效。
+    ///
+    /// 这是**行为守卫**：一旦有人把 `with_reader_margins` 写成「只覆盖基线档」，
+    /// 或把核心默认值改离48/32，本测试必须失败。
+    #[test]
+    fn reader_margins_default_is_noop_and_override_replaces_all_tiers() {
+        let m = LayoutMetrics::DESKTOP;
+        let wide = m.breakpoint_wide;
+        // 紧凑档判据是 `width < breakpoint_narrow`（严格小于），故取 719而非 720。
+        let narrow = m.breakpoint_narrow - 1;
+
+        // ① 默认：**调用侧传 None**（默认值视为未覆盖）→ 四档逐项保持原样。
+        //    这是「不改设置则排版零变化」的保证（若把默认 48 当覆盖，宽屏档 64 会被顶掉）。
+        let unchanged = m.with_reader_margins(None, None);
+        assert_eq!(unchanged.content_padding_h_for(1200), CONTENT_PADDING_H);
+        assert_eq!(unchanged.content_padding_v_for(1200), CONTENT_PADDING_V);
+        assert_eq!(unchanged.content_padding_h_for(wide), CONTENT_PADDING_H_WIDE);
+        assert_eq!(unchanged.content_padding_h_for(narrow), CONTENT_PADDING_COMPACT);
+        assert_eq!(unchanged.content_padding_v_for(wide), CONTENT_PADDING_H_WIDE);
+
+        // 核心默认值须与桌面基线档一致（否则「默认」与「界面实际用的留白」不符）。
+        let d = crate::settings::GlobalSettings::default();
+        assert_eq!(
+            d.control_value(crate::settings::KEY_MARGIN_X) as u32,
+            CONTENT_PADDING_H,
+            "核心默认左右边距须与版式常量一致"
+        );
+        assert_eq!(
+            d.control_value(crate::settings::KEY_MARGIN_Y) as u32,
+            CONTENT_PADDING_V,
+            "核心默认上下边距须与版式常量一致"
+        );
+
+        // ② 用户覆盖：四档**全部**被替换（否则宽屏仍用 64 = 「滑杆拖了没反应」）。
+        let custom = m.with_reader_margins(Some(80), Some(60));
+        for w in [1200u32, wide, narrow] {
+            assert_eq!(custom.content_padding_h_for(w), 80, "宽度 {w} 的左右留白未被覆盖");
+        }
+        assert_eq!(custom.content_padding_h_for(m.breakpoint_narrow), 80, "断点边界宽度也须被覆盖");
+        assert_eq!(custom.content_padding_v_for(1200), 60);
+
+        // ③ 只给 x 时，y 仍跟随常量（部分覆盖不得互相清零）。
+        let only_x = m.with_reader_margins(Some(80), None);
+        assert_eq!(only_x.content_padding_h_for(1200), 80);
+        assert_eq!(only_x.content_padding_v_for(1200), CONTENT_PADDING_V);
+
+        // ④ 正文区宽度确实随留白变化（留白越大、可用宽度越小）。
+        let base = m.content_area(1200, 800, true).width;
+        let wide_pad = m.with_reader_margins(Some(80), None).content_area(1200, 800, true).width;
+        assert!(wide_pad < base, "留白加大后正文区应变窄");
     }
 
     #[test]
