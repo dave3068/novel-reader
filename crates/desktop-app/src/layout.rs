@@ -47,6 +47,10 @@ pub const CONTENT_PADDING_V: u32 = 32;
 pub const CONTENT_PADDING_H_WIDE: u32 = 64;
 /// 正文区留白（紧凑档，窗口宽 < [`BREAKPOINT_NARROW`]）。
 pub const CONTENT_PADDING_COMPACT: u32 = 24;
+/// 正文**行宽限宽的唯一来源**：见 [`LayoutMetrics::text_column`]（40 × 字号，居中）。
+/// ⚠️ **不要**再加「行宽上限」常量 —— 限宽已由 `text_column` + `LINE_WIDTH_EM` 实现，
+/// 且已接入分页链路（`reflow::layout_signature` 用 `text_column` 派生 `viewport_width`，
+/// 最终由 `Typography::line_width_milli` → `break_line` 断行；测量与渲染同源）。
 /// 宽屏断点（像素）。
 pub const BREAKPOINT_WIDE: u32 = 1440;
 /// 紧凑断点（像素；书架隐藏次要列 / 卡片两列）。

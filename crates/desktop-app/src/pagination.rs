@@ -338,10 +338,25 @@ impl PagedPage {
         self.lines.join("\n")
     }
 
-    /// 页码标签（"第 N 页"，有精确序号时才给序号）。
+    /// 页码标签。
+    ///
+    /// **口径（规格 §2.1 第5 条「不得伪造准确总页数」）**：本项目是**按需惰性分页**
+    /// （`PageSession::next_page()` 逐页计算），从不预先做全量分页 —— 对大文件那是分钟级阻塞，
+    /// 与「有限窗口读取、不得全文载入」的核心约束冲突。因此：
+    /// - 序号已知 → `第 N 页`；
+    /// - 序号未知 → `第 ? 页`（**如实标注未知**，不写「计算中」——惰性分页下该状态永不完成）；
+    /// - **仅当本页是已登记边界中的最后一页（`eof`）时**，序号 + 1 就是**真实总页数**，
+    ///   此时给出 `第 N 页（共 M 页）`。这是唯一能诚实给出总页数的时机。
     pub fn label(&self) -> String {
         match self.page_index {
-            Some(index) => format!("第 {} 页", index + 1),
+            Some(index) => {
+                if self.eof {
+                    format!("第 {} 页（共 {} 页）", index + 1, index + 1)
+                } else {
+                    format!("第 {} 页", index + 1)
+                }
+            }
+            None if self.eof => "末页".to_string(),
             None => "第 ? 页".to_string(),
         }
     }
@@ -1693,7 +1708,84 @@ mod tests {
     use super::*;
     use crate::reflow::{layout_signature, MappedViewport, TypographySettings};
 
+    /// 页码标签口径（规格 §2.1 第 5 条：不得伪造准确总页数）。
+    ///
+    /// 该测试是**规格守卫**：一旦有人改成「未算完就显示计算中」或「按字节比例估算总页数」，
+    /// 本测试必须失败。
+    #[test]
+    fn page_label_never_fabricates_total_pages() {
+        let mk = |page_index: Option<usize>, eof: bool| PagedPage {
+            layout_id: 1,
+            request_id: 1,
+            start_byte: 0,
+            end_byte: 100,
+            lines: vec!["正文".to_string()],
+            eof,
+            page_index,
+        };
+
+        // 中间页：只给序号，**不给**总页数（惰性分页下尚未知）。
+        assert_eq!(mk(Some(2), false).label(), "第 3 页");
+        // 首页同理。
+        assert_eq!(mk(Some(0), false).label(), "第 1 页");
+
+        // 末页（eof）：序号 + 1 即**真实**总页数，此时才允许给出。
+        assert_eq!(mk(Some(2), true).label(), "第 3 页（共 3 页）");
+        assert_eq!(mk(Some(0), true).label(), "第 1 页（共 1 页）");
+
+        // 序号未知：如实标注未知，**不得**出现「计算中」或任何伪造的总页数。
+        assert_eq!(mk(None, false).label(), "第 ? 页");
+        assert_eq!(mk(None, true).label(), "末页");
+        for index in [None, Some(0usize), Some(9)] {
+            for eof in [false, true] {
+                let text = mk(index, eof).label();
+                assert!(
+                    !text.contains("计算中"),
+                    "惰性分页下不得显示「计算中」（该状态永不完成）：{text}"
+                );
+            }
+        }
+    }
+
     static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    /// 端到端：翻到**真实末页**时，标签里的总页数必须等于实际翻过的页数。
+    ///
+    /// 这是方案 A 的核心保证 —— 「共 M 页」里的 M 不是估算，而是走完分页链路后
+    /// 由`page_index + 1`（末页）得到的真实值。
+    #[test]
+    fn last_page_label_total_matches_actual_page_count() {
+        let (guard, mut session) = session_for(&novel_bytes(6), "page-label-eof");
+        let mut pages = 0usize;
+        loop {
+            let outcome = session.next_page();
+            match outcome {
+                PageOutcome::Ready(page) => {
+                    pages += 1;
+                    let label = page.label();
+                    if page.eof {
+                        // 末页：标签必须给出「共 pages 页」，且与实际页数一致。
+                        assert_eq!(
+                            label,
+                            format!("第 {pages} 页（共 {pages} 页）"),
+                            "末页标签的总页数必须是真实页数"
+                        );
+                        break;
+                    }
+                    // 非末页：**不得**出现总页数（惰性分页下尚未知）。
+                    assert_eq!(label, format!("第 {pages} 页"));
+                    assert!(!label.contains("共"), "非末页不得给出总页数：{label}");
+                }
+                PageOutcome::EndOfBook { .. } => {
+                    panic!("已到 eof 的页不应再返回 EndOfBook（会多出一页）");
+                }
+                other => panic!("意外的分页结果：{other:?}"),
+            }
+            assert!(pages < 10_000, "分页未收敛");
+        }
+        assert!(pages >= 2, "夹具应至少产生 2 页，否则本测试无意义");
+        drop(guard);
+    }
 
     struct TempGuard {
         dir: PathBuf,
