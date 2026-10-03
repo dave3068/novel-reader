@@ -177,8 +177,9 @@ pub const SETTINGS_FIELDS: &[SettingsField] = &[
             max: 96,
             step: 4,
         }),
-        effective: false,
-        note: DESKTOP_INERT_NOTE,
+        // 已接入桌面排版（LayoutMetrics 的正文留白），改动会触发重排。
+        effective: true,
+        note: "",
     },
     SettingsField {
         key: KEY_MARGIN_Y,
@@ -188,8 +189,9 @@ pub const SETTINGS_FIELDS: &[SettingsField] = &[
             max: 96,
             step: 4,
         }),
-        effective: false,
-        note: DESKTOP_INERT_NOTE,
+        // 已接入桌面排版（LayoutMetrics 的正文留白），改动会触发重排。
+        effective: true,
+        note: "",
     },
     SettingsField {
         key: KEY_THEME,
@@ -883,18 +885,19 @@ pub fn display_rows(
     rows.push(row(KEY_FONT_FAMILY, 0, 0));
     rows.push(row(KEY_FONT_SIZE, 1, 0));
     rows.push(row(KEY_LINE_SPACING, 1, 0));
-    // ---- 版式（桌面端暂未生效）----
+    // ---- 版式 ----
+    // 分两组：**边距**（左右/上下）已接入桌面排版（2026-10-03）；**段距/首行缩进**仍是
+    // 「只保存不生效」——Slint 逐行渲染不叠加段距、也不做首行缩进（见设计稿 O2）。
+    // 保持如实标注，不给用户「改了却没反应」的假入口。
+    header(&mut rows, "版式", "边距即时生效并触发重排");
+    rows.push(row(KEY_MARGIN_X, 1, 1));
+    rows.push(row(KEY_MARGIN_Y, 1, 1));
     header(
         &mut rows,
         "版式（桌面端暂未生效）",
         "以下设置只保存到本地库、不参与桌面排版（Slint 逐行渲染不叠加段距/缩进）",
     );
-    for key in [
-        KEY_PARAGRAPH_SPACING,
-        KEY_FIRST_LINE_INDENT,
-        KEY_MARGIN_X,
-        KEY_MARGIN_Y,
-    ] {
+    for key in [KEY_PARAGRAPH_SPACING, KEY_FIRST_LINE_INDENT] {
         rows.push(row(key, 4, 1));
     }
     // ---- 外观 ----
