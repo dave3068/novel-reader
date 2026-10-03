@@ -67,14 +67,23 @@ die() { echo "build-android-libs.sh: $1" >&2; exit 2; }
 command -v cargo >/dev/null 2>&1 || die "cargo 不可用（$HOME/.cargo/bin 是否在 PATH？）"
 
 # local.properties 生成/刷新（AGP 官方推荐的 SDK 定位方式；不依赖调用方环境变量）
-EXPECTED_LOCAL="## Android SDK 位置（由 scripts/build-android-libs.sh 生成/刷新，勿手工编辑）
-sdk.dir=$SDK_DIR
-"
-if [ ! -s "$ANDROID_DIR/local.properties" ] || [ "$(cat "$ANDROID_DIR/local.properties")" != "$EXPECTED_LOCAL" ]; then
-  printf '%s' "$EXPECTED_LOCAL" > "$ANDROID_DIR/local.properties"
-  LOCAL_NOTE="已生成/刷新 android/local.properties → sdk.dir=$SDK_DIR"
+# ⚠️ 只能**改写 sdk.dir 这一行**，绝不能整文件覆盖（2026-10-03 实测踩中）：
+# 整文件覆盖会把本文件里主人配置的 `nrSigning.*` 签名参数整段冲掉 →
+# Release 静默退回未签名（构建仍 SUCCESSFUL，极易漏检）。
+# 因此：逐行保留其它键，只替换/插入 sdk.dir。
+LOCAL_PROPS="$ANDROID_DIR/local.properties"
+if [ -s "$LOCAL_PROPS" ] && grep -qE '^[[:space:]]*sdk\.dir[[:space:]]*=' "$LOCAL_PROPS"; then
+  TMP_PROPS="$(mktemp)"
+  sed -E "s|^[[:space:]]*sdk\.dir[[:space:]]*=.*|sdk.dir=$SDK_DIR|" "$LOCAL_PROPS" > "$TMP_PROPS"
+  mv "$TMP_PROPS" "$LOCAL_PROPS"
+  LOCAL_NOTE="已刷新 android/local.properties 的 sdk.dir=$SDK_DIR（保留其它键）"
+elif [ -s "$LOCAL_PROPS" ]; then
+  printf 'sdk.dir=%s\n' "$SDK_DIR" >> "$LOCAL_PROPS"
+  LOCAL_NOTE="已向 android/local.properties 追加 sdk.dir=$SDK_DIR（保留原有内容）"
 else
-  LOCAL_NOTE="android/local.properties 已是最新（sdk.dir=$SDK_DIR）"
+  printf '## Android SDK 位置（由 scripts/build-android-libs.sh 生成/刷新，勿手工编辑）\nsdk.dir=%s\n' \
+    "$SDK_DIR" > "$LOCAL_PROPS"
+  LOCAL_NOTE="已生成 android/local.properties → sdk.dir=$SDK_DIR"
 fi
 
 declare -A TRIPLE=( [arm64-v8a]="aarch64-linux-android" [x86_64]="x86_64-linux-android" )
