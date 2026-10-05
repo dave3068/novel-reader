@@ -369,6 +369,56 @@ component Tag inherits Rectangle {
     }
 }
 
+// 分组说明块（常驻说明；无标题、无关闭按钮；正文自动换行不截断）。
+// 2026-10-04：替代「标题 + 说明拼成一行」的旧做法（窄窗必被裁）。
+component SectionNote inherits Rectangle {
+    in property <string> text: "";
+    // 0=中性 1=信息 3=警告
+    in property <int> tone: 3;
+
+    background: tone == 1 ? Skin.primary-soft : (tone == 3 ? Skin.warning-soft : Skin.layer-02);
+    border-width: UiMetrics.hairline;
+    border-color: tone == 1 ? Skin.primary-border : (tone == 3 ? Skin.support-warning : Skin.border-subtle);
+    border-radius: UiMetrics.space-4;
+
+    // 左侧语义色条（宽 space-4）。注意：组件有 `border-radius`，色条贴x:0 时
+    // 两端会随圆角被裁出弧形，**视觉上比实际宽度更窄**，正文起点若只按space-16 计算
+    // 会显得贴边（2026-10-04 主人实测反馈：文字紧贴色条）。
+    Rectangle {
+        x: 0;
+        y: 0;
+        width: UiMetrics.space-4 - UiMetrics.hairline;
+        height: parent.height;
+        background: root.tone == 1 ? Skin.primary : (root.tone == 3 ? Skin.support-warning : Skin.text-placeholder);
+    }
+    // 正文起点用 space-24（2026-10-04 主人反馈「文字紧贴左侧色条」后加大）：
+    // 起点须**从色条宽度累加**，否则只是相对组件左缘的绝对值、观感依然贴边。
+    // 24 − (4−1) = 与色条右缘净距21 像素，左右各留24 像素，视觉呼吸充足。
+    // 正文：高度由**内容决定**（preferred-height 即 Slint 真实换行后的高度）。
+    note-body := Text {
+        x: UiMetrics.space-24;
+        y: UiMetrics.space-12;
+        width: parent.width - self.x - UiMetrics.space-24;
+        text: root.text;
+        font-size: UiMetrics.caption-font-size;
+        color: Skin.text-secondary;
+        wrap: word-wrap;
+        height: self.preferred-height;
+    }
+    // 实测高度 = 顶部留白 + 正文真实高度 + **底部留白**。
+    // 底部留白比顶部**大**（2026-10-04 主人反馈「文字底部与块底重叠」）：
+    // `preferred-height` 是**行框高**，中文字体descent 使实际墨迹底部比行框底
+    // 再高若干像素；若上下留白相等，视觉上底边就比顶边紧。故底部额外加 space-8。
+    in property <length> measured-height: UiMetrics.space-12 + note-body.preferred-height + UiMetrics.space-24;
+    // 内容高度变化（含窗口宽度变化引起的换行数变化）时回报给外层，
+    // 由外层转交 Rust 重算整页高度。`changed` 在高度真正变化时才触发，可避免抖动。
+    callback height-measured(length);
+    height: root.measured-height;
+    changed measured-height => {
+        root.height-measured(self.measured-height);
+    }
+}
+
 // 图标按钮（32 / 行内 28；必须带 tooltip 与可访问名称）。
 //
 // `caption` 是动作名（结构性格文案）；`shortcut` 是 Rust 投影的**已实现**快捷键
@@ -2924,6 +2974,9 @@ component SettingsPage inherits Rectangle {
     in property <length> viewport-height: 0px;
     callback scroll-by(length);
     callback scroll-to(float);
+    // 说明块（kind 7）把**实测**渲染高度回报 Rust（2026-10-04 主人要求按内容定高）。
+    // Rust 用它替换固定估算值并重算整页 `content_height`，避免宽度足够时下方留大片空白。
+    callback note-height-changed(int, length);
     // 下拉框（选择型字段）状态与交互。
     in property <bool> select-open: false;
     in property <length> select-y: 0px;
@@ -2947,6 +3000,42 @@ component SettingsPage inherits Rectangle {
 
     private property <length> label-width: UiMetrics.space-48 * 4 + UiMetrics.space-8;
     private property <length> control-x: root.label-width + UiMetrics.space-16;
+
+    // ---- 数值行（kind 1）控件宽度的**自适应口径**（2026-10-04 修窄窗溢出）----
+    //
+    // 缺陷：滑杆与数值框原先都用**固定长度**（`search-field-width ± space-48*2`），
+    // 右端合计约七百余像素；而内容区宽 = 窗口宽 - 2×留白，故窗口窄于约八百像素时
+    // 数值框右端**溢出窗口**被裁切（在最小窗口宽度下实测溢出两百余像素）。
+    // ⚠️ 本注释刻意不写带单位的尺寸值 —— `tests/layout_constants.rs` 会扫描 `.slint`
+    // 全文（**含注释**）并拒绝除「零值」外的任何写死尺寸，同一坑已踩三次。
+    //
+    // 修法（单行夹紧，不换行）：把「可用宽度」按比例分给数值框与滑杆，
+    // 数值框有**最小/最大宽度**，滑杆吃剩余量并**不小于最小宽度**。
+    // 这样任何窗口宽度下右端都恰好落在内容区右边界内，不会溢出。
+    private property <length> row-controls-right: root.width - UiMetrics.space-16;         // 控件区右界（留 16右边距）
+    private property <length> row-controls-avail: max(0px, root.row-controls-right - root.control-x);
+
+    // 数值框宽度：目标约可用宽度的 3/10，夹在 [96, 144]（96 ≈ 可显示 3 位数），
+    // **但不超过可用宽度**——这是「不溢出」的唯一硬保证。
+    // 口径权衡：窗口极窄且用户又把留白调到最大（实测最小窗口宽度 + 最大留白）时，
+    // 空间不足同时保不住两者，此时**优先保住数值框的最小 96**、滑块退让；
+    // 若连96 都放不下，数值框按可用宽度收缩（不隐藏，保证仍可输入/看值）。
+    // 不用比例运算（Slint 里 length 除法会产出 float，需显式单位，徒增歧义）：
+    // 直接「可用宽度减去滑块应得的空间」。滑块空间取「可用 - 数字框上限」与
+    // 「可用 * 7/10 向上取整」的较大者，用**整数减法**表达，避免除法。
+    private property <length> number-field-width: min(UiMetrics.search-field-width - UiMetrics.space-48 * 2,
+        max(0px, max(UiMetrics.space-48 * 2, root.row-controls-avail - root.row-slider-reserve)));
+
+    // 滑块「应得」空间：正常情况留给滑块 ≈ 7/10 可用宽度（用减法表达比例，避免除法）：
+    // = avail - 数字框上限。数字框上限固定 144，故 avail 越大、滑块留白越多。
+    // 当 avail <= 数字框上限 + 最小滑块（160）时，reserve 退为 avail - 160，保证滑块不被压没。
+    private property <length> row-slider-reserve: max(0px,
+        max(root.row-controls-avail - (UiMetrics.search-field-width - UiMetrics.space-48 * 2),
+            root.row-controls-avail - (UiMetrics.space-48 * 3 + UiMetrics.space-16)));
+
+    // 滑杆宽度：吃除间距外的剩余量（可被压到很小，但不为负）。
+    private property <length> slider-bar-width: max(0px,
+        root.row-controls-avail - UiMetrics.space-16 - root.number-field-width);
 
     Rectangle {
         x: 0;
@@ -3017,11 +3106,34 @@ component SettingsPage inherits Rectangle {
                 if row.kind == 5 : Text {
                     x: 0;
                     y: (parent.height - self.height) / 2;
-                    text: row.note == "" ? row.label : row.label + "　" + row.note;
+                    // 分组标题**只显示标题本身**（2026-10-04）：原先 `label + "　" + note`
+                    // 拼成一行，窄窗必然被裁；说明改为下方独立信息块（kind 7）。
+                    text: row.label;
                     font-size: UiMetrics.ui-font-size;
                     font-weight: 600;
                     color: Skin.text-primary;
                     vertical-alignment: center;
+                }
+
+                // 分组说明（kind 7）：独立信息块，自动换行、不截断。
+                //
+                // ⚠️ **不复用** `InlineNotice`：它带「关闭」按钮与 `dismissed` 回调，
+                // 而分组说明是**常驻说明**（无状态可存、无「关闭」语义），复用会导致
+                // 用户点× 后整块消失且无处恢复。故用专用轻量块`SectionNote`。
+                if row.kind == 7 : SectionNote {
+                    x: UiMetrics.space-16;
+                    y: 0;
+                    width: parent.width - UiMetrics.space-16 * 2;
+                    // 说明块高度由组件**按内容自算**；此处不再沿用 Rust 的固定行高。
+                    height: self.measured-height;
+                    text: row.note;
+                    // 首次 + 后续高度变化都回报（组件内部用changed 只在真变化时触发）。
+                    init => {
+                        root.note-height-changed(0, self.measured-height);
+                    }
+                    height-measured(height) => {
+                        root.note-height-changed(0, height);
+                    }
                 }
 
                 // 标签 + 说明（200 像素 列）。
@@ -3034,10 +3146,18 @@ component SettingsPage inherits Rectangle {
                     color: row.effective ? Skin.text-primary : Skin.text-disabled;
                     overflow: elide;
                 }
+                // 字段级说明（2026-10-04 主人三次反馈后定稿）：
+                //  ① 左边距从 space-16 → **space-32**（橙黄小字仍偏紧，主人要求再加）；
+                //  ② 宽度不再只占 label 列 —— 原来按 `label-width` 收窄，长句被挤成 4 行、
+                //     右侧留大片空白，末行还压出信息区下沿；
+                //     现铺满「控件区」并**避开右侧「暂未生效」Tag**。
+                //     ⚠️ 本注释刻意不写带单位的尺寸值（`layout_constants.rs` 扫描全文含注释）。
                 if row.kind != 5 && row.note != "" : Text {
-                    x: UiMetrics.space-16;
+                    x: UiMetrics.space-32;
                     y: UiMetrics.space-8 + UiMetrics.space-16 + UiMetrics.space-4;
-                    width: root.label-width - UiMetrics.space-16;
+                    // 右界 = 行宽 − 右边距 − （未生效项才有的 Tag 区宽）
+                    width: parent.width - self.x - UiMetrics.space-16
+                        - (row.effective ? 0px : UiMetrics.space-48 + UiMetrics.space-16);
                     text: row.note;
                     font-size: UiMetrics.caption-font-size;
                     color: row.effective ? Skin.text-placeholder : Skin.support-warning;
@@ -3082,7 +3202,7 @@ component SettingsPage inherits Rectangle {
                 if row.kind == 1 : SliderBar {
                     x: root.control-x;
                     y: UiMetrics.space-8 + UiMetrics.space-8;
-                    width: UiMetrics.search-field-width + UiMetrics.space-48 * 2;
+                    width: root.slider-bar-width;
                     value: row.value-current;
                     minimum: row.value-min;
                     maximum: row.value-max;
@@ -3091,9 +3211,9 @@ component SettingsPage inherits Rectangle {
                     }
                 }
                 if row.kind == 1 : TextField {
-                    x: root.control-x + UiMetrics.search-field-width + UiMetrics.space-48 * 2 + UiMetrics.space-16;
+                    x: root.control-x + root.slider-bar-width + UiMetrics.space-16;
                     y: UiMetrics.space-8;
-                    width: UiMetrics.search-field-width - UiMetrics.space-48 * 2;
+                    width: root.number-field-width;
                     compact: true;
                     text: row.value;
                     label: row.label;
@@ -3104,7 +3224,7 @@ component SettingsPage inherits Rectangle {
                 if row.kind == 1 : Text {
                     x: root.control-x;
                     y: UiMetrics.space-8 + UiMetrics.space-48;
-                    width: UiMetrics.search-field-width + UiMetrics.space-48 * 2;
+                    width: root.slider-bar-width;
                     text: row.range-label;
                     font-family: "monospace";
                     font-size: UiMetrics.mono-font-size;
@@ -3660,6 +3780,8 @@ export component AppWindow inherits Window {
     callback shelf-sort-set(int);
     callback settings-scroll-by(length);
     callback settings-scroll-to(float);
+    // 设置页说明块实测高度回报（转发给 Rust；Rust 据此重算整页高度）。
+    callback settings-note-height(int, length);
     callback settings-select-toggle(string);
     callback settings-select-close();
     callback shelf-open-book(string);
@@ -4020,6 +4142,9 @@ export component AppWindow inherits Window {
         height: parent.height - UiMetrics.top-bar-height - UiMetrics.status-bar-height;
         rows: root.settings-rows;
         note: root.settings-note;
+        note-height-changed(row-index, height) => {
+            root.settings-note-height(row-index, height);
+        }
         data-path: root.settings-data-path;
         content-height: root.settings-content-height;
         scroll-y: root.settings-scroll-y;

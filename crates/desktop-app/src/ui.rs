@@ -2141,6 +2141,9 @@ pub fn run() -> Result<(), slint::PlatformError> {
         guard.set_status("就绪：正在加载本地书架…");
     }
     let settings_slot = Arc::new(Mutex::new(global_settings));
+    // 说明块实测高度（行序号 → 像素）；由 Slint 回报，Rust 据此算content_height。
+    let note_heights: Arc<Mutex<std::collections::HashMap<usize, u32>>> =
+        Arc::new(Mutex::new(std::collections::HashMap::new()));
 
     let ui = AppWindow::new()?;
     // 启动即按**已保存的**边距设置投影（否则「重启后留白恢复成默认值」）。
@@ -2947,6 +2950,38 @@ pub fn run() -> Result<(), slint::PlatformError> {
         let entry = settings_scroll_entry.clone();
         move |ratio| {
             entry(None, Some(f64::from(ratio)));
+        }
+    });
+    // 说明块实测高度回报（2026-10-04 主人要求「按内容定高」）：
+    // Slint 用 `Text.preferred-height` 算出真实高度回报，Rust 据此替换固定估算
+    // 并重算整页 content_height。**高度相同则不动**，避免「回报→重排→再回报」抖动。
+    ui.on_settings_note_height({
+        let state = Arc::clone(&state);
+        let settings_slot = Arc::clone(&settings_slot);
+        let note_heights = Arc::clone(&note_heights);
+        let db_path = db_path.clone();
+        let weak = ui.as_weak();
+        move |index, height_px| {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let height = (height_px.max(0.0).round()) as u32;
+            let index = index.max(0) as usize;
+            let mut guard_heights = lock(&note_heights);
+            if guard_heights.get(&index) == Some(&height) {
+                return;
+            }
+            guard_heights.insert(index, height);
+            let snapshot = guard_heights.clone();
+            drop(guard_heights);
+            let view = settings::view_with_note_heights(
+                &db_path,
+                &lock(&settings_slot),
+                &snapshot,
+            );
+            mutate_and_refresh(&ui, &state, |guard| {
+                guard.set_settings_view(view.clone());
+            });
         }
     });
     ui.on_settings_cycle({
