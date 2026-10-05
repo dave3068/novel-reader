@@ -849,12 +849,26 @@ pub fn display_rows(
     counts: (i64, i64),
 ) -> Vec<SettingsRowView> {
     let mut rows: Vec<SettingsRowView> = Vec::new();
-    let header = |rows: &mut Vec<SettingsRowView>, label: &str, note: &str| {
+    // 分组标题（kind 5）：**标题只放 label**，说明不进标题行。
+    //
+    // 2026-10-04 修复：原先是 `label + "　" + note` 拼成一行，窄窗（最小 560）必然
+    // 超出窗口被裁切，且与设计稿 §263「顶部一条解释」不符 —— 说明应当是**独立信息块**。
+    let header = |rows: &mut Vec<SettingsRowView>, label: &str, _note: &str| {
         rows.push(SettingsRowView {
             label: label.to_string(),
-            note: note.to_string(),
+            note: String::new(),
             kind: 5,
             section: -1,
+            ..SettingsRowView::default()
+        });
+    };
+    // 分组说明块（kind 7）：独立成块，供 `.slint` 用 `InlineNotice` 渲染（自动换行、不截断）。
+    let section_note = |rows: &mut Vec<SettingsRowView>, section: i32, text: &str| {
+        rows.push(SettingsRowView {
+            label: String::new(),
+            note: text.to_string(),
+            kind: 7,
+            section,
             ..SettingsRowView::default()
         });
     };
@@ -886,19 +900,28 @@ pub fn display_rows(
     rows.push(row(KEY_FONT_SIZE, 1, 0));
     rows.push(row(KEY_LINE_SPACING, 1, 0));
     // ---- 版式 ----
-    // 分两组：**边距**（左右/上下）已接入桌面排版（2026-10-03）；**段距/首行缩进**仍是
-    // 「只保存不生效」——Slint 逐行渲染不叠加段距、也不做首行缩进（见设计稿 O2）。
-    // 保持如实标注，不给用户「改了却没反应」的假入口。
-    header(&mut rows, "版式", "边距即时生效并触发重排");
+    // 分两组：**边距**（左右/上下）已接入桌面排版（2026-10-03，改动即时生效并触发重排）；
+    // **段距/首行缩进**仍是「只保存不生效」——Slint 逐行渲染不叠加段距、也不做首行缩进
+    // （见设计稿 O2）。保持如实标注，不给用户「改了却没反应」的假入口。
+    //
+    // 方案 A（2026-10-04 主人裁定）：**仅当分组内确有未生效项时**才显示说明块；
+    // 「边距」这一组全部生效，故不给它挂说明块。
+    header(&mut rows, "版式 · 边距", "");
     rows.push(row(KEY_MARGIN_X, 1, 1));
     rows.push(row(KEY_MARGIN_Y, 1, 1));
-    header(
+    // 说明块承担**唯一**的说明职责（2026-10-04 主人裁定）：原先字段级 note 也写
+    // 「只保存、不参与桌面排版」，与说明块文案重复、观感冗余，故字段 note 一律留空。
+    header(&mut rows, "版式 · 段落", "");
+    section_note(
         &mut rows,
-        "版式（桌面端暂未生效）",
-        "以下设置只保存到本地库、不参与桌面排版（Slint 逐行渲染不叠加段距/缩进）",
+        1,
+        "段距与首行缩进暂不生效：Slint 逐行渲染不叠加段距、也不做首行缩进。",
     );
     for key in [KEY_PARAGRAPH_SPACING, KEY_FIRST_LINE_INDENT] {
-        rows.push(row(key, 4, 1));
+        let mut row = row(key, 4, 1);
+        // 清空字段级说明，避免与上方说明块重复（说明只由说明块承担）。
+        row.note = String::new();
+        rows.push(row);
     }
     // ---- 外观 ----
     header(&mut rows, "外观", "");
@@ -980,10 +1003,32 @@ fn field_range(key: &str) -> Option<NumericRange> {
 /// 单行高度（像素；与 `.slint` 行内容一致）。
 ///
 /// 分组标题 48；数值滑杆行 48 + 24；其余单行 48 + 8。
+/// 说明块（`kind = 7`）的**实测高度**（像素），按 Slint 回报值覆盖估算值。
+///
+/// 为什么需要：说明块高度取决于**实际换行行数**，而换行行数又取决于窗口宽度。
+/// Rust 侧无法预知 Slint 的真实排版结果（它有自己的换行与标点禁则规则），
+/// 固定估算值会在「宽度足够、只占一行」时仍占两三行的高度 → 下方留大片空白。
+/// 故由 `SettingsPage` 用 `Text.preferred-height` 实测后回报（2026-10-04 主人要求）。
+
+/// 逐行求和；`note_heights` 为 `kind = 7` 行的实测高度（键为行序号）。
+pub fn content_height_with(rows: &[SettingsRowView], note_heights: &std::collections::HashMap<usize, u32>) -> u32 {
+    let mut total: u32 = 0;
+    for (index, row) in rows.iter().enumerate() {
+        total += 8 + note_heights.get(&index).copied().unwrap_or_else(|| row_height(row.kind));
+    }
+    total + 24
+}
+
 pub fn row_height(kind: i32) -> u32 {
     match kind {
         5 => 48,
         1 => 48 + 24,
+        // 分组说明块：**首次进入页面时**（Slint 尚未回报实测高度）使用的紧估算。
+        // 原先取 48+24+16 = 88（按「窄窗两行」估），而常见情形只占一行 ≈ 42，
+        // 于是块下方多出约 46 像素空白（2026-10-04 主人实测反馈）。
+        // 现按**单行**取值；Slint 回报实测高度后由 `content_height_with` 覆盖，
+        // 窄窗换行变多时会自动增高。此值仍须 ≥ 单行真实高度，否则首帧会截字。
+        7 => 12 + 18 + 24,
         _ => 48 + 8,
     }
 }
@@ -1000,6 +1045,21 @@ pub fn content_height(rows: &[SettingsRowView]) -> u32 {
         total += 8 + row_height(row.kind);
     }
     total + 24
+}
+
+/// 组装设置页投影，**并采用 Slint 实测的说明块高度**重算内容高度。
+///
+/// `note_heights`：行序号 → 实测高度（仅 `kind = 7` 会被查到）。
+pub fn view_with_note_heights(
+    db_path: &Path,
+    settings: &GlobalSettings,
+    note_heights: &std::collections::HashMap<usize, u32>,
+) -> crate::app_state::SettingsView {
+    let mut view = view_for(db_path, settings);
+    if !note_heights.is_empty() {
+        view.content_height = content_height_with(&view.rows, note_heights);
+    }
+    view
 }
 
 /// 组装设置页投影（含数据行；供启动期与设置变更共用）。
@@ -1037,6 +1097,172 @@ pub fn storage_counts(db_path: &Path) -> (i64, i64) {
 
 #[cfg(test)]
 mod tests {
+    /// 说明块高度必须**按内容自适应**（2026-10-04 主人要求）。
+    ///
+    /// 缺陷背景：原先`row_height(7)` 是**固定估算值**，而说明块的真实高度取决于
+    /// **实际换行行数**（换行行数又取决于窗口宽度）—— 宽度足够只占一行时，
+    /// 固定估算仍占两三行的高度，下方留大片空白。
+    ///
+    /// 本测试锁定 `content_height_with` 的三条语义：
+    /// ①实测高度**真的被采用**（不是仍用固定估算）；
+    /// ②只影响对应行（其余行高不变）；
+    /// ③行数越多 → 总高度越大（单调）。
+    #[test]
+    fn note_block_height_follows_measured_content() {
+        let settings = GlobalSettings::default();
+        let rows = display_rows(&settings, "/tmp/library.db", (3, 1));
+        let baseline = content_height(&rows);
+
+        // 找到唯一的说明块行（kind = 7）
+        let note_index = rows
+            .iter()
+            .position(|row| row.kind == 7)
+            .expect("应存在说明块行");
+        // 首次进入页面时的**紧估算**（2026-10-04 改为单行口径：12顶 + 18行 + 24 底 = 54）。
+        // 不再按「窄窗两行」估 88，否则一行内容时块下方会多出大片空白。
+        let estimated = row_height(7);
+        assert_eq!(
+            estimated, 54,
+            "紧估算应等于单行真实高度（顶 space-12 + 行高 + 底 space-24）"
+        );
+
+        // ① 实测值**真的**被采用：与估算不同则总高度应按差值调整。
+        let mut one_line = std::collections::HashMap::new();
+        one_line.insert(note_index, 54u32);
+        let h_one = content_height_with(&rows, &one_line);
+        assert_eq!(
+            h_one, baseline,
+            "实测值等于紧估算时，总高度应与基线一致"
+        );
+
+        // 实测比估算矮（更紧）时应按差值收窄，而不是仍占估算高度。
+        let mut tighter = std::collections::HashMap::new();
+        tighter.insert(note_index, 30u32);
+        assert_eq!(
+            content_height_with(&rows, &tighter),
+            baseline - (estimated - 30),
+            "实测更矮时应按差值收窄"
+        );
+
+        // ② 只影响对应行：另一行用不同实测值时，总高度差应恰好等于差值。
+        let mut other_index = rows
+            .iter()
+            .enumerate()
+            .find(|(index, _row)| *index != note_index)
+            .map(|(index, _)| index)
+            .expect("应还有其它行");
+        let mut two_rows = std::collections::HashMap::new();
+        two_rows.insert(other_index, 999u32);
+        let h_other = content_height_with(&rows, &two_rows);
+        assert_eq!(
+            h_other,
+            baseline + 999 - row_height(rows[other_index].kind),
+            "实测高度只应影响对应行"
+        );
+
+        // ③ 单调：行数越多总高度越大。
+        let mut tall = std::collections::HashMap::new();
+        tall.insert(note_index, 200u32);
+        assert!(content_height_with(&rows, &tall) > h_one);
+    }
+
+    /// 分组标题**不得拼接说明**；说明必须是独立的说明块行（kind 7）。
+    ///
+    /// 2026-10-04 修复：原先 `SettingsRowView { label, note, kind: 5 }` 的渲染层
+    /// 拼成 `label + "　" + note` 一行，窄窗（最小宽度）必然被裁切，且与设计稿
+    /// §263「顶部一条解释」不符。这是**行为守卫**：一旦有人把说明塞回标题行，本测试必须失败。
+    #[test]
+    fn section_header_never_inlines_note_and_notes_become_blocks() {
+        let settings = GlobalSettings::default();
+        let rows = display_rows(&settings, "/tmp/library.db", (3, 1));
+
+        // ① 所有分组标题行（kind 5）的 note 必须为空 —— 说明不得进标题。
+        for row in rows.iter().filter(|row| row.kind == 5) {
+            assert!(
+                row.note.is_empty(),
+                "分组标题「{}」不得携带说明（应另起说明块）：{}",
+                row.label,
+                row.note
+            );
+        }
+
+        // ② 必须存在独立说明块行，且内容来自段距/缩进那条说明。
+        let blocks: Vec<&SettingsRowView> = rows.iter().filter(|row| row.kind == 7).collect();
+        assert!(
+            !blocks.is_empty(),
+            "应至少有一个 kind=7 说明块（段距/首行缩进的「只保存不生效」说明）"
+        );
+        assert!(
+            blocks.iter().any(|row| row.note.contains("首行缩进")),
+            "说明块内容应包含「首行缩进」的说明，实际：{:?}",
+            blocks.iter().map(|r| r.note.clone()).collect::<Vec<_>>()
+        );
+
+        // ③ 方案 A：**只有确有未生效项的分组才挂说明块** —— 「排版」等全生效分组不应有。
+        //    说明块只应出现在「版式（部分暂未生效）」之后。
+        let first_block = rows.iter().position(|row| row.kind == 7).expect("已有说明块");
+        let headers_before: Vec<&str> = rows[..first_block]
+            .iter()
+            .filter(|row| row.kind == 5)
+            .map(|row| row.label.as_str())
+            .collect();
+        assert_eq!(
+            headers_before.last().copied(),
+            Some("版式 · 段落"),
+            "说明块应位于「版式 · 段落」分组内（该分组含未生效项）"
+        );
+        // 「排版」与「版式 · 边距」两组全部生效，其标题行**之后紧跟的应是设置项**，
+        // 而不是说明块（即说明块不得出现在这两组之下）。
+        let notice_sections: Vec<i32> = rows
+            .iter()
+            .filter(|row| row.kind == 7)
+            .map(|row| row.section)
+            .collect();
+        assert!(
+            notice_sections.iter().all(|section| *section == 1),
+            "说明块只应归属「版式」分组（section=1），实际 section={notice_sections:?}"
+        );
+        //分组名不得重复（曾出现两个「版式」）
+        let mut names: Vec<&str> = rows.iter().filter(|r| r.kind == 5).map(|r| r.label.as_str()).collect();
+        let before = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), before, "分组标题不得重名：{names:?}");
+
+        // ④ 说明块高度是**紧估算**（单行口径），实测值会覆盖它。
+        //    2026-10-04 主人反馈「块下方空白过多」后由 88 改为单行紧值。
+        assert_eq!(
+            row_height(7),
+            12 + 18 + 24,
+            "kind=7 应取单行紧估算（顶+行高+底），而非按多行的保守值"
+        );
+        // 精简后文案在常见窗口宽度下均为 1 行，故紧估算必须够容下它。
+        let block_note = blocks
+            .iter()
+            .find(|row| row.note.contains("首行缩进"))
+            .expect("应找到说明块");
+        assert!(
+            block_note.note.chars().count() <= 40,
+            "说明块文案应精简到一行可容下（当前 {} 字）：{}",
+            block_note.note.chars().count(),
+            block_note.note
+        );
+        // 「版式 · 段落」两项的字段级 note 必须为空 —— 该组说明已由说明块承担一次，
+        // 避免同一件事说两遍（2026-10-04 主人裁定）。**只限定这一组**：
+        // 其它 kind=4 行（如「数据库位置」）的 note 是各自独立信息，不在此列。
+        for row in rows
+            .iter()
+            .filter(|row| row.kind == 4 && (row.label == "段距" || row.label == "首行缩进"))
+        {
+            assert!(
+                row.note.is_empty(),
+                "「{}」的字段级说明应留空（说明已由说明块承担）：{}",
+                row.label,
+                row.note
+            );
+        }
+    }
+
     use super::*;
     use std::fs;
     use std::path::PathBuf;
