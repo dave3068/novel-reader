@@ -166,21 +166,11 @@ pub fn rename_book(
 }
 
 /// 全部重新关联（对给定的失效书籍依次选择文件；每一步都可取消）。
-pub fn relink_all(
-    db_path: &Path,
-    ids: &[i64],
-    picker: &dyn FilePicker,
-    now: i64,
-) -> Vec<String> {
+pub fn relink_all(db_path: &Path, ids: &[i64], picker: &dyn FilePicker, now: i64) -> Vec<String> {
     ids.iter()
         .map(|id| {
-            let outcome = source_status::relink_flow(
-                db_path,
-                *id,
-                picker,
-                DEFAULT_RELINK_DECISION,
-                now,
-            );
+            let outcome =
+                source_status::relink_flow(db_path, *id, picker, DEFAULT_RELINK_DECISION, now);
             source_status::relink_status_text(&outcome)
         })
         .collect()
@@ -208,8 +198,8 @@ mod tests {
             text.push_str("用于书架治理动作验证的中文正文行。\n\n");
         }
         fs::write(&path, text).expect("写入测试文件");
-        let report = crate::import::import_path(&dir.join("library.db"), &path, 100)
-            .expect("导入测试书");
+        let report =
+            crate::import::import_path(&dir.join("library.db"), &path, 100).expect("导入测试书");
         let mut storage = Storage::open(dir.join("library.db")).expect("打开数据库");
         storage.migrate().expect("迁移");
         save_progress(
@@ -289,15 +279,13 @@ mod tests {
             storage.conn(),
             book_id,
             0,
-            &[
-                index::ChapterInput {
-                    sequence: 0,
-                    title: "第一章".to_string(),
-                    start_byte: 0,
-                    end_byte: 10,
-                    rule_id: "test".to_string(),
-                },
-            ],
+            &[index::ChapterInput {
+                sequence: 0,
+                title: "第一章".to_string(),
+                start_byte: 0,
+                end_byte: 10,
+                rule_id: "test".to_string(),
+            }],
             10,
         )
         .expect("写入章节");

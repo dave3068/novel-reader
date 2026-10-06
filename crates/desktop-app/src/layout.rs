@@ -159,6 +159,40 @@ pub const PANEL_HEADER_HEIGHT: u32 = 48;
 pub const PANEL_HINT_HEIGHT: u32 = 32;
 
 // ---------------------------------------------------------------------------
+// 分类侧栏（V1.1；设计稿 §2.1）
+// ---------------------------------------------------------------------------
+
+/// 分类侧栏宽度（像素；含 1px 右分隔线）。
+pub const SIDEBAR_WIDTH: u32 = 240;
+/// 侧栏头高度（像素；标题 + 新建按钮）。
+pub const SIDEBAR_HEAD_HEIGHT: u32 = 40;
+/// 侧栏树行高（像素）。
+pub const SIDEBAR_ROW_HEIGHT: u32 = 32;
+/// 侧栏每层缩进（像素）。
+pub const SIDEBAR_INDENT: u32 = 16;
+/// 展开箭头 / 占位尺寸（像素）。
+pub const TREE_ARROW_SIZE: u32 = 16;
+/// 窄窗（< 960）时侧栏收起的图标栏宽度（像素）。
+pub const SIDEBAR_COLLAPSED_WIDTH: u32 = 48;
+
+// ---------------------------------------------------------------------------
+// 阅读历史（V1.1；设计稿 H1/H2）
+// ---------------------------------------------------------------------------
+
+/// 历史流水行高（像素；设计稿 §4.1 的 48）。
+pub const HISTORY_ROW_HEIGHT: u32 = 48;
+/// 按书聚合的组头行高（像素；设计稿 §4.1 的 40）。
+pub const HISTORY_GROUP_HEAD_HEIGHT: u32 = 40;
+/// 时间列宽（像素；等宽字体，最长 `yyyy-MM-dd HH:MM`）。
+pub const HISTORY_TIME_WIDTH: u32 = 120;
+/// 位置列宽（像素；`第 N 章 · 偏移 N 字节`）。
+pub const HISTORY_POSITION_WIDTH: u32 = 210;
+/// 进入方式 tag 列宽（像素）。
+pub const HISTORY_KIND_WIDTH: u32 = 104;
+/// 基色色块边长（像素；V1.1 取色器，与设置行高同量级）。
+pub const SWATCH_SIZE: u32 = 24;
+
+// ---------------------------------------------------------------------------
 // 滚动条
 // ---------------------------------------------------------------------------
 
@@ -350,6 +384,32 @@ pub struct LayoutMetrics {
     pub panel_header_height: u32,
     /// 面板底部提示条高度。
     pub panel_hint_height: u32,
+    // ---- 分类侧栏（V1.1；设计稿 §2.1）----
+    /// 分类侧栏宽度（含 1px 分隔线）。
+    pub sidebar_width: u32,
+    /// 侧栏头高度。
+    pub sidebar_head_height: u32,
+    /// 侧栏树行高。
+    pub sidebar_row_height: u32,
+    /// 每层缩进。
+    pub sidebar_indent: u32,
+    /// 展开箭头尺寸。
+    pub tree_arrow_size: u32,
+    /// 窄窗时收起的图标栏宽度。
+    pub sidebar_collapsed_width: u32,
+    // ---- 阅读历史（V1.1）----
+    /// 历史流水行高。
+    pub history_row_height: u32,
+    /// 按书聚合的组头行高。
+    pub history_group_head_height: u32,
+    /// 时间列宽。
+    pub history_time_width: u32,
+    /// 位置列宽。
+    pub history_position_width: u32,
+    /// 进入方式 tag 列宽。
+    pub history_kind_width: u32,
+    /// 基色色块边长。
+    pub swatch_size: u32,
     /// 滚动条宽度。
     pub scrollbar_width: u32,
     /// 滚动条与容器右缘的间距。
@@ -491,6 +551,20 @@ impl LayoutMetrics {
         page_header_height: PAGE_HEADER_HEIGHT,
         panel_header_height: PANEL_HEADER_HEIGHT,
         panel_hint_height: PANEL_HINT_HEIGHT,
+        // 分类侧栏（V1.1）。
+        sidebar_width: SIDEBAR_WIDTH,
+        sidebar_head_height: SIDEBAR_HEAD_HEIGHT,
+        sidebar_row_height: SIDEBAR_ROW_HEIGHT,
+        sidebar_indent: SIDEBAR_INDENT,
+        tree_arrow_size: TREE_ARROW_SIZE,
+        sidebar_collapsed_width: SIDEBAR_COLLAPSED_WIDTH,
+        // 阅读历史（V1.1）。
+        history_row_height: HISTORY_ROW_HEIGHT,
+        history_group_head_height: HISTORY_GROUP_HEAD_HEIGHT,
+        history_time_width: HISTORY_TIME_WIDTH,
+        history_position_width: HISTORY_POSITION_WIDTH,
+        history_kind_width: HISTORY_KIND_WIDTH,
+        swatch_size: SWATCH_SIZE,
         scrollbar_width: SCROLLBAR_WIDTH,
         scrollbar_gutter: SCROLLBAR_GUTTER,
         scrollbar_min_handle: SCROLLBAR_MIN_HANDLE,
@@ -657,56 +731,200 @@ pub struct PaletteField {
 ///
 /// 取值口径来自设计 §2.1：主色阶 p10–p100、Carbon 中性阶与语义令牌（明 / 暗）。
 pub const PALETTE_FIELDS: &[PaletteField] = &[
-    f("background", (0xff, 0xff, 0xff, 0xff), (0x16, 0x16, 0x16, 0xff)),
-    f("layer-01", (0xf4, 0xf4, 0xf4, 0xff), (0x26, 0x26, 0x26, 0xff)),
-    f("layer-02", (0xff, 0xff, 0xff, 0xff), (0x39, 0x39, 0x39, 0xff)),
-    f("field-01", (0xff, 0xff, 0xff, 0xff), (0x26, 0x26, 0x26, 0xff)),
-    f("border-subtle", (0xe0, 0xe0, 0xe0, 0xff), (0x39, 0x39, 0x39, 0xff)),
-    f("border-strong", (0x8d, 0x8d, 0x8d, 0xff), (0x6f, 0x6f, 0x6f, 0xff)),
-    f("text-primary", (0x16, 0x16, 0x16, 0xff), (0xf4, 0xf4, 0xf4, 0xff)),
-    f("text-secondary", (0x52, 0x52, 0x52, 0xff), (0xc6, 0xc6, 0xc6, 0xff)),
-    f("text-placeholder", (0x8d, 0x8d, 0x8d, 0xff), (0x6f, 0x6f, 0x6f, 0xff)),
-    f("text-disabled", (0xc6, 0xc6, 0xc6, 0xff), (0x6f, 0x6f, 0x6f, 0xff)),
+    f(
+        "background",
+        (0xff, 0xff, 0xff, 0xff),
+        (0x16, 0x16, 0x16, 0xff),
+    ),
+    f(
+        "layer-01",
+        (0xf4, 0xf4, 0xf4, 0xff),
+        (0x26, 0x26, 0x26, 0xff),
+    ),
+    f(
+        "layer-02",
+        (0xff, 0xff, 0xff, 0xff),
+        (0x39, 0x39, 0x39, 0xff),
+    ),
+    f(
+        "field-01",
+        (0xff, 0xff, 0xff, 0xff),
+        (0x26, 0x26, 0x26, 0xff),
+    ),
+    f(
+        "border-subtle",
+        (0xe0, 0xe0, 0xe0, 0xff),
+        (0x39, 0x39, 0x39, 0xff),
+    ),
+    f(
+        "border-strong",
+        (0x8d, 0x8d, 0x8d, 0xff),
+        (0x6f, 0x6f, 0x6f, 0xff),
+    ),
+    f(
+        "text-primary",
+        (0x16, 0x16, 0x16, 0xff),
+        (0xf4, 0xf4, 0xf4, 0xff),
+    ),
+    f(
+        "text-secondary",
+        (0x52, 0x52, 0x52, 0xff),
+        (0xc6, 0xc6, 0xc6, 0xff),
+    ),
+    f(
+        "text-placeholder",
+        (0x8d, 0x8d, 0x8d, 0xff),
+        (0x6f, 0x6f, 0x6f, 0xff),
+    ),
+    f(
+        "text-disabled",
+        (0xc6, 0xc6, 0xc6, 0xff),
+        (0x6f, 0x6f, 0x6f, 0xff),
+    ),
     // 主色：p60 明色主色；暗色提亮为 p50（设计 §2.1 对比度规则）。
-    f("primary", (0x18, 0x90, 0xff, 0xff), (0x40, 0x96, 0xff, 0xff)),
-    f("primary-hover", (0x09, 0x58, 0xd9, 0xff), (0x69, 0xb1, 0xff, 0xff)),
-    f("primary-pressed", (0x00, 0x3e, 0xb3, 0xff), (0x91, 0xca, 0xff, 0xff)),
+    f(
+        "primary",
+        (0x18, 0x90, 0xff, 0xff),
+        (0x40, 0x96, 0xff, 0xff),
+    ),
+    f(
+        "primary-hover",
+        (0x09, 0x58, 0xd9, 0xff),
+        (0x69, 0xb1, 0xff, 0xff),
+    ),
+    f(
+        "primary-pressed",
+        (0x00, 0x3e, 0xb3, 0xff),
+        (0x91, 0xca, 0xff, 0xff),
+    ),
     // p10 选中底 / 通知底；暗色取深蓝底（保持「层色 + 边框」层级）。
-    f("primary-soft", (0xe6, 0xf4, 0xff, 0xff), (0x11, 0x2a, 0x45, 0xff)),
+    f(
+        "primary-soft",
+        (0xe6, 0xf4, 0xff, 0xff),
+        (0x11, 0x2a, 0x45, 0xff),
+    ),
     // p20 Tag 底 / 描边强调。
-    f("primary-border", (0xba, 0xe0, 0xff, 0xff), (0x15, 0x3a, 0x5e, 0xff)),
+    f(
+        "primary-border",
+        (0xba, 0xe0, 0xff, 0xff),
+        (0x15, 0x3a, 0x5e, 0xff),
+    ),
     // p70 正文链接 / 次级按钮文字（<18px 正文本必须用它，对比度 AA）。
-    f("primary-strong", (0x09, 0x58, 0xd9, 0xff), (0x69, 0xb1, 0xff, 0xff)),
-    f("on-primary", (0xff, 0xff, 0xff, 0xff), (0xff, 0xff, 0xff, 0xff)),
+    f(
+        "primary-strong",
+        (0x09, 0x58, 0xd9, 0xff),
+        (0x69, 0xb1, 0xff, 0xff),
+    ),
+    f(
+        "on-primary",
+        (0xff, 0xff, 0xff, 0xff),
+        (0xff, 0xff, 0xff, 0xff),
+    ),
     f("focus", (0x18, 0x90, 0xff, 0xff), (0x40, 0x96, 0xff, 0xff)),
     // 顶栏 UI Shell：两主题同色（深底白字）。
     f("header", (0x16, 0x16, 0x16, 0xff), (0x16, 0x16, 0x16, 0xff)),
-    f("header-text", (0xff, 0xff, 0xff, 0xff), (0xff, 0xff, 0xff, 0xff)),
+    f(
+        "header-text",
+        (0xff, 0xff, 0xff, 0xff),
+        (0xff, 0xff, 0xff, 0xff),
+    ),
     // 深色顶栏上的图标按钮悬停底色（若沿用浅色 hover，白色图标会看不见）。
-    f("header-hover", (0x2e, 0x2e, 0x2e, 0xff), (0x3d, 0x3d, 0x3d, 0xff)),
-    f("support-success", (0x19, 0x80, 0x38, 0xff), (0x42, 0xbe, 0x65, 0xff)),
-    f("success-soft", (0xde, 0xfb, 0xe6, 0xff), (0x0f, 0x3a, 0x24, 0xff)),
-    f("support-warning", (0x8a, 0x61, 0x00, 0xff), (0xf1, 0xc2, 0x1b, 0xff)),
-    f("warning-soft", (0xff, 0xf8, 0xe1, 0xff), (0x3a, 0x2c, 0x00, 0xff)),
-    f("support-error", (0xda, 0x1e, 0x28, 0xff), (0xff, 0x83, 0x89, 0xff)),
-    f("error-soft", (0xff, 0xf1, 0xf0, 0xff), (0x3a, 0x12, 0x14, 0xff)),
-    f("scrollbar-track", (0xf4, 0xf4, 0xf4, 0xff), (0x26, 0x26, 0x26, 0xff)),
-    f("scrollbar-handle", (0xc6, 0xc6, 0xc6, 0xff), (0x6f, 0x6f, 0x6f, 0xff)),
+    f(
+        "header-hover",
+        (0x2e, 0x2e, 0x2e, 0xff),
+        (0x3d, 0x3d, 0x3d, 0xff),
+    ),
+    f(
+        "support-success",
+        (0x19, 0x80, 0x38, 0xff),
+        (0x42, 0xbe, 0x65, 0xff),
+    ),
+    f(
+        "success-soft",
+        (0xde, 0xfb, 0xe6, 0xff),
+        (0x0f, 0x3a, 0x24, 0xff),
+    ),
+    f(
+        "support-warning",
+        (0x8a, 0x61, 0x00, 0xff),
+        (0xf1, 0xc2, 0x1b, 0xff),
+    ),
+    f(
+        "warning-soft",
+        (0xff, 0xf8, 0xe1, 0xff),
+        (0x3a, 0x2c, 0x00, 0xff),
+    ),
+    f(
+        "support-error",
+        (0xda, 0x1e, 0x28, 0xff),
+        (0xff, 0x83, 0x89, 0xff),
+    ),
+    f(
+        "error-soft",
+        (0xff, 0xf1, 0xf0, 0xff),
+        (0x3a, 0x12, 0x14, 0xff),
+    ),
+    f(
+        "scrollbar-track",
+        (0xf4, 0xf4, 0xf4, 0xff),
+        (0x26, 0x26, 0x26, 0xff),
+    ),
+    f(
+        "scrollbar-handle",
+        (0xc6, 0xc6, 0xc6, 0xff),
+        (0x6f, 0x6f, 0x6f, 0xff),
+    ),
     // 中性 g40 / g60（暗色），供滑块与次要描边使用。
-    f("control-track", (0xa8, 0xa8, 0xa8, 0xff), (0x6f, 0x6f, 0x6f, 0xff)),
+    f(
+        "control-track",
+        (0xa8, 0xa8, 0xa8, 0xff),
+        (0x6f, 0x6f, 0x6f, 0xff),
+    ),
     // 禁用态：g10 底 / g20 边 / g30 字（§S16 状态矩阵）。
-    f("disabled-bg", (0xf4, 0xf4, 0xf4, 0xff), (0x26, 0x26, 0x26, 0xff)),
-    f("disabled-border", (0xe0, 0xe0, 0xe0, 0xff), (0x39, 0x39, 0x39, 0xff)),
-    f("disabled-text", (0xc6, 0xc6, 0xc6, 0xff), (0x6f, 0x6f, 0x6f, 0xff)),
+    f(
+        "disabled-bg",
+        (0xf4, 0xf4, 0xf4, 0xff),
+        (0x26, 0x26, 0x26, 0xff),
+    ),
+    f(
+        "disabled-border",
+        (0xe0, 0xe0, 0xe0, 0xff),
+        (0x39, 0x39, 0x39, 0xff),
+    ),
+    f(
+        "disabled-text",
+        (0xc6, 0xc6, 0xc6, 0xff),
+        (0x6f, 0x6f, 0x6f, 0xff),
+    ),
     // 弹窗遮罩 `rgba(22,22,22,.5)`。
-    f("overlay", (0x16, 0x16, 0x16, 0x80), (0x16, 0x16, 0x16, 0x80)),
+    f(
+        "overlay",
+        (0x16, 0x16, 0x16, 0x80),
+        (0x16, 0x16, 0x16, 0x80),
+    ),
     // Toast：深底白字（两主题同色）。
-    f("toast-bg", (0x26, 0x26, 0x26, 0xff), (0x26, 0x26, 0x26, 0xff)),
-    f("toast-text", (0xff, 0xff, 0xff, 0xff), (0xff, 0xff, 0xff, 0xff)),
+    f(
+        "toast-bg",
+        (0x26, 0x26, 0x26, 0xff),
+        (0x26, 0x26, 0x26, 0xff),
+    ),
+    f(
+        "toast-text",
+        (0xff, 0xff, 0xff, 0xff),
+        (0xff, 0xff, 0xff, 0xff),
+    ),
     // 暗色阅读正文（≈13:1）。
-    f("reading-text", (0x22, 0x22, 0x22, 0xff), (0xe0, 0xe0, 0xe0, 0xff)),
+    f(
+        "reading-text",
+        (0x22, 0x22, 0x22, 0xff),
+        (0xe0, 0xe0, 0xe0, 0xff),
+    ),
     // 封面占位底（本地派生色块，不引入网络素材）。
-    f("cover-bg", (0xe6, 0xf4, 0xff, 0xff), (0x11, 0x2a, 0x45, 0xff)),
+    f(
+        "cover-bg",
+        (0xe6, 0xf4, 0xff, 0xff),
+        (0x11, 0x2a, 0x45, 0xff),
+    ),
 ];
 
 /// 便捷构造：颜色令牌。
@@ -751,7 +969,11 @@ pub const LAYOUT_METRIC_FIELDS: &[MetricField] = &[
         FLOATING_TOOLBAR_HEIGHT,
     ),
     m("status-bar-height", "STATUS_BAR_HEIGHT", STATUS_BAR_HEIGHT),
-    m("progress-bar-height", "PROGRESS_BAR_HEIGHT", PROGRESS_BAR_HEIGHT),
+    m(
+        "progress-bar-height",
+        "PROGRESS_BAR_HEIGHT",
+        PROGRESS_BAR_HEIGHT,
+    ),
     m(
         "progress-bar-hover-height",
         "PROGRESS_BAR_HOVER_HEIGHT",
@@ -770,7 +992,11 @@ pub const LAYOUT_METRIC_FIELDS: &[MetricField] = &[
         CONTENT_PADDING_COMPACT,
     ),
     m("breakpoint-wide", "BREAKPOINT_WIDE", BREAKPOINT_WIDE),
-    m("breakpoint-compact", "BREAKPOINT_COMPACT", BREAKPOINT_COMPACT),
+    m(
+        "breakpoint-compact",
+        "BREAKPOINT_COMPACT",
+        BREAKPOINT_COMPACT,
+    ),
     m("breakpoint-tight", "BREAKPOINT_TIGHT", BREAKPOINT_TIGHT),
     m("breakpoint-narrow", "BREAKPOINT_NARROW", BREAKPOINT_NARROW),
     m(
@@ -813,17 +1039,33 @@ pub const LAYOUT_METRIC_FIELDS: &[MetricField] = &[
         BUTTON_HEIGHT_COMPACT,
     ),
     m("focus-ring-width", "FOCUS_RING_WIDTH", FOCUS_RING_WIDTH),
-    m("search-field-width", "SEARCH_FIELD_WIDTH", SEARCH_FIELD_WIDTH),
+    m(
+        "search-field-width",
+        "SEARCH_FIELD_WIDTH",
+        SEARCH_FIELD_WIDTH,
+    ),
     m("sort-field-width", "SORT_FIELD_WIDTH", SORT_FIELD_WIDTH),
     m("tag-height", "TAG_HEIGHT", TAG_HEIGHT),
     m("switch-width", "SWITCH_WIDTH", SWITCH_WIDTH),
     m("switch-height", "SWITCH_HEIGHT", SWITCH_HEIGHT),
     m("radio-size", "RADIO_SIZE", RADIO_SIZE),
-    m("slider-handle-size", "SLIDER_HANDLE_SIZE", SLIDER_HANDLE_SIZE),
-    m("slider-track-height", "SLIDER_TRACK_HEIGHT", SLIDER_TRACK_HEIGHT),
+    m(
+        "slider-handle-size",
+        "SLIDER_HANDLE_SIZE",
+        SLIDER_HANDLE_SIZE,
+    ),
+    m(
+        "slider-track-height",
+        "SLIDER_TRACK_HEIGHT",
+        SLIDER_TRACK_HEIGHT,
+    ),
     m("list-row-height", "LIST_ROW_HEIGHT", LIST_ROW_HEIGHT),
     m("table-row-height", "TABLE_ROW_HEIGHT", TABLE_ROW_HEIGHT),
-    m("table-header-height", "TABLE_HEADER_HEIGHT", TABLE_HEADER_HEIGHT),
+    m(
+        "table-header-height",
+        "TABLE_HEADER_HEIGHT",
+        TABLE_HEADER_HEIGHT,
+    ),
     m(
         "column-status-width",
         "COLUMN_STATUS_WIDTH",
@@ -844,9 +1086,61 @@ pub const LAYOUT_METRIC_FIELDS: &[MetricField] = &[
         "COLUMN_ACTIONS_WIDTH",
         COLUMN_ACTIONS_WIDTH,
     ),
-    m("page-header-height", "PAGE_HEADER_HEIGHT", PAGE_HEADER_HEIGHT),
-    m("panel-header-height", "PANEL_HEADER_HEIGHT", PANEL_HEADER_HEIGHT),
+    m(
+        "page-header-height",
+        "PAGE_HEADER_HEIGHT",
+        PAGE_HEADER_HEIGHT,
+    ),
+    m(
+        "panel-header-height",
+        "PANEL_HEADER_HEIGHT",
+        PANEL_HEADER_HEIGHT,
+    ),
     m("panel-hint-height", "PANEL_HINT_HEIGHT", PANEL_HINT_HEIGHT),
+    m("sidebar-width", "SIDEBAR_WIDTH", SIDEBAR_WIDTH),
+    m(
+        "sidebar-head-height",
+        "SIDEBAR_HEAD_HEIGHT",
+        SIDEBAR_HEAD_HEIGHT,
+    ),
+    m(
+        "sidebar-row-height",
+        "SIDEBAR_ROW_HEIGHT",
+        SIDEBAR_ROW_HEIGHT,
+    ),
+    m("sidebar-indent", "SIDEBAR_INDENT", SIDEBAR_INDENT),
+    m("tree-arrow-size", "TREE_ARROW_SIZE", TREE_ARROW_SIZE),
+    m(
+        "sidebar-collapsed-width",
+        "SIDEBAR_COLLAPSED_WIDTH",
+        SIDEBAR_COLLAPSED_WIDTH,
+    ),
+    m(
+        "history-row-height",
+        "HISTORY_ROW_HEIGHT",
+        HISTORY_ROW_HEIGHT,
+    ),
+    m(
+        "history-group-head-height",
+        "HISTORY_GROUP_HEAD_HEIGHT",
+        HISTORY_GROUP_HEAD_HEIGHT,
+    ),
+    m(
+        "history-time-width",
+        "HISTORY_TIME_WIDTH",
+        HISTORY_TIME_WIDTH,
+    ),
+    m(
+        "history-position-width",
+        "HISTORY_POSITION_WIDTH",
+        HISTORY_POSITION_WIDTH,
+    ),
+    m(
+        "history-kind-width",
+        "HISTORY_KIND_WIDTH",
+        HISTORY_KIND_WIDTH,
+    ),
+    m("swatch-size", "SWATCH_SIZE", SWATCH_SIZE),
     m("scrollbar-width", "SCROLLBAR_WIDTH", SCROLLBAR_WIDTH),
     m("scrollbar-gutter", "SCROLLBAR_GUTTER", SCROLLBAR_GUTTER),
     m(
@@ -983,9 +1277,18 @@ mod tests {
         let unchanged = m.with_reader_margins(None, None);
         assert_eq!(unchanged.content_padding_h_for(1200), CONTENT_PADDING_H);
         assert_eq!(unchanged.content_padding_v_for(1200), CONTENT_PADDING_V);
-        assert_eq!(unchanged.content_padding_h_for(wide), CONTENT_PADDING_H_WIDE);
-        assert_eq!(unchanged.content_padding_h_for(narrow), CONTENT_PADDING_COMPACT);
-        assert_eq!(unchanged.content_padding_v_for(wide), CONTENT_PADDING_H_WIDE);
+        assert_eq!(
+            unchanged.content_padding_h_for(wide),
+            CONTENT_PADDING_H_WIDE
+        );
+        assert_eq!(
+            unchanged.content_padding_h_for(narrow),
+            CONTENT_PADDING_COMPACT
+        );
+        assert_eq!(
+            unchanged.content_padding_v_for(wide),
+            CONTENT_PADDING_H_WIDE
+        );
 
         // 核心默认值须与桌面基线档一致（否则「默认」与「界面实际用的留白」不符）。
         let d = crate::settings::GlobalSettings::default();
@@ -1003,9 +1306,17 @@ mod tests {
         // ② 用户覆盖：四档**全部**被替换（否则宽屏仍用 64 = 「滑杆拖了没反应」）。
         let custom = m.with_reader_margins(Some(80), Some(60));
         for w in [1200u32, wide, narrow] {
-            assert_eq!(custom.content_padding_h_for(w), 80, "宽度 {w} 的左右留白未被覆盖");
+            assert_eq!(
+                custom.content_padding_h_for(w),
+                80,
+                "宽度 {w} 的左右留白未被覆盖"
+            );
         }
-        assert_eq!(custom.content_padding_h_for(m.breakpoint_narrow), 80, "断点边界宽度也须被覆盖");
+        assert_eq!(
+            custom.content_padding_h_for(m.breakpoint_narrow),
+            80,
+            "断点边界宽度也须被覆盖"
+        );
         assert_eq!(custom.content_padding_v_for(1200), 60);
 
         // ③ 只给 x 时，y 仍跟随常量（部分覆盖不得互相清零）。
@@ -1015,7 +1326,10 @@ mod tests {
 
         // ④ 正文区宽度确实随留白变化（留白越大、可用宽度越小）。
         let base = m.content_area(1200, 800, true).width;
-        let wide_pad = m.with_reader_margins(Some(80), None).content_area(1200, 800, true).width;
+        let wide_pad = m
+            .with_reader_margins(Some(80), None)
+            .content_area(1200, 800, true)
+            .width;
         assert!(wide_pad < base, "留白加大后正文区应变窄");
     }
 
@@ -1071,11 +1385,7 @@ mod tests {
                 "{} 明色不得全透明",
                 field.slint_name
             );
-            assert_ne!(
-                field.value.dark.3, 0,
-                "{} 暗色不得全透明",
-                field.slint_name
-            );
+            assert_ne!(field.value.dark.3, 0, "{} 暗色不得全透明", field.slint_name);
         }
     }
 }

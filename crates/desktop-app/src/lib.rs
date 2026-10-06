@@ -27,11 +27,16 @@
 //! - 导入与重新关联对用户原始文件**只读**：不移动、不重命名、不删除。
 
 pub mod app_state;
+pub mod background_ops;
+pub mod batch_import;
 pub mod bookmarks;
 pub mod bridge;
+pub mod category_ops;
+pub mod category_tree;
 pub mod chapters;
 pub mod encoded_source;
 pub mod encoding;
+pub mod history_view;
 pub mod import;
 pub mod input;
 pub mod layout;
@@ -43,6 +48,7 @@ pub mod settings;
 pub mod shelf;
 pub mod shelf_ops;
 pub mod source_status;
+pub mod theme_derive;
 pub mod ui;
 
 pub use app_state::{
@@ -71,7 +77,7 @@ pub use progress::{
     SavedPosition,
 };
 pub use settings::{
-    load as load_settings, save as save_settings, display_rows as settings_display_rows,
+    display_rows as settings_display_rows, load as load_settings, save as save_settings,
     view_for as settings_view_for, FieldKind, GlobalSettings, SettingsError, SettingsField,
     SettingsOrigin, SettingsRowView, SETTINGS_FIELDS,
 };

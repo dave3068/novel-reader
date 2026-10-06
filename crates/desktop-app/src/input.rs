@@ -301,7 +301,6 @@ mod tests {
         assert_eq!(PageTurn::Next.log_name(), "next");
     }
 
-
     /// F11 的按键取值与便携名（程序化验证入口）。
     #[test]
     fn f11_maps_to_immersive_toggle_name() {

@@ -19,20 +19,22 @@
 slint::slint! {
     // `UiMetrics` / `Skin` / `Screens` 是 `app.slint` 中的全局单例，必须显式 export
     // 才能在 Rust 侧以 `ui.global::<UiMetrics>()` / `Screens.shelf` 引用。
-    export { AppWindow, BookRow, ChoiceRow, MarkRow, Screens, SettingsRow, ShortcutEntry, Skin, StepRow, TocRow, UiMetrics } from "../../desktop/ui/app.slint";
+    export { AppWindow, BookRow, CategoryRow as CategoryRowSlint, ChoiceRow, HistoryGroupHead as HistoryGroupHeadSlint, HistoryRow as HistoryRowSlint, MarkRow, OrganizeRow as OrganizeRowSlint, Screens, SettingsRow, ShortcutEntry, Skin, StepRow, TocRow, UiMetrics } from "../../desktop/ui/app.slint";
 }
 
+use std::collections::BTreeMap;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
+use reading_storage::Storage;
 use slint::{ModelRc, VecModel};
 
 use crate::app_state::{
-    self, AppState, ChoiceRow as ChoiceRowData, ImportView, Screen, ShortcutEntryView, StepRowView,
-    TocRow as TocRowData, UiSnapshot,
+    self, AppState, ChoiceRow as ChoiceRowData, ImportView, OrganizeRowView, Screen,
+    ShortcutEntryView, StepRowView, TocRow as TocRowData, UiSnapshot,
 };
 use crate::bookmarks;
 use crate::bridge::{JobChannel, SlintEventLoopExecutor, UiBridge};
@@ -80,6 +82,59 @@ pub const SETTINGS_SET_ENV: &str = "NR_SETTINGS_SET";
 pub const ENCODING_SELECT_ENV: &str = "NR_ENCODING_SELECT";
 /// 书架行「阅读」入口（值为书籍 id；与书架整行点击**同一函数**）。
 pub const SHELF_OPEN_ENV: &str = "NR_SHELF_OPEN";
+
+/// 分类：选中分类 id（V1.1；`NR_SHELF_OPEN_CATEGORY` 的同义入口，命名更贴切）。
+///
+/// 与界面「点分类行 → `shelf-category-select`」走**同一个回调**，
+/// 避免出现「驱动能选中、界面点不动」的对等性缺口。
+pub const SHELF_OPEN_CATEGORY_ENV: &str = "NR_SHELF_OPEN_CATEGORY";
+
+/// 分类：新建（值 = `名称` 或 `父id:名称`，留空 = 当前选中分类下）。
+pub const CATEGORY_ADD_ENV: &str = "NR_CATEGORY_ADD";
+
+/// 分类：重命名（值 = `id:新名称`）。
+pub const CATEGORY_RENAME_ENV: &str = "NR_CATEGORY_RENAME";
+
+/// 分类：移动（值 = `id:目标id`，目标留空 = 根下）。
+pub const CATEGORY_MOVE_ENV: &str = "NR_CATEGORY_MOVE";
+
+/// 分类：删除（值 = `id:去向`，去向 ∈ `other:目标id` / `remove` / `root`；缺省=未选→应被拒）。
+pub const CATEGORY_DELETE_ENV: &str = "NR_CATEGORY_DELETE";
+
+/// 书籍：移动到分类（值 = `书籍id:分类id`，分类留空 = 未分类）。
+pub const BOOK_MOVE_ENV: &str = "NR_BOOK_MOVE";
+/// 全局阅读背景图：设置（V1.1；与界面设置页**同一写入路径**）。
+///
+/// 值 = `<源图片路径>[:fit][:scrim千分比]`，如
+/// `NR_BACKGROUND_SET="/tmp/bg.png:cover:600"`；`fit` ∈ `cover`/`tile`/`center`。
+pub const BACKGROUND_SET_ENV: &str = "NR_BACKGROUND_SET";
+
+/// 全局阅读背景图：清除（V1.1；与界面「清除背景图」**同一路径**）。
+pub const BACKGROUND_CLEAR_ENV: &str = "NR_BACKGROUND_CLEAR";
+
+/// 自定义配色：设置基色（V1.1；与界面设置页**同一写入路径**）。
+///
+/// 值 = `<键>=<色值>`，键 ∈ `fg` / `bg` / `primary` / `accent` / `on`；
+/// 色值 = `#RRGGBB`，留空 = 清除该项（回落内置）。
+/// 例：`NR_THEME_SET="primary=#1890ff;on=1"`。
+pub const THEME_SET_ENV: &str = "NR_THEME_SET";
+
+/// 阅读历史：进入 / 返回书架（V1.1；与界面「最近阅读」按钮**同一回调**）。
+pub const HISTORY_VIEW_ENV: &str = "NR_HISTORY_VIEW";
+
+/// 阅读历史：清空全部流水（V1.1；走**同一个确认弹窗**，非直接删）。
+pub const HISTORY_CLEAR_ENV: &str = "NR_HISTORY_CLEAR";
+
+/// 批量导入并按目录名归类（V1.1；规格 R6）。
+///
+/// 值 = `<目录路径>` 或 `<目录路径>:yes`（按目录名归类，默认）
+/// / `<目录路径>:no`（不归类，全部导入到当前分类）。
+/// 勾选「记住」用 `<目录路径>:yes:remember`。
+///
+/// 与界面「批量导入…」按钮**共用** `open_organize_dialog` / `execute_organize_import`，
+/// 不复制一份逻辑（门禁 [10] 的对等性要求）。
+pub const IMPORT_ORGANIZE_ENV: &str = "NR_IMPORT_ORGANIZE";
+
 /// 目录滚动条定位（`0..1` 比例；与界面滚动条**同一回调**）。
 pub const TOC_SEEK_ENV: &str = "NR_TOC_SEEK";
 /// 目录滚轮（逻辑像素 delta-y；与界面滚轮**同一回调**）。
@@ -231,11 +286,7 @@ impl ReadingSession {
 
     /// 工具条居中标题（「书名 · 章节」；文案由 Rust 生成）。
     fn heading(&self) -> String {
-        format!(
-            "{} · {}",
-            self.runtime.book().title,
-            self.chapter_label()
-        )
+        format!("{} · {}", self.runtime.book().title, self.chapter_label())
     }
 
     /// 正文列几何（**页面局部坐标**；测量与渲染同口径）。
@@ -340,7 +391,8 @@ pub fn apply_layout_metrics_with_margins(
     globals.set_content_padding_h(margins.x.unwrap_or(metrics.content_padding_h) as f32);
     globals.set_content_padding_v(margins.y.unwrap_or(metrics.content_padding_v) as f32);
     globals.set_content_padding_h_wide(margins.x.unwrap_or(metrics.content_padding_h_wide) as f32);
-    globals.set_content_padding_compact(margins.x.unwrap_or(metrics.content_padding_compact) as f32);
+    globals
+        .set_content_padding_compact(margins.x.unwrap_or(metrics.content_padding_compact) as f32);
     globals.set_breakpoint_wide(metrics.breakpoint_wide as f32);
     globals.set_breakpoint_compact(metrics.breakpoint_compact as f32);
     globals.set_breakpoint_tight(metrics.breakpoint_tight as f32);
@@ -383,6 +435,21 @@ pub fn apply_layout_metrics_with_margins(
     globals.set_page_header_height(metrics.page_header_height as f32);
     globals.set_panel_header_height(metrics.panel_header_height as f32);
     globals.set_panel_hint_height(metrics.panel_hint_height as f32);
+    // 分类侧栏（V1.1）。
+    globals.set_sidebar_width(metrics.sidebar_width as f32);
+    globals.set_sidebar_head_height(metrics.sidebar_head_height as f32);
+    globals.set_sidebar_row_height(metrics.sidebar_row_height as f32);
+    globals.set_sidebar_indent(metrics.sidebar_indent as f32);
+    globals.set_tree_arrow_size(metrics.tree_arrow_size as f32);
+    globals.set_sidebar_collapsed_width(metrics.sidebar_collapsed_width as f32);
+    // 阅读历史（V1.1）。
+    globals.set_history_row_height(metrics.history_row_height as f32);
+    globals.set_history_group_head_height(metrics.history_group_head_height as f32);
+    globals.set_history_time_width(metrics.history_time_width as f32);
+    globals.set_history_position_width(metrics.history_position_width as f32);
+    globals.set_history_kind_width(metrics.history_kind_width as f32);
+    // 基色色块（V1.1 取色器）。
+    globals.set_swatch_size(metrics.swatch_size as f32);
     globals.set_scrollbar_width(metrics.scrollbar_width as f32);
     globals.set_scrollbar_gutter(metrics.scrollbar_gutter as f32);
     globals.set_scrollbar_min_handle(metrics.scrollbar_min_handle as f32);
@@ -466,6 +533,242 @@ pub fn apply_palette(ui: &AppWindow, dark: bool) {
     }
 }
 
+/// 在内置配色之上叠加**派生配色**（V1.1；规格 R10）。
+///
+/// 口径：**内置明/暗是底，派生值只覆盖其上**。这样：
+/// - 用户没启用自定义配色时，走的是原 `apply_palette` 路径（行为零变化）；
+/// - 启用后只替换 40 个令牌里派生得出的一部分，其余仍用内置值。
+///
+/// `derived` 为 `None` 时等价于内置（便于「禁用自定义配色」直接复用本函数）。
+pub fn apply_palette_with(
+    ui: &AppWindow,
+    dark: bool,
+    derived: Option<&crate::theme_derive::DerivedPalette>,
+) {
+    let globals = ui.global::<Skin>();
+    for field in layout::PALETTE_FIELDS {
+        // 优先级：派生值 > 内置值。
+        let rgba: (u8, u8, u8, u8) = derived
+            .and_then(|palette| {
+                if dark {
+                    palette.dark_of(field.slint_name)
+                } else {
+                    palette.light_of(field.slint_name)
+                }
+            })
+            .map(|value| (value[0], value[1], value[2], value[3]))
+            .unwrap_or(if dark {
+                field.value.dark
+            } else {
+                field.value.light
+            });
+        let color = slint::Color::from_argb_u8(rgba.3, rgba.0, rgba.1, rgba.2);
+        match field.slint_name {
+            "background" => globals.set_background(color),
+            "layer-01" => globals.set_layer_01(color),
+            "layer-02" => globals.set_layer_02(color),
+            "field-01" => globals.set_field_01(color),
+            "border-subtle" => globals.set_border_subtle(color),
+            "border-strong" => globals.set_border_strong(color),
+            "text-primary" => globals.set_text_primary(color),
+            "text-secondary" => globals.set_text_secondary(color),
+            "text-placeholder" => globals.set_text_placeholder(color),
+            "text-disabled" => globals.set_text_disabled(color),
+            "primary" => globals.set_primary(color),
+            "primary-hover" => globals.set_primary_hover(color),
+            "primary-pressed" => globals.set_primary_pressed(color),
+            "primary-soft" => globals.set_primary_soft(color),
+            "primary-border" => globals.set_primary_border(color),
+            "primary-strong" => globals.set_primary_strong(color),
+            "on-primary" => globals.set_on_primary(color),
+            "focus" => globals.set_focus(color),
+            "header" => globals.set_header(color),
+            "header-text" => globals.set_header_text(color),
+            "header-hover" => globals.set_header_hover(color),
+            "support-success" => globals.set_support_success(color),
+            "success-soft" => globals.set_success_soft(color),
+            "support-warning" => globals.set_support_warning(color),
+            "warning-soft" => globals.set_warning_soft(color),
+            "support-error" => globals.set_support_error(color),
+            "error-soft" => globals.set_error_soft(color),
+            "scrollbar-track" => globals.set_scrollbar_track(color),
+            "scrollbar-handle" => globals.set_scrollbar_handle(color),
+            "control-track" => globals.set_control_track(color),
+            "disabled-bg" => globals.set_disabled_bg(color),
+            "disabled-border" => globals.set_disabled_border(color),
+            "disabled-text" => globals.set_disabled_text(color),
+            "overlay" => globals.set_overlay(color),
+            "toast-bg" => globals.set_toast_bg(color),
+            "toast-text" => globals.set_toast_text(color),
+            "reading-text" => globals.set_reading_text(color),
+            "cover-bg" => globals.set_cover_bg(color),
+            _ => {}
+        }
+    }
+}
+
+/// 读回当前自定义配色并注入（V1.1）。
+///
+/// - 无记录 / `enabled = false` → 走内置（返回 `Ok(None)`）；
+/// - 有记录 → 派生并叠加（返回派生的对比度报告，供设置页显示读数）。
+pub fn apply_custom_theme(
+    ui: &AppWindow,
+    db_path: &Path,
+    dark: bool,
+) -> Result<Option<crate::theme_derive::ContrastReport>, String> {
+    let Some(theme) = reading_storage::theme::load_custom_theme_from_db(db_path)? else {
+        apply_palette(ui, dark);
+        return Ok(None);
+    };
+    if !theme.enabled {
+        apply_palette(ui, dark);
+        return Ok(None);
+    }
+    let (derived, report) = crate::theme_derive::derive_from_theme(&theme);
+    apply_palette_with(ui, dark, Some(&derived));
+    Ok(Some(report))
+}
+
+/// V1.1：选择一张背景图（复制到数据目录并启用）。
+fn pick_background(
+    ui: &AppWindow,
+    state: &Arc<Mutex<AppState>>,
+    settings_slot: &Arc<Mutex<GlobalSettings>>,
+    picker: &Arc<dyn FilePicker>,
+    db_path: &Path,
+) {
+    let picked = match picker.pick_image() {
+        Ok(Some(path)) => path,
+        // 用户取消：**零改动**。
+        Ok(None) => return,
+        Err(error) => {
+            set_status_text(ui, state, "背景图", &error.to_string());
+            return;
+        }
+    };
+    match crate::background_ops::install(db_path, &picked, None, None, import::now_unix()) {
+        Ok(view) => {
+            if let Ok(fresh) = settings::load(db_path) {
+                *lock(settings_slot) = fresh;
+            }
+            refresh_background_ui(ui, state, db_path);
+            // 只显示**文件名**（不暴露用户原图完整路径）。
+            let name = view
+                .path
+                .as_ref()
+                .and_then(|path| path.file_name())
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_default();
+            set_status_text(
+                ui,
+                state,
+                "背景图",
+                &format!("已设置背景图「{name}」（已复制到应用数据目录，原图未改动）"),
+            );
+        }
+        Err(message) => set_status_text(ui, state, "背景图", &message),
+    }
+}
+
+/// V1.1：把当前背景投影到阅读页属性。
+///
+/// 读失败**不打断阅读**（回落纯色），只在状态栏如实回报一次。
+pub fn refresh_background_ui(ui: &AppWindow, state: &Arc<Mutex<AppState>>, db_path: &Path) {
+    match crate::background_ops::load(db_path) {
+        Ok(view) => {
+            ui.set_reader_background_set(view.path.is_some());
+            ui.set_reader_background_fit(view.fit_mode.as_i64() as i32);
+            // 遮罩用 alpha 表达（界面不换算千分比）。
+            ui.set_reader_background_scrim(view.scrim_alpha as i32);
+            // 图片由 Rust 加载后注入（**路径不进界面**；加载失败回落纯色）。
+            //
+            // 用 Slint 自带的 `Image::load_from_path`（PNG/JPEG 解码由
+            // Slint 的后端负责，本仓库**不引入图像解码依赖**）。
+            if let Some(path) = view.path.as_ref() {
+                match slint::Image::load_from_path(path) {
+                    Ok(image) => ui.set_reader_background_image(image),
+                    Err(error) => {
+                        // 加载失败：**关掉背景**并记日志（不留空白页）。
+                        ui.set_reader_background_set(false);
+                        log_line(&format!(
+                            "NR-BG image=0 detail=load-failed path={} err={error}",
+                            path.display()
+                        ));
+                    }
+                }
+            } else {
+                ui.set_reader_background_set(false);
+            }
+        }
+        Err(message) => {
+            // 读失败：显式关掉背景并如实回报，不让界面停留在陈旧值。
+            ui.set_reader_background_set(false);
+            ui.set_reader_background_fit(0);
+            ui.set_reader_background_scrim(0);
+            set_status_text(ui, state, "背景图", &format!("读取背景设置失败：{message}"));
+        }
+    }
+}
+
+/// V1.1：该设置键是否是「自定义配色基色」之一。
+pub fn is_custom_theme_base_key(key: &str) -> bool {
+    matches!(
+        key,
+        settings::KEY_BASE_FOREGROUND
+            | settings::KEY_BASE_BACKGROUND
+            | settings::KEY_BASE_PRIMARY
+            | settings::KEY_BASE_ACCENT
+    )
+}
+
+/// V1.1：写入一个基色（**读-改-写**单行记录）。
+///
+/// - 空串 = **清除该项**（回落内置值），不是写入空颜色；
+/// - 非法 `#RRGGBB` 在此拒绝（校验在 Rust；界面只转发文本）。
+pub fn write_theme_base(db_path: &Path, key: &str, value: &str) -> Result<(), String> {
+    let mut storage = reading_storage::Storage::open(db_path).map_err(|e| e.to_string())?;
+    storage.migrate().map_err(|e| e.to_string())?;
+    let current = reading_storage::theme::load_custom_theme(storage.conn())
+        .map_err(|e| e.to_string())?
+        .unwrap_or_default();
+    let trimmed = value.trim();
+    let slot = if trimmed.is_empty() {
+        None
+    } else {
+        if !settings::is_hex_color(trimmed) {
+            return Err(format!(
+                "`{trimmed}` 不是合法颜色（应为 #RRGGBB）；已保留原值"
+            ));
+        }
+        Some(trimmed.to_ascii_lowercase())
+    };
+    let mut next = current.clone();
+    match key {
+        settings::KEY_BASE_FOREGROUND => next.base.foreground = slot,
+        settings::KEY_BASE_BACKGROUND => next.base.background = slot,
+        settings::KEY_BASE_PRIMARY => next.base.primary = slot,
+        settings::KEY_BASE_ACCENT => next.base.accent = slot,
+        _ => return Err(format!("未知的配色字段 {key}")),
+    }
+    // `enabled` 沿用原值：是否启用是**用户显式选择**，改基色不该替他打开。
+    reading_storage::theme::save_custom_theme(storage.conn(), &next, import::now_unix())
+        .map_err(|e| e.to_string())
+}
+
+/// V1.1：切换「启用自定义配色」（V1.1）。
+///
+/// 关闭时**保留基色**（只把 `enabled` 置 false）—— 用户下次开启不必重选。
+pub fn write_theme_enabled(db_path: &Path, enabled: bool) -> Result<(), String> {
+    let mut storage = reading_storage::Storage::open(db_path).map_err(|e| e.to_string())?;
+    storage.migrate().map_err(|e| e.to_string())?;
+    let mut theme = reading_storage::theme::load_custom_theme(storage.conn())
+        .map_err(|e| e.to_string())?
+        .unwrap_or_default();
+    theme.enabled = enabled;
+    reading_storage::theme::save_custom_theme(storage.conn(), &theme, import::now_unix())
+        .map_err(|e| e.to_string())
+}
+
 /// 一次状态投影：把 [`UiSnapshot`] 写入 Slint 属性（UI 不持有业务状态）。
 pub fn apply_snapshot(ui: &AppWindow, snapshot: &UiSnapshot) {
     ui.set_current_screen(snapshot.screen.index());
@@ -501,7 +804,9 @@ pub fn apply_snapshot(ui: &AppWindow, snapshot: &UiSnapshot) {
     ui.set_reader_progress_permille(snapshot.reader.progress_permille as i32);
     ui.set_reader_shortcut_prev(SHORTCUT_PREV.into());
     ui.set_reader_shortcut_next(SHORTCUT_NEXT.into());
-    ui.set_reader_shortcut_immersive(format!("{} / {}", SHORTCUT_ESCAPE, SHORTCUT_IMMERSIVE).into());
+    ui.set_reader_shortcut_immersive(
+        format!("{} / {}", SHORTCUT_ESCAPE, SHORTCUT_IMMERSIVE).into(),
+    );
     // 目录面板
     ui.set_reader_toc_open(snapshot.reader.toc_open);
     let toc_rows: Vec<TocRow> = snapshot
@@ -560,6 +865,7 @@ pub fn apply_snapshot(ui: &AppWindow, snapshot: &UiSnapshot) {
         .map(|row| ChoiceRow {
             name: row.name.as_str().into(),
             current: row.current,
+            enabled: row.enabled,
         })
         .collect();
     ui.set_choice_rows(ModelRc::new(VecModel::from(choice_rows)));
@@ -622,6 +928,108 @@ pub fn apply_snapshot(ui: &AppWindow, snapshot: &UiSnapshot) {
     ui.set_shelf_notice_title(snapshot.shelf.notice_title.as_str().into());
     ui.set_shelf_notice_body(snapshot.shelf.notice_body.as_str().into());
     ui.set_shelf_menu_index(snapshot.shelf.menu_index);
+    // 分类侧栏（V1.1）：行投影由 Rust 给出；界面只按 depth 缩进、按 selected/expanded 上色。
+    let category_rows: ModelRc<CategoryRowSlint> = ModelRc::new(VecModel::from(
+        snapshot
+            .shelf
+            .categories
+            .iter()
+            .map(|row| CategoryRowSlint {
+                id: row.id.as_str().into(),
+                name: row.name.as_str().into(),
+                depth: row.depth as i32,
+                direct_count: row.direct_count as i32,
+                total_count: row.total_count as i32,
+                has_children: row.has_children,
+                expanded: row.expanded,
+                selected: row.selected,
+                move_blocked: row.move_blocked,
+                virtual_row: row.virtual_row,
+                kind: row.kind as i32,
+            })
+            .collect::<Vec<CategoryRowSlint>>(),
+    ));
+    ui.set_category_rows(category_rows);
+    ui.set_shelf_sidebar_visible(snapshot.shelf.sidebar_visible);
+    ui.set_shelf_selected_category(snapshot.shelf.selected_category_id.as_str().into());
+    // 分类操作浮层（V1.1）。
+    let dialog = &snapshot.dialog;
+    ui.set_category_dialog_open(dialog.kind == DIALOG_KIND_CATEGORY);
+    ui.set_category_dialog_mode(category_dialog_mode(dialog));
+    ui.set_category_dialog_title(dialog.category_dialog_title.as_str().into());
+    ui.set_category_dialog_parent(dialog.category_dialog_parent.as_str().into());
+    ui.set_category_dialog_value(dialog.category_dialog_value.as_str().into());
+    ui.set_category_dialog_error(dialog.category_dialog_error.as_str().into());
+    ui.set_category_dialog_label(dialog.category_dialog_label.as_str().into());
+    // 「可否确认」由 Rust 判定：新建/重命名需非空名；删除需已选去向；移动需已选目标。
+    ui.set_category_dialog_can_confirm(category_dialog_can_confirm(dialog));
+    ui.set_category_target_index(dialog.category_delete_destination - 1);
+    // 分类行内菜单（V1.1）：下标由 Rust 依据已投影的行反查（界面不自己找）。
+    ui.set_category_menu_id(snapshot.shelf.category_menu_id.as_str().into());
+    ui.set_category_menu_offset(snapshot.shelf.category_menu_offset);
+    // 移动态的目标行（分类专用属性，不与编码选择的 choice-rows 混用）。
+    let target_rows: Vec<ChoiceRow> = dialog
+        .category_menu_items
+        .iter()
+        .map(|row| ChoiceRow {
+            name: row.name.as_str().into(),
+            current: row.current,
+            enabled: row.enabled,
+        })
+        .collect();
+    ui.set_category_target_rows(ModelRc::new(VecModel::from(target_rows)));
+
+    // 阅读历史（V1.1）：流水行与组头（投影在 Rust，界面只渲染）。
+    let history = &snapshot.history;
+    let history_rows: Vec<HistoryRowSlint> = history
+        .rows
+        .iter()
+        .map(|row| HistoryRowSlint {
+            id: row.id.as_str().into(),
+            book_id: row.book_id.as_str().into(),
+            time_label: row.time_label.as_str().into(),
+            book_title: row.book_title.as_str().into(),
+            file_label: row.file_label.as_str().into(),
+            position_label: row.position_label.as_str().into(),
+            entry_kind_label: row.entry_kind_label.as_str().into(),
+            entry_kind_tone: row.entry_kind_tone as i32,
+        })
+        .collect();
+    ui.set_history_rows(ModelRc::new(VecModel::from(history_rows)));
+    let history_groups: Vec<HistoryGroupHeadSlint> = history
+        .groups
+        .iter()
+        .map(|group| HistoryGroupHeadSlint {
+            book_id: group.book_id.as_str().into(),
+            book_title: group.book_title.as_str().into(),
+            count: group.count as i32,
+            last_time_label: group.last_time_label.as_str().into(),
+            expanded: group.expanded,
+        })
+        .collect();
+    ui.set_history_groups(ModelRc::new(VecModel::from(history_groups)));
+    ui.set_history_grouped(history.grouped);
+    ui.set_history_empty(history.empty);
+    ui.set_history_empty_title(history.empty_title.as_str().into());
+    ui.set_history_empty_desc(history.empty_desc.as_str().into());
+    ui.set_history_count(history.count_label.as_str().into());
+    ui.set_history_mode(snapshot.history_mode);
+
+    // 导入归类浮层（V1.1）。
+    ui.set_organize_dialog_open(dialog.kind == DIALOG_KIND_ORGANIZE);
+    ui.set_organize_title(dialog.organize_title.as_str().into());
+    ui.set_organize_scope(dialog.organize_scope.as_str().into());
+    ui.set_organize_summary(dialog.organize_summary.as_str().into());
+    ui.set_organize_remember(dialog.organize_remember);
+    let organize_preview: Vec<OrganizeRowSlint> = dialog
+        .organize_preview
+        .iter()
+        .map(|row| OrganizeRowSlint {
+            name: row.name.as_str().into(),
+            count: row.count.as_str().into(),
+        })
+        .collect();
+    ui.set_organize_preview(ModelRc::new(VecModel::from(organize_preview)));
 
     // ---- 设置 ----
     let settings_rows: Vec<SettingsRow> = snapshot
@@ -635,6 +1043,13 @@ pub fn apply_snapshot(ui: &AppWindow, snapshot: &UiSnapshot) {
             note: row.note.as_str().into(),
             effective: row.effective,
             kind: row.kind,
+            // V1.1：基色色块（Rust 已解析；界面直接用，不做颜色解析）。
+            swatch: slint::Color::from_argb_u8(
+                row.swatch.3,
+                row.swatch.0,
+                row.swatch.1,
+                row.swatch.2,
+            ),
             section: row.section,
             value_min: row.value_min,
             value_max: row.value_max,
@@ -758,6 +1173,251 @@ fn mutate_and_refresh(
 fn submit_shelf_refresh(state: &Arc<Mutex<AppState>>, channel: &JobChannel, db_path: &Path) {
     let request = lock(state).next_shelf_request(db_path.to_path_buf());
     let _ = channel.submit(request);
+}
+
+/// 分类操作浮层的 `DialogView.kind`（名称态：新建/重命名共用）。
+pub const DIALOG_KIND_CATEGORY: i32 = 5;
+
+/// 导入归类浮层的 `DialogView.kind`（V1.1；规格 R6）。
+pub const DIALOG_KIND_ORGANIZE: i32 = 6;
+
+/// 分类浮层的子模式（0=新建/重命名 1=删除 2=移动）。
+///
+/// 口径：**Rust 依据 `DialogView` 的字段自行判断当前形态**，界面不携带额外语义；
+/// 非分类浮层返回 -1（界面据此不渲染分类专属区块）。
+pub fn category_dialog_mode(dialog: &app_state::DialogView) -> i32 {
+    if dialog.kind != DIALOG_KIND_CATEGORY {
+        return -1;
+    }
+    // 删除态：目标 id 非空 ⇒ 有目标分类，处在「删除去向」形态。
+    if !dialog.category_delete_id.is_empty() {
+        return 1;
+    }
+    // 移动态：父分类字段被显式置为「移动」标记（由打开移动浮层时写入）。
+    if dialog.category_dialog_label == "移动" {
+        return 2;
+    }
+    0
+}
+
+/// 分类浮层：「可否确认」判定（**Rust 侧**；界面不得自行推断）。
+///
+/// - 名称态（新建/重命名）：名称 trim 后非空才可确认；
+/// - 删除态：**必须已选去向**（规格 R3 / 设计稿 C4「必选」），未选时按钮保持 disabled；
+/// - 非分类浮层：false。
+pub fn category_dialog_can_confirm(dialog: &app_state::DialogView) -> bool {
+    if dialog.kind != DIALOG_KIND_CATEGORY {
+        return false;
+    }
+    if !dialog.category_dialog_value.trim().is_empty() {
+        return true;
+    }
+    // 名称为空时，只有「已选去向」才允许确认（即删除态）。
+    dialog.category_delete_destination != 0
+}
+
+/// 打开导入归类浮层（V1.1；规格 R6 / 设计稿 C7）。
+///
+/// 只做**预览**（不写库）：扫描 → 统计将建的目录名分类 → 填浮层字段。
+/// 真正的导入在用户点确认后才执行。
+fn open_organize_dialog(
+    ui: &AppWindow,
+    state: &Arc<Mutex<AppState>>,
+    db_path: &Path,
+    picked: Vec<PathBuf>,
+) {
+    // 目录 → 扫描；多文件 → 直接用。
+    let mut files: Vec<PathBuf> = Vec::new();
+    for item in &picked {
+        if item.is_dir() {
+            match crate::batch_import::scan_txt_files(item) {
+                Ok(mut found) => files.append(&mut found),
+                Err(error) => {
+                    let message = format!("扫描目录失败：{}", error.message());
+                    mutate_and_refresh(ui, state, |guard| {
+                        guard.close_dialog();
+                        guard.set_status(message);
+                    });
+                    return;
+                }
+            }
+        } else {
+            files.push(item.clone());
+        }
+    }
+    if files.is_empty() {
+        mutate_and_refresh(ui, state, |guard| {
+            guard.close_dialog();
+            guard.set_status("所选范围内没有 TXT 文件；未做任何改动".to_string());
+        });
+        return;
+    }
+
+    // 预览：按「直接父目录名」统计（**只算不建**，与 `plan_import` 同一口径）。
+    let mut counts: std::collections::BTreeMap<String, usize> = BTreeMap::new();
+    let mut without_parent = 0usize;
+    for file in &files {
+        match crate::batch_import::parent_directory_name(file) {
+            Some(name) => *counts.entry(name).or_default() += 1,
+            None => without_parent += 1,
+        }
+    }
+    let preview: Vec<OrganizeRowView> = counts
+        .iter()
+        .map(|(name, count)| OrganizeRowView {
+            name: format!("分类「{name}」"),
+            count: format!("{count} 本"),
+        })
+        .collect();
+    let summary = if without_parent > 0 {
+        format!(
+            "共选中 {} 本 TXT；按目录名归类将新建 {} 个分类，另有 {without_parent} 本无上级目录名将直接归入当前分类。",
+            files.len(),
+            counts.len()
+        )
+    } else {
+        format!(
+            "共选中 {} 本 TXT；按目录名归类将新建 {} 个分类。",
+            files.len(),
+            counts.len()
+        )
+    };
+
+    let scope_label = {
+        let guard = lock(state);
+        crate::category_tree::breadcrumb_scope_label(guard.shelf_category())
+    };
+
+    mutate_and_refresh(ui, state, |guard| {
+        let mut dialog = guard.dialog().clone();
+        dialog.kind = DIALOG_KIND_ORGANIZE;
+        dialog.organize_title = "批量导入并归类".to_string();
+        dialog.organize_scope = format!("导入到：{scope_label}");
+        dialog.organize_summary = summary.clone();
+        dialog.organize_preview = preview.clone();
+        dialog.organize_remember = false;
+        dialog.organize_paths = files.clone();
+        guard.set_dialog(dialog);
+    });
+    let _ = db_path;
+}
+
+/// 执行导入归类（V1.1；`organized = true` 走「按目录名归类」）。
+///
+/// 与界面按钮**共用**本函数（驱动与点击同一条路径）。
+fn execute_organize_import(
+    ui: &AppWindow,
+    state: &Arc<Mutex<AppState>>,
+    channel: &JobChannel,
+    db_path: &Path,
+    organized: bool,
+) {
+    let dialog = lock(state).dialog().clone();
+    let paths = dialog.organize_paths.clone();
+    if paths.is_empty() {
+        mutate_and_refresh(ui, state, |guard| {
+            guard.close_dialog();
+            guard.set_status("没有待导入的文件；未做任何改动".to_string());
+        });
+        return;
+    }
+    let current_category = {
+        let guard = lock(state);
+        guard.shelf_selected_id()
+    };
+    let choice = crate::batch_import::OrganizeChoice {
+        organize: if organized {
+            crate::batch_import::OrganizeByDirectory::Yes
+        } else {
+            crate::batch_import::OrganizeByDirectory::No
+        },
+        remember: dialog.organize_remember,
+    };
+    // 直接用浮层期间**已扫描好的文件列表**执行（不重扫目录 ——
+    // 否则用户勾选后文件变动会让预览与实际不一致）。
+    let now = import::now_unix();
+    let outcome = (|| -> Result<crate::batch_import::BatchImportReport, String> {
+        let (planned, created) =
+            crate::batch_import::plan_import(db_path, &paths, choice, current_category, now)
+                .map_err(|error| error.message().to_string())?;
+        let mut report = crate::batch_import::run_import(db_path, &planned, now);
+        report.created_categories = created;
+        Ok(report)
+    })();
+    let text = match outcome {
+        Ok(report) => report.message(),
+        Err(message) => format!("批量导入未完成：{message}"),
+    };
+    // 「记住我的选择」：勾选才持久化；未勾选**清除**已有记录（用户可反悔）。
+    if let Err(error) = crate::settings::save_import_organize_choice(
+        db_path,
+        dialog.organize_remember.then_some(organized),
+        now,
+    ) {
+        let message = error.message();
+        mutate_and_refresh(ui, state, |guard| {
+            guard.close_dialog();
+            guard.set_status(format!("批量导入已完成，但未能保存「记住」选择：{message}"));
+        });
+        submit_shelf_refresh(state, channel, db_path);
+        return;
+    }
+    mutate_and_refresh(ui, state, |guard| {
+        guard.close_dialog();
+        guard.set_status(text);
+    });
+    submit_shelf_refresh(state, channel, db_path);
+}
+
+/// 分类驱动动作（`NR_CATEGORY_*` 的解析结果；V1.1）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CategoryDrive {
+    /// 新建（`parent = None` = 根下）。
+    Create { parent: Option<i64>, name: String },
+    /// 重命名。
+    Rename { id: i64, name: String },
+    /// 移动（`target = None` = 移到根下）。
+    Move { id: i64, target: Option<i64> },
+    /// 删除（`choice` 为 `None` 时**必须被拒**，规格 R3）。
+    Delete {
+        id: i64,
+        choice: crate::category_ops::DeleteChoice,
+    },
+}
+
+/// 执行一个分类驱动动作并刷新书架。
+///
+/// 口径：**与界面浮层调用同一组 `category_ops` 函数**（不复制判定逻辑），
+/// 结果一律写进状态栏（成功或失败都可核对）。
+fn drive_category(
+    ui: &AppWindow,
+    state: &Arc<Mutex<AppState>>,
+    channel: &JobChannel,
+    db_path: &Path,
+    drive: CategoryDrive,
+) {
+    let outcome: Result<String, String> = match drive {
+        CategoryDrive::Create { parent, name } => {
+            crate::category_ops::create_category(db_path, parent, name.trim())
+        }
+        CategoryDrive::Rename { id, name } => {
+            crate::category_ops::rename_category(db_path, id, name.trim())
+        }
+        CategoryDrive::Move { id, target } => {
+            crate::category_ops::move_category(db_path, id, target)
+        }
+        CategoryDrive::Delete { id, choice } => {
+            crate::category_ops::delete_category(db_path, id, choice)
+        }
+    };
+    let text = match outcome {
+        Ok(message) => message,
+        Err(message) => format!("分类操作未完成：{message}"),
+    };
+    mutate_and_refresh(ui, state, |guard| {
+        guard.set_status(text);
+    });
+    submit_shelf_refresh(state, channel, db_path);
 }
 
 /// 阅读目标的启动选择（`None` = 不自动打开书籍；`first` = 书架第一本）。
@@ -1006,7 +1666,13 @@ fn project_marks(
         format!("匹配 {match_total} / {} 条", targets.len())
     };
     mutate_and_refresh(ui, state, |guard| {
-        guard.set_mark_rows(rows.clone(), first as u32, targets.len(), readout.clone(), count_label.clone());
+        guard.set_mark_rows(
+            rows.clone(),
+            first as u32,
+            targets.len(),
+            readout.clone(),
+            count_label.clone(),
+        );
     });
 }
 
@@ -1344,8 +2010,16 @@ fn seek_progress(
         "NR-SEEK ratio={:.3} target={} start={} end={} permille={} ready={}",
         ratio,
         target,
-        session.runtime.page().map(|page| page.start_byte).unwrap_or(0),
-        session.runtime.page().map(|page| page.end_byte).unwrap_or(0),
+        session
+            .runtime
+            .page()
+            .map(|page| page.start_byte)
+            .unwrap_or(0),
+        session
+            .runtime
+            .page()
+            .map(|page| page.end_byte)
+            .unwrap_or(0),
         landing,
         u8::from(outcome.is_ready())
     ));
@@ -1358,6 +2032,8 @@ fn encoding_rows_for(current: reading_source::TextEncoding) -> Vec<ChoiceRowData
         .map(|encoding| ChoiceRowData {
             name: encoding.to_string(),
             current: *encoding == current,
+            // 编码选择行永远可选（`enabled` 是 V1.1 为「移动分类」引入的字段）。
+            enabled: true,
         })
         .collect()
 }
@@ -1821,7 +2497,11 @@ fn apply_settings_value(
             project_reader_outcome(ui, state, session, &result.outcome, "设置");
         }
     }
-    apply_palette(ui, dark);
+    // 主题类设置变更后**重算派生配色**（明暗切换时派生方向不同）。
+    if let Err(message) = apply_custom_theme(ui, &db_path, dark) {
+        log_line(&format!("NR-THEME applied=0 detail={message}"));
+        apply_palette(ui, dark);
+    }
     mutate_and_refresh(ui, state, |guard| {
         guard.set_settings_view(view.clone());
         guard.set_gesture_mode(gesture);
@@ -1944,10 +2624,167 @@ fn open_reader_from_shelf(
         "NR-OPEN selection={} book={} title={} encoding={} screen=reader",
         selection, book.book_id, book.title, book.encoding
     ));
+    // 进入阅读页时投影一次背景（全局一张，不必每次重读图片）。
+    refresh_background_ui(ui, state, db_path);
     *lock(reader) = Some(session);
     mutate_and_refresh(ui, state, |guard| {
         guard.set_screen(Screen::Reader);
     });
+}
+
+/// 清除某本书的全部阅读流水（V1.1；规格 HR3）。
+///
+/// **只删流水**：不动书籍 / 进度 / 书签。
+pub fn clear_history_for_book(db_path: &Path, book_id: i64) -> String {
+    let mut storage = match Storage::open(db_path) {
+        Ok(storage) => storage,
+        Err(error) => return format!("清除失败：{error}"),
+    };
+    if let Err(error) = storage.migrate() {
+        return format!("清除失败：{error}");
+    }
+    match reading_storage::history::remove_by_book(storage.conn(), book_id) {
+        Ok(count) => format!("已清除该书的 {count} 条阅读记录"),
+        Err(error) => format!("清除失败：{error}"),
+    }
+}
+
+/// 重新投影历史视图（清除流水 / 切换展开 / 切视图后调用）。
+///
+/// `status` 为 `Some` 时把它写进状态栏（用户操作的结果文案）。
+fn refresh_history(
+    ui: &AppWindow,
+    state: &Arc<Mutex<AppState>>,
+    db_path: &Path,
+    status: Option<String>,
+) {
+    let (grouped, expanded) = {
+        let guard = lock(state);
+        (guard.history().grouped, guard.history_expanded().to_vec())
+    };
+    match crate::history_view::project_for_db(db_path, grouped, &expanded) {
+        Ok(view) => {
+            mutate_and_refresh(ui, state, |guard| {
+                guard.set_history(view);
+                if let Some(text) = status {
+                    guard.set_status(text);
+                }
+            });
+        }
+        Err(message) => {
+            mutate_and_refresh(ui, state, |guard| {
+                guard.set_status(format!("读取阅读历史失败：{message}"));
+            });
+        }
+    }
+}
+
+/// 写一条流水到存储层（失败转可读文案；调用方只记日志）。
+fn history_record(
+    db_path: &Path,
+    input: &reading_storage::history::HistoryInput,
+    now: i64,
+) -> Result<i64, String> {
+    let mut storage = Storage::open(db_path).map_err(|error| error.to_string())?;
+    storage.migrate().map_err(|error| error.to_string())?;
+    reading_storage::history::record(storage.conn(), input).map_err(|error| error.to_string())
+}
+
+/// 清除全部阅读历史（V1.1；规格 HR3）。
+///
+/// **只删流水**：不动书籍 / 进度 / 书签（由 `history::clear_all` 保证）。
+pub fn clear_history(db_path: &Path) -> Result<usize, String> {
+    let mut storage = Storage::open(db_path).map_err(|error| error.to_string())?;
+    storage.migrate().map_err(|error| error.to_string())?;
+    reading_storage::history::clear_all(storage.conn()).map_err(|error| error.to_string())
+}
+
+/// 清除单条阅读历史（V1.1；规格 HR3）。
+pub fn clear_history_entry(db_path: &Path, id: i64) -> Result<bool, String> {
+    let mut storage = Storage::open(db_path).map_err(|error| error.to_string())?;
+    storage.migrate().map_err(|error| error.to_string())?;
+    reading_storage::history::remove_one(storage.conn(), id).map_err(|error| error.to_string())
+}
+
+/// 写一条阅读历史流水（V1.1；规格 HR1）。
+///
+/// 记录的是**打开瞬间**的位置，不随后续阅读变化（设计稿 H1）。
+/// 写失败**只记日志、不打断阅读** —— 历史是辅助信息，不是阅读的前提。
+fn record_history(
+    db_path: &Path,
+    session: &ReadingSession,
+    restored: Option<(u32, u64)>,
+    now: i64,
+) {
+    let book = session.runtime.book();
+    let page = session.runtime.page();
+    let (chapter_index, byte_offset) = match (restored, page) {
+        // 进度恢复：记录**保存时**的位置（用户上次读到哪）。
+        (Some((chapter, offset)), _) => (chapter as i64, offset as i64),
+        // 无保存进度：记录当前页起点；两者都取不到时记 0（首屏尚未排版）。
+        (None, Some(page)) => (0, page.start_byte as i64),
+        (None, None) => (0, 0),
+    };
+    let entry_kind = if restored.is_some() {
+        reading_storage::history::EntryKind::ResumeProgress
+    } else {
+        reading_storage::history::EntryKind::FromShelf
+    };
+    // 来源信息从存储层读回（`OpenedBook` 不带 locator，规范只有 DB 有）。
+    let source = history_source(db_path, book.book_id);
+    let input = reading_storage::history::HistoryInput {
+        book_id: book.book_id,
+        book_title: book.title.clone(),
+        opened_at: now,
+        chapter_index,
+        byte_offset,
+        entry_kind,
+        source_kind: source.0,
+        source_locator: source.1,
+        content_index_version: 0,
+    };
+    match history_record(db_path, &input, now) {
+        Ok(id) => log_line(&format!(
+            "NR-HISTORY recorded=1 id={id} book={} kind={} chapter={chapter_index} offset={byte_offset}",
+            book.book_id,
+            entry_kind.label()
+        )),
+        Err(message) => log_line(&format!(
+            "NR-HISTORY recorded=0 book={} detail={message}",
+            book.book_id
+        )),
+    }
+}
+
+/// 读回书籍的主来源（`source_kind`, `source_locator`）。
+///
+/// 读不到时回退到「桌面路径 + 空定位符」：历史仍要能写（缺失只是定位信息不全，
+/// 不得因此丢掉整条流水）。
+fn history_source(db_path: &Path, book_id: i64) -> (String, String) {
+    let Ok(mut storage) = Storage::open(db_path) else {
+        return ("desktop_path".to_string(), String::new());
+    };
+    if storage.migrate().is_err() {
+        return ("desktop_path".to_string(), String::new());
+    }
+    let picked = reading_storage::books::list_book_sources(storage.conn(), book_id)
+        .ok()
+        .and_then(|sources| sources.into_iter().find(|item| item.is_primary))
+        .or_else(|| {
+            reading_storage::books::list_book_sources(storage.conn(), book_id)
+                .ok()
+                .and_then(|mut sources| {
+                    if sources.is_empty() {
+                        None
+                    } else {
+                        Some(sources.remove(0))
+                    }
+                })
+        });
+    match picked {
+        Some(source) => (source.source_kind, source.source_locator),
+        None => ("desktop_path".to_string(), String::new()),
+    }
 }
 
 /// 打开阅读目标并建立阅读会话（含目录建立与重启恢复）。
@@ -2016,6 +2853,10 @@ fn open_reader(
         }
     };
     let mut session = ReadingSession { runtime, toc };
+    // 进度恢复结果：命中时 `entry_kind = ResumeProgress`，否则 `FromShelf`
+    // （规格 HR1：进入方式如实记录，不推测）。
+    // 只留**位置字段**（`saved` 之后会被 `describe()` 消费，不能整份持有）。
+    let mut restored: Option<(u32, u64)> = None;
     match progress::load(db_path, session.runtime.book().book_id) {
         Ok(Some(saved)) => {
             match progress::restore_encoded(
@@ -2026,6 +2867,7 @@ fn open_reader(
             ) {
                 Ok(report) => {
                     let _ = session.jump_to(report.byte_offset);
+                    restored = Some((saved.chapter_index, saved.byte_offset));
                     log_line(&report.as_log(session.runtime.book().book_id, Some(&saved)));
                     let text = format!(
                         "已恢复阅读位置：{}（{}）",
@@ -2056,6 +2898,10 @@ fn open_reader(
             log_line(&format!("NR-POS error=1 detail={}", error.message()));
         }
     }
+    // 阅读历史流水（V1.1；规格 HR1）：**所有**打开路径都经由本函数，
+    // 故在此写一次即可覆盖「书架打开 / 进度恢复」两类入口
+    // （书签跳转、章节跳转是页内跳转，不重新打开会话，故不改写历史）。
+    record_history(db_path, &session, restored, now);
     project_reader_outcome(
         ui,
         state,
@@ -2148,7 +2994,25 @@ pub fn run() -> Result<(), slint::PlatformError> {
     let ui = AppWindow::new()?;
     // 启动即按**已保存的**边距设置投影（否则「重启后留白恢复成默认值」）。
     apply_layout_metrics_with_margins(&ui, &metrics, reader_margins(&lock(&settings_slot)));
-    apply_palette(&ui, lock(&settings_slot).theme_dark());
+    // 启动即注入配色：**优先自定义派生**（失败回落内置并如实记日志，
+    // 不能因为配色读不出就让应用起不来）。
+    // 启动即投影背景图（读失败回落纯色，不阻断启动）。
+    if let Err(message) = crate::background_ops::load(&db_path) {
+        log_line(&format!("NR-BG startup-load=0 detail={message}"));
+    }
+
+    match apply_custom_theme(&ui, &db_path, lock(&settings_slot).theme_dark()) {
+        Ok(Some(report)) => log_line(&format!(
+            "NR-THEME applied=1 custom=1 contrast={} passes={}",
+            report.label(),
+            report.passes
+        )),
+        Ok(None) => log_line("NR-THEME applied=1 custom=0 reason=not-set-or-disabled"),
+        Err(message) => {
+            log_line(&format!("NR-THEME applied=0 custom=0 detail={message}"));
+            apply_palette(&ui, lock(&settings_slot).theme_dark());
+        }
+    }
 
     // ---- 分页运行时与视口状态（窗口映射后才取真实尺寸）----
     let reader: Arc<Mutex<Option<ReadingSession>>> = Arc::new(Mutex::new(None));
@@ -2394,14 +3258,9 @@ pub fn run() -> Result<(), slint::PlatformError> {
             };
             let mut guard = lock(&reader);
             match guard.as_mut() {
-                Some(session) => seek_progress(
-                    &ui,
-                    &state,
-                    &db_path,
-                    session,
-                    &tracker,
-                    f64::from(ratio),
-                ),
+                Some(session) => {
+                    seek_progress(&ui, &state, &db_path, session, &tracker, f64::from(ratio))
+                }
                 None => mutate_and_refresh(&ui, &state, |guard| {
                     guard.set_status("进度跳转：尚未打开书籍");
                 }),
@@ -2974,20 +3833,20 @@ pub fn run() -> Result<(), slint::PlatformError> {
             guard_heights.insert(index, height);
             let snapshot = guard_heights.clone();
             drop(guard_heights);
-            let view = settings::view_with_note_heights(
-                &db_path,
-                &lock(&settings_slot),
-                &snapshot,
-            );
+            let view = settings::view_with_note_heights(&db_path, &lock(&settings_slot), &snapshot);
             mutate_and_refresh(&ui, &state, |guard| {
                 guard.set_settings_view(view.clone());
             });
         }
     });
+    // 文件选择器（`settings_cycle` 的背景图动作要用它选图片，故提到此处）。
+    let picker: Arc<dyn FilePicker> = Arc::from(import::picker_from_env());
+
     ui.on_settings_cycle({
         let state = Arc::clone(&state);
         let reader = Arc::clone(&reader);
         let settings_slot = Arc::clone(&settings_slot);
+        let picker = Arc::clone(&picker);
         let db_path = db_path.clone();
         let weak = ui.as_weak();
         move |key| {
@@ -2995,6 +3854,99 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 return;
             };
             let key = key.as_str().to_string();
+            // V1.1：「启用自定义配色」开关走自己的表（`reader_theme_custom`），
+            // **不进** `GlobalSettings` 的普通字段路径。
+            if key == settings::KEY_CUSTOM_THEME {
+                let next = !lock(&settings_slot).toggle_value(&key);
+                match write_theme_enabled(&db_path, next) {
+                    Ok(()) => {
+                        if let Ok(fresh) = settings::load(&db_path) {
+                            *lock(&settings_slot) = fresh;
+                        }
+                        let dark = lock(&settings_slot).theme_dark();
+                        let suffix = match apply_custom_theme(&ui, &db_path, dark) {
+                            Ok(Some(report)) if !report.passes => {
+                                format!("（{}）", report.warning())
+                            }
+                            Ok(Some(report)) => format!("（对比度 {}）", report.label()),
+                            Ok(None) => String::new(),
+                            Err(message) => format!("（配色注入失败：{message}）"),
+                        };
+                        set_status_text(
+                            &ui,
+                            &state,
+                            "自定义配色",
+                            &format!(
+                                "自定义配色已{}；其余语义色由程序派生{}",
+                                if next {
+                                    "开启"
+                                } else {
+                                    "关闭（回到内置明/暗）"
+                                },
+                                suffix
+                            ),
+                        );
+                    }
+                    Err(message) => {
+                        set_status_text(&ui, &state, "自定义配色", &message);
+                    }
+                }
+                refresh(&ui, &state);
+                return;
+            }
+            // V1.1：背景图动作行（按 key 分派；`.slint` 只转发 key）。
+            if key == settings::KEY_BACKGROUND_PICK {
+                pick_background(&ui, &state, &settings_slot, &picker, &db_path);
+                refresh(&ui, &state);
+                return;
+            }
+            if key == settings::KEY_BACKGROUND_CLEAR {
+                let outcome = crate::background_ops::clear(&db_path, import::now_unix());
+                set_status_text(
+                    &ui,
+                    &state,
+                    "背景图",
+                    &match outcome {
+                        Ok(()) => "已清除背景图（原图未被改动）".to_string(),
+                        Err(message) => message,
+                    },
+                );
+                if let Ok(fresh) = settings::load(&db_path) {
+                    *lock(&settings_slot) = fresh;
+                }
+                refresh_background_ui(&ui, &state, &db_path);
+                refresh(&ui, &state);
+                return;
+            }
+            // V1.1：缩放口径（枚举）。
+            if key == settings::KEY_BACKGROUND_FIT {
+                let current = lock(&settings_slot)
+                    .background()
+                    .map(|record| record.fit_mode)
+                    .unwrap_or(reading_storage::background::FitMode::Cover);
+                let all = reading_storage::background::FitMode::all();
+                let next = match all.iter().position(|fit| *fit == current) {
+                    Some(index) => all[(index + 1) % all.len()],
+                    None => all[0],
+                };
+                let outcome =
+                    crate::background_ops::set_fit_mode(&db_path, next, import::now_unix());
+                if let Ok(fresh) = settings::load(&db_path) {
+                    *lock(&settings_slot) = fresh;
+                }
+                refresh_background_ui(&ui, &state, &db_path);
+                set_status_text(
+                    &ui,
+                    &state,
+                    "背景图",
+                    &match outcome {
+                        Ok(view) => format!("背景缩放：{}", next.label()),
+                        Err(message) => message,
+                    },
+                );
+                refresh(&ui, &state);
+                return;
+            }
             let mut guard = lock(&reader);
             let session = guard.as_mut();
             apply_settings_value(
@@ -3044,6 +3996,67 @@ pub fn run() -> Result<(), slint::PlatformError> {
             };
             let key = key.as_str().to_string();
             let value = value.as_str().trim().to_string();
+
+            // V1.1：基色字段（`kind = 8`）写入 `reader_theme_custom` 后**立即重算派生**，
+            // 让用户当场看到效果；校验与写入都在 Rust（界面不解析颜色）。
+            if is_custom_theme_base_key(&key) {
+                match write_theme_base(&db_path, &key, &value) {
+                    Ok(()) => {
+                        // 重载设置（拿到新快照）并重新注入配色。
+                        if let Ok(fresh) = settings::load(&db_path) {
+                            *lock(&settings_slot) = fresh;
+                        }
+                        let dark = lock(&settings_slot).theme_dark();
+                        let report = apply_custom_theme(&ui, &db_path, dark);
+                        let suffix = match report {
+                            Ok(Some(report)) if !report.passes => {
+                                format!("（{}）", report.warning())
+                            }
+                            Ok(Some(report)) => format!("（对比度 {}）", report.label()),
+                            Ok(None) => String::new(),
+                            Err(message) => format!("（配色注入失败：{message}）"),
+                        };
+                        set_status_text(&ui, &state, "自定义配色", &format!("已更新{suffix}"));
+                        refresh(&ui, &state);
+                    }
+                    Err(message) => {
+                        // 非法色值：**保留原值**并如实报错（不回退成默认色）。
+                        set_status_text(&ui, &state, "自定义配色", &message);
+                        refresh(&ui, &state);
+                    }
+                }
+                return;
+            }
+
+            // V1.1：遮罩强度存自己的表（`reader_background.scrim_permille`）。
+            if key == settings::KEY_BACKGROUND_SCRIM {
+                let permille = match value.parse::<i32>() {
+                    Ok(number) => number.clamp(0, 1000),
+                    Err(_) => {
+                        set_status_text(&ui, &state, "背景图", &format!("`{value}` 不是整数"));
+                        refresh(&ui, &state);
+                        return;
+                    }
+                };
+                let outcome =
+                    crate::background_ops::set_scrim(&db_path, permille as i64, import::now_unix());
+                if let Ok(fresh) = settings::load(&db_path) {
+                    *lock(&settings_slot) = fresh;
+                }
+                refresh_background_ui(&ui, &state, &db_path);
+                set_status_text(
+                    &ui,
+                    &state,
+                    "背景图",
+                    &match outcome {
+                        Ok(_) => format!("背景遮罩：{}%", permille / 10),
+                        Err(message) => message,
+                    },
+                );
+                refresh(&ui, &state);
+                return;
+            }
+
             // 数值框：非整数输入如实报错并恢复原值（重新投影即为恢复）。
             let Ok(number) = value.parse::<i32>() else {
                 set_status_text(&ui, &state, "设置", &format!("`{value}` 不是整数"));
@@ -3194,7 +4207,9 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 let target = !lock(&state).immersive();
                 let mut guard = lock(&reader);
                 match guard.as_mut() {
-                    Some(session) => apply_immersive(&ui, &state, &db_path, session, &tracker, target),
+                    Some(session) => {
+                        apply_immersive(&ui, &state, &db_path, session, &tracker, target)
+                    }
                     None => mutate_and_refresh(&ui, &state, |guard| {
                         guard.set_immersive(target);
                     }),
@@ -3255,7 +4270,6 @@ pub fn run() -> Result<(), slint::PlatformError> {
     let channel = Arc::new(channel);
 
     // ---- 导入与失效重新关联（选择器可注入；系统对话框本身是模态的）----
-    let picker: Arc<dyn FilePicker> = Arc::from(import::picker_from_env());
 
     ui.on_shelf_import({
         let state = Arc::clone(&state);
@@ -3288,7 +4302,9 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 },
             ];
             mutate_and_refresh(&ui, &state, |guard| {
-                guard.set_status("导入：正在等待文件选择（只接受 .txt；校验失败不会留下半成品记录）");
+                guard.set_status(
+                    "导入：正在等待文件选择（只接受 .txt；校验失败不会留下半成品记录）",
+                );
                 guard.set_import_view(ImportView {
                     file: String::new(),
                     size: String::new(),
@@ -3356,19 +4372,18 @@ pub fn run() -> Result<(), slint::PlatformError> {
                             "这不是一个 TXT 文件",
                             "本版本只支持单个 .txt 文件；请选择 TXT 后重试。",
                         ),
-                        import::ImportErrorKind::MissingFile => (
-                            "找不到所选文件",
-                            "文件可能已被移动或删除；请重新选择。",
-                        ),
+                        import::ImportErrorKind::MissingFile => {
+                            ("找不到所选文件", "文件可能已被移动或删除；请重新选择。")
+                        }
                         import::ImportErrorKind::EmptyFile => (
                             "这个文件是空的",
                             "0 字节的文件没有可阅读内容；请换一个文件。",
                         ),
-                        import::ImportErrorKind::Unreadable => (
-                            "这个文件打不开",
-                            "可能是权限问题；请检查文件权限后重试。",
-                        ),
-                        import::ImportErrorKind::NoPicker | import::ImportErrorKind::PickerFailed => (
+                        import::ImportErrorKind::Unreadable => {
+                            ("这个文件打不开", "可能是权限问题；请检查文件权限后重试。")
+                        }
+                        import::ImportErrorKind::NoPicker
+                        | import::ImportErrorKind::PickerFailed => (
                             "无法打开文件选择对话框",
                             "系统里没有可用的文件对话框程序；请安装 zenity 或 kdialog 后重试。",
                         ),
@@ -3378,7 +4393,11 @@ pub fn run() -> Result<(), slint::PlatformError> {
                         ),
                     };
                     mutate_and_refresh(&ui, &state, |guard| {
-                        guard.set_error_view(title.to_string(), reason.to_string(), details.clone());
+                        guard.set_error_view(
+                            title.to_string(),
+                            reason.to_string(),
+                            details.clone(),
+                        );
                         guard.set_status(format!(
                             "导入失败 · 未创建书架记录（{}）",
                             error.kind.code()
@@ -3626,7 +4645,11 @@ pub fn run() -> Result<(), slint::PlatformError> {
             let results =
                 shelf_ops::relink_all(&db_path, &ids, picker.as_ref(), import::now_unix());
             mutate_and_refresh(&ui, &state, |guard| {
-                guard.set_status(format!("重新关联（{} 本）：{}", ids.len(), results.join("；")));
+                guard.set_status(format!(
+                    "重新关联（{} 本）：{}",
+                    ids.len(),
+                    results.join("；")
+                ));
                 guard.ignore_shelf_notice();
             });
             submit_shelf_refresh(&state, &channel, &db_path);
@@ -3646,6 +4669,664 @@ pub fn run() -> Result<(), slint::PlatformError> {
             });
         }
     });
+
+    // ---- 分类侧栏回调（V1.1）----
+    // 侧栏只上报「点了哪一行 / 要折叠 / 要开菜单」；
+    // 选中、折叠与过滤的**判定**都在 Rust（`category_tree`），界面不推断。
+    ui.on_shelf_category_select({
+        let state = Arc::clone(&state);
+        let weak = ui.as_weak();
+        let channel = Arc::clone(&channel);
+        let db_path = db_path.clone();
+        move |id| {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let id = id.to_string();
+            // 再点已选中的行 → 回到根（设计稿 C1「规则」）。
+            let next = {
+                let guard = lock(&state);
+                if guard.shelf_category() == id {
+                    String::new()
+                } else {
+                    id
+                }
+            };
+            let scope = crate::category_tree::breadcrumb_scope_label(&next);
+            mutate_and_refresh(&ui, &state, |guard| {
+                guard.set_shelf_category(next);
+                guard.set_status(format!("分类：{scope}"));
+            });
+            submit_shelf_refresh(&state, &channel, &db_path);
+        }
+    });
+    ui.on_shelf_category_toggle({
+        let state = Arc::clone(&state);
+        let weak = ui.as_weak();
+        let channel = Arc::clone(&channel);
+        let db_path = db_path.clone();
+        move |id| {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let parsed = id.to_string().parse::<i64>().ok();
+            mutate_and_refresh(&ui, &state, |guard| {
+                if let Some(category_id) = parsed {
+                    guard.toggle_shelf_collapsed(category_id);
+                }
+            });
+            submit_shelf_refresh(&state, &channel, &db_path);
+        }
+    });
+    ui.on_shelf_category_menu({
+        let state = Arc::clone(&state);
+        let weak = ui.as_weak();
+        move |id| {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let id = id.to_string();
+            mutate_and_refresh(&ui, &state, |guard| {
+                // 再点同一行的「…」关闭菜单（设计稿 C2：同一时刻只展开一个）。
+                if guard.category_menu_id() == id {
+                    guard.close_category_menu();
+                } else {
+                    guard.set_category_menu_id(id);
+                }
+            });
+        }
+    });
+    ui.on_category_menu_close({
+        let state = Arc::clone(&state);
+        let weak = ui.as_weak();
+        move || {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            mutate_and_refresh(&ui, &state, |guard| {
+                guard.close_category_menu();
+            });
+        }
+    });
+
+    // 分类行内菜单动作 → 打开对应浮层（新建子分类 / 重命名 / 移动 / 删除）。
+    ui.on_category_menu_picked({
+        let state = Arc::clone(&state);
+        let weak = ui.as_weak();
+        let db_path = db_path.clone();
+        move |action, id| {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let action = action.to_string();
+            let id = id.to_string();
+            let db = db_path.clone();
+            let parsed = id.parse::<i64>().ok();
+
+            // 移动态需要目标列表（自身与子孙不可选；判定在 Rust）。
+            let targets = if action == "category-move" {
+                parsed.and_then(|cid| crate::category_ops::move_targets(&db, cid).ok())
+            } else {
+                None
+            };
+            // 删除态需要书籍计数（分类自身 + 全部子孙）。
+            let plan = if action == "category-delete" {
+                parsed.and_then(|cid| crate::category_ops::delete_plan(&db, cid).ok())
+            } else {
+                None
+            };
+            let current_name = {
+                let guard = lock(&state);
+                guard
+                    .shelf_categories()
+                    .iter()
+                    .find(|row| row.id == id)
+                    .map(|row| row.name.clone())
+                    .unwrap_or_default()
+            };
+
+            mutate_and_refresh(&ui, &state, |guard| {
+                let mut dialog = guard.dialog().clone();
+                dialog.kind = DIALOG_KIND_CATEGORY;
+                dialog.category_dialog_error = String::new();
+                dialog.category_delete_id = id.clone();
+                dialog.category_delete_target_id = String::new();
+                // 默认**未选**（删除态必须显式选，规格 R3）。
+                dialog.category_delete_destination = 0;
+                dialog.category_menu_items = Vec::new();
+                match action.as_str() {
+                    "category-add-child" => {
+                        dialog.category_dialog_title = "新建子分类".to_string();
+                        dialog.category_dialog_parent =
+                            format!("父分类：{current_name}");
+                        dialog.category_dialog_value = String::new();
+                        dialog.category_dialog_label = "创建".to_string();
+                        // 新建子分类：目标是父分类自身（不是删除去向）。
+                        dialog.category_delete_id = String::new();
+                        dialog.category_dialog_parent_id = id.clone();
+                        dialog.category_delete_destination = 0;
+                    }
+                    "category-rename" => {
+                        dialog.category_dialog_title = "重命名分类".to_string();
+                        dialog.category_dialog_parent =
+                            format!("原名称：{current_name}");
+                        dialog.category_dialog_value = current_name.clone();
+                        dialog.category_dialog_label = "保存".to_string();
+                        dialog.category_delete_id = id.clone();
+                    }
+                    "category-move" => {
+                        dialog.category_dialog_title =
+                            format!("移动分类「{current_name}」");
+                        dialog.category_dialog_parent = String::new();
+                        dialog.category_dialog_value = String::new();
+                        dialog.category_dialog_label = "移动".to_string();
+                        // 移动态下 delete_id 不参与「删除」判定，但需保留来源 id。
+                        dialog.category_dialog_parent_id = id.clone();
+                    }
+                    "category-delete" => {
+                        dialog.category_dialog_title =
+                            format!("删除分类「{current_name}」");
+                        let count = plan
+                            .as_ref()
+                            .map(|item| item.book_count)
+                            .unwrap_or(0);
+                        dialog.category_dialog_parent = if count > 0 {
+                            format!(
+                                "该分类及其下级分类共有 {count} 本书，请选择这些书的去向（未选择时不会执行删除）。原始 TXT 不受影响。"
+                            )
+                        } else {
+                            "该分类下没有书籍，可直接删除。原始 TXT 不受影响。".to_string()
+                        };
+                        dialog.category_dialog_value = String::new();
+                        dialog.category_dialog_label = "删除分类".to_string();
+                    }
+                    _ => {}
+                }
+                guard.set_dialog(dialog);
+            });
+
+            // 移动态的目标行注入浮层的 `category-target-rows`（投影时消费）。
+            if let Some(rows) = targets {
+                let choice_rows: Vec<ChoiceRowData> = rows
+                    .into_iter()
+                    .map(|row| ChoiceRowData {
+                        name: row.name,
+                        current: false,
+                        enabled: row.enabled,
+                    })
+                    .collect();
+                mutate_and_refresh(&ui, &state, |guard| {
+                    let mut dialog = guard.dialog().clone();
+                    dialog.category_menu_items = choice_rows;
+                    guard.set_dialog(dialog);
+                });
+            }
+        }
+    });
+    // ---- 阅读历史回调（V1.1）----
+    // 「打开这本书」：与书架行点击**同一函数**（`open_reader_from_shelf`）。
+    ui.on_shelf_history_open({
+        let state = Arc::clone(&state);
+        let weak = ui.as_weak();
+        let reader = Arc::clone(&reader);
+        let settings_slot = Arc::clone(&settings_slot);
+        let viewport_slot = Arc::clone(&viewport_slot);
+        let font_slot = Arc::clone(&font_slot);
+        let db_path = db_path.clone();
+        move |book_id| {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            open_reader_from_shelf(
+                &ui,
+                &state,
+                &reader,
+                &settings_slot,
+                &viewport_slot,
+                &font_slot,
+                &db_path,
+                &book_id,
+            );
+        }
+    });
+    // 「最近阅读」入口（V1.1；Q5 裁定：独立菜单项，**不在分类侧栏**）。
+    ui.on_shelf_history_toggle({
+        let state = Arc::clone(&state);
+        let weak = ui.as_weak();
+        let db_path = db_path.clone();
+        move || {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let entering = {
+                let mut guard = lock(&state);
+                let entering = !guard.history_mode();
+                guard.set_history_mode(entering);
+                entering
+            };
+            if entering {
+                // 进入历史：投影一次（失败也进入，但如实回报）。
+                refresh_history(&ui, &state, &db_path, None);
+                mutate_and_refresh(&ui, &state, |guard| {
+                    guard.set_status("最近阅读（按打开时间倒序；点行可打开该书）".to_string());
+                });
+            } else {
+                mutate_and_refresh(&ui, &state, |guard| {
+                    guard.set_status("已返回书架".to_string());
+                });
+            }
+        }
+    });
+
+    // 「清空历史」：**先弹确认**（设计稿 H3；直接删是数据事故）。
+    ui.on_shelf_history_clear({
+        let state = Arc::clone(&state);
+        let weak = ui.as_weak();
+        let db_path = db_path.clone();
+        move || {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            // 弹窗正文由 **Rust 读回条数**（不接收界面传入数字，避免显示过期值）。
+            let body = match crate::history_view::clear_confirm_text(&db_path) {
+                Ok(text) => text,
+                Err(message) => {
+                    set_status_text(&ui, &state, "清空历史", &message);
+                    return;
+                }
+            };
+            mutate_and_refresh(&ui, &state, |guard| {
+                let mut dialog = guard.dialog().clone();
+                dialog.kind = 1;
+                dialog.confirm_title = "清空阅读历史".to_string();
+                dialog.confirm_body = body.clone();
+                dialog.confirm_note = "此操作只删除阅读流水本身。".to_string();
+                dialog.confirm_checkbox_label = String::new();
+                dialog.confirm_label = "清空历史".to_string();
+                dialog.confirm_danger = true;
+                dialog.confirm_action = "history-clear".to_string();
+                dialog.confirm_book_id = String::new();
+                guard.set_dialog(dialog);
+            });
+        }
+    });
+
+    // 「清除这条」/「清除该书的全部流水」。
+    ui.on_shelf_history_row_menu({
+        let state = Arc::clone(&state);
+        let weak = ui.as_weak();
+        let db_path = db_path.clone();
+        move |entry_id| {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let parsed = entry_id.to_string().parse::<i64>();
+            let text = match parsed {
+                Ok(id) => match clear_history_entry(&db_path, id) {
+                    Ok(true) => "已清除该条阅读记录".to_string(),
+                    Ok(false) => "该条阅读记录已不存在".to_string(),
+                    Err(message) => format!("清除失败：{message}"),
+                },
+                Err(_) => "阅读记录 id 无法解析".to_string(),
+            };
+            refresh_history(&ui, &state, &db_path, Some(text));
+        }
+    });
+    ui.on_shelf_history_group_menu({
+        let state = Arc::clone(&state);
+        let weak = ui.as_weak();
+        let db_path = db_path.clone();
+        move |book_id| {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let parsed = book_id.to_string().parse::<i64>();
+            let text = match parsed {
+                Ok(id) => clear_history_for_book(&db_path, id),
+                Err(_) => "书籍 id 无法解析".to_string(),
+            };
+            refresh_history(&ui, &state, &db_path, Some(text));
+        }
+    });
+    // 展开 / 收起某本书的流水。
+    ui.on_shelf_history_group_toggle({
+        let state = Arc::clone(&state);
+        let weak = ui.as_weak();
+        let db_path = db_path.clone();
+        move |book_id| {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let parsed = book_id.to_string().parse::<i64>().ok();
+            mutate_and_refresh(&ui, &state, |guard| {
+                if let Some(id) = parsed {
+                    guard.toggle_history_group(id);
+                }
+            });
+            refresh_history(&ui, &state, &db_path, None);
+        }
+    });
+    // 切换「流水 / 按书聚合」；聚合态下再点一次同一按钮 = 请求清空（走确认弹窗）。
+    ui.on_shelf_history_view_set({
+        let state = Arc::clone(&state);
+        let weak = ui.as_weak();
+        let db_path = db_path.clone();
+        move |grouped| {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            mutate_and_refresh(&ui, &state, |guard| {
+                guard.set_history_grouped(grouped);
+            });
+            refresh_history(&ui, &state, &db_path, None);
+        }
+    });
+
+    ui.on_shelf_import_batch({
+        let state = Arc::clone(&state);
+        let weak = ui.as_weak();
+        let picker = Arc::clone(&picker);
+        let channel = Arc::clone(&channel);
+        let db_path = db_path.clone();
+        move || {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            // 已记住选择时**直接执行**，不再询问（设计稿 C7「记住开关」）。
+            if let Some(remembered) = crate::settings::load_import_organize_choice(&db_path) {
+                if let Some(directory) = picker.as_ref().pick_directory().ok().flatten() {
+                    open_organize_dialog(&ui, &state, &db_path, vec![directory]);
+                    mutate_and_refresh(&ui, &state, |guard| {
+                        let mut dialog = guard.dialog().clone();
+                        // 记住态：勾选保持勾选，且直接按记住的选项确认。
+                        dialog.organize_remember = true;
+                        guard.set_dialog(dialog);
+                    });
+                    execute_organize_import(&ui, &state, &channel, &db_path, remembered);
+                    return;
+                }
+            }
+            // 未记住：先选目录（比多选文件更贴近「按目录名归类」的语义）。
+            let picked = picker.as_ref().pick_directory();
+            let directory = match picked {
+                Ok(Some(path)) => path,
+                // 用户取消：零改动，不弹归类浮层。
+                Ok(None) => return,
+                Err(error) => {
+                    // 不支持选目录时**如实回报**，并退回多选文件。
+                    let fallback = picker.as_ref().pick_txt_files();
+                    match fallback {
+                        Ok(None) => return,
+                        Ok(Some(paths)) => {
+                            open_organize_dialog(&ui, &state, &db_path, paths);
+                        }
+                        Err(second) => {
+                            let message = format!(
+                                "无法打开批量导入对话框：{}；多选也不可用：{}",
+                                error.message(),
+                                second.message()
+                            );
+                            mutate_and_refresh(&ui, &state, |guard| {
+                                guard.set_status(message);
+                            });
+                        }
+                    }
+                    return;
+                }
+            };
+            open_organize_dialog(&ui, &state, &db_path, vec![directory]);
+        }
+    });
+
+    // 导入归类浮层：勾选「记住」。
+    ui.on_organize_remembered({
+        let state = Arc::clone(&state);
+        let weak = ui.as_weak();
+        move |value| {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let value = value;
+            mutate_and_refresh(&ui, &state, |guard| {
+                let mut dialog = guard.dialog().clone();
+                dialog.organize_remember = value;
+                guard.set_dialog(dialog);
+            });
+        }
+    });
+
+    // 导入归类浮层：两个确认按钮（共用一次执行路径，仅选择不同）。
+    ui.on_organize_import_plain({
+        let state = Arc::clone(&state);
+        let weak = ui.as_weak();
+        let channel = Arc::clone(&channel);
+        let db_path = db_path.clone();
+        move || {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            execute_organize_import(&ui, &state, &channel, &db_path, false);
+        }
+    });
+    ui.on_organize_import_organized({
+        let state = Arc::clone(&state);
+        let weak = ui.as_weak();
+        let channel = Arc::clone(&channel);
+        let db_path = db_path.clone();
+        move || {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            execute_organize_import(&ui, &state, &channel, &db_path, true);
+        }
+    });
+
+    ui.on_shelf_category_add({
+        let state = Arc::clone(&state);
+        let weak = ui.as_weak();
+        let db_path = db_path.clone();
+        move || {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            // 新建分类：父分类 = 当前选中（根时为「全部书籍」）。
+            let (parent_id, parent_label) = {
+                let guard = lock(&state);
+                let id = guard.shelf_category().to_string();
+                let label = crate::category_tree::breadcrumb_scope_label(&id);
+                (id, label)
+            };
+            let db = db_path.clone();
+            mutate_and_refresh(&ui, &state, |guard| {
+                let mut dialog = guard.dialog().clone();
+                dialog.kind = DIALOG_KIND_CATEGORY;
+                dialog.category_dialog_title = "新建分类".to_string();
+                dialog.category_dialog_parent = format!(
+                    "父分类：{parent_label}（可在分类行「…」中选择「新建子分类」以指定父级）"
+                );
+                dialog.category_dialog_value = String::new();
+                dialog.category_dialog_error = String::new();
+                dialog.category_dialog_label = "创建".to_string();
+                dialog.category_dialog_id = String::new();
+                dialog.category_dialog_parent_id = parent_id;
+                // 新建态：去向字段不参与（0 = 未选）。
+                dialog.category_delete_destination = 0;
+                dialog.category_delete_target_id = String::new();
+                dialog.category_menu_items = Vec::new();
+                guard.set_dialog(dialog);
+            });
+            let _ = db;
+        }
+    });
+
+    // 分类浮层：名称编辑（只更新输入；合法性在确认时由 Rust 判定）。
+    ui.on_category_dialog_name_edited({
+        let state = Arc::clone(&state);
+        let weak = ui.as_weak();
+        move |text| {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let text = text.to_string();
+            mutate_and_refresh(&ui, &state, |guard| {
+                let mut dialog = guard.dialog().clone();
+                dialog.category_dialog_value = text;
+                // 输入变化时清掉旧错误（同父同名提示不再适用）。
+                dialog.category_dialog_error = String::new();
+                guard.set_dialog(dialog);
+            });
+        }
+    });
+
+    // 分类浮层：选择目标（删除态=去向；移动态=目标分类）。
+    ui.on_category_dialog_target_picked({
+        let state = Arc::clone(&state);
+        let weak = ui.as_weak();
+        let db_path = db_path.clone();
+        move |index| {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let index = index as i32;
+            // 「移入另一分类」需要把第 1 个选项展开为目标选择器：
+            // 用同一浮层的移动态承载（目标列表由 Rust 给出，不可选项被禁用）。
+            if index == 0 {
+                let dialog = lock(&state).dialog().clone();
+                // 源分类 id 统一取 `category_dialog_parent_id`（移动态的来源）。
+                let source = dialog.category_dialog_parent_id.parse::<i64>().ok();
+                let targets =
+                    source.and_then(|cid| crate::category_ops::move_targets(&db_path, cid).ok());
+                mutate_and_refresh(&ui, &state, |guard| {
+                    let mut dialog = guard.dialog().clone();
+                    dialog.category_dialog_title = "选择移入的分类".to_string();
+                    dialog.category_dialog_parent =
+                        "原分类下的书将移入所选分类；原始 TXT 不受影响。".to_string();
+                    dialog.category_dialog_label = "移动".to_string();
+                    // 记住「从删除态来」，确认时按删除执行。
+                    dialog.category_delete_destination = 4;
+                    guard.set_dialog(dialog);
+                });
+                if let Some(rows) = targets {
+                    let choice_rows: Vec<ChoiceRowData> = rows
+                        .into_iter()
+                        .map(|row| ChoiceRowData {
+                            name: row.name,
+                            current: false,
+                            enabled: row.enabled,
+                        })
+                        .collect();
+                    mutate_and_refresh(&ui, &state, |guard| {
+                        let mut dialog = guard.dialog().clone();
+                        dialog.category_menu_items = choice_rows;
+                        guard.set_dialog(dialog);
+                    });
+                }
+                return;
+            }
+            mutate_and_refresh(&ui, &state, |guard| {
+                let mut dialog = guard.dialog().clone();
+                // 界面给的是 0 基下标；`category_delete_destination` 口径为 1 基（0=未选）。
+                // 移动态（mode=2）：下标对应 `move_target_ids`，写回目标 id。
+                if category_dialog_mode(&dialog) == 2 {
+                    let picked = index.max(0) as usize;
+                    let source = dialog.category_dialog_parent_id.parse::<i64>();
+                    // 目标清单取不到时**不写目标**（保持「未选」），不得默认取根。
+                    if let Ok(source_id) = source {
+                        if let Ok(rows) = crate::category_ops::move_target_ids(&db_path, source_id)
+                        {
+                            if let Some(Some(target)) = rows.get(picked).copied() {
+                                dialog.category_delete_target_id = target.to_string();
+                                dialog.category_delete_destination = 1;
+                            }
+                        }
+                    }
+                } else {
+                    dialog.category_delete_destination = (index + 1).max(0);
+                }
+                guard.set_dialog(dialog);
+            });
+        }
+    });
+
+    // 分类浮层：确认执行（新建 / 重命名 / 删除 / 移动）。
+    ui.on_category_dialog_confirm({
+        let state = Arc::clone(&state);
+        let weak = ui.as_weak();
+        let channel = Arc::clone(&channel);
+        let db_path = db_path.clone();
+        move || {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let snapshot_dialog = lock(&state).dialog().clone();
+            let db = db_path.clone();
+            let outcome: Result<String, String> = (|| {
+                let target_id = snapshot_dialog
+                    .category_delete_target_id
+                    .parse::<i64>()
+                    .ok();
+                let source_id = snapshot_dialog
+                    .category_delete_id
+                    .parse::<i64>()
+                    .unwrap_or(-1);
+                // 形态由 `category_dialog_mode` 判定（Rust 侧唯一口径）。
+                match category_dialog_mode(&snapshot_dialog) {
+                    0 => {
+                        // 名称态：目标 id 为空 = 根下新建；非空 = 在该分类下新建。
+                        if snapshot_dialog.category_dialog_id.is_empty() {
+                            crate::category_ops::create_category(
+                                &db,
+                                target_id,
+                                snapshot_dialog.category_dialog_value.trim(),
+                            )
+                        } else {
+                            crate::category_ops::rename_category(
+                                &db,
+                                source_id,
+                                snapshot_dialog.category_dialog_value.trim(),
+                            )
+                        }
+                    }
+                    1 => crate::category_ops::delete_category(
+                        &db,
+                        source_id,
+                        crate::category_ops::DeleteChoice::from_index(
+                            snapshot_dialog.category_delete_destination,
+                            target_id.unwrap_or(0),
+                        ),
+                    ),
+                    2 => {
+                        // 移动态的源分类 id 统一取 `category_dialog_parent_id`。
+                        let move_source = snapshot_dialog
+                            .category_dialog_parent_id
+                            .parse::<i64>()
+                            .unwrap_or(-1);
+                        crate::category_ops::move_category(&db, move_source, target_id)
+                    }
+                    _ => Err("未识别的操作".to_string()),
+                }
+            })();
+
+            match outcome {
+                Ok(text) => {
+                    mutate_and_refresh(&ui, &state, |guard| {
+                        guard.close_dialog();
+                        guard.set_status(text);
+                    });
+                    submit_shelf_refresh(&state, &channel, &db_path);
+                }
+                Err(message) => {
+                    // 失败**保留弹窗**并显示错误（如同父同名、未选去向），
+                    // 不得静默关闭让用户以为成功。
+                    mutate_and_refresh(&ui, &state, |guard| {
+                        let mut dialog = guard.dialog().clone();
+                        dialog.category_dialog_error = message;
+                        guard.set_dialog(dialog);
+                    });
+                }
+            }
+        }
+    });
     ui.on_dialog_confirm({
         let state = Arc::clone(&state);
         let weak = ui.as_weak();
@@ -3657,6 +5338,28 @@ pub fn run() -> Result<(), slint::PlatformError> {
             };
             let dialog = lock(&state).dialog().clone();
             match dialog.confirm_action.as_str() {
+                // V1.1：清空全部阅读流水（设计稿 H3）。
+                // 「取消」不发写请求（`dialog-cancel` 只关弹窗），确认后**只删流水**。
+                "history-clear" => {
+                    let cleared = match clear_history(&db_path) {
+                        Ok(count) => count,
+                        Err(message) => {
+                            set_status_text(&ui, &state, "清空历史", &message);
+                            return;
+                        }
+                    };
+                    mutate_and_refresh(&ui, &state, |guard| {
+                        guard.close_dialog();
+                    });
+                    refresh_history(
+                        &ui,
+                        &state,
+                        &db_path,
+                        Some(format!(
+                            "已清空 {cleared} 条阅读流水（书籍、进度与书签未改动）"
+                        )),
+                    );
+                }
                 "remove" => {
                     let Ok(book_id) = dialog.confirm_book_id.parse::<i64>() else {
                         return;
@@ -3667,7 +5370,13 @@ pub fn run() -> Result<(), slint::PlatformError> {
                                 guard.close_dialog();
                                 guard.set_status(text.clone());
                             });
-                            show_toast(&ui, &state, "已移出书架（记录与进度保留）", "去书架", "shelf");
+                            show_toast(
+                                &ui,
+                                &state,
+                                "已移出书架（记录与进度保留）",
+                                "去书架",
+                                "shelf",
+                            );
                         }
                         Err(error) => set_status_text(&ui, &state, "移出书架", &error.to_string()),
                     }
@@ -3719,7 +5428,12 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 return;
             };
             let dialog = lock(&state).dialog().clone();
-            match shelf_ops::rename_book(&db_path, dialog.rename_book_id.parse().unwrap_or(-1), name.as_str(), import::now_unix()) {
+            match shelf_ops::rename_book(
+                &db_path,
+                dialog.rename_book_id.parse().unwrap_or(-1),
+                name.as_str(),
+                import::now_unix(),
+            ) {
                 Ok(text) => {
                     mutate_and_refresh(&ui, &state, |guard| {
                         guard.close_dialog();
@@ -3837,6 +5551,245 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 ui.invoke_settings_clear_index();
             }
 
+            // ---- V1.1 分类驱动（与界面回调**同一入口**）----
+            // 目的：门禁只跑驱动时，界面入口缺失不会被发现；故每个界面入口
+            // 都配一个等价驱动，且驱动**调用同一回调**（不是复制一份逻辑）。
+            if let Some(id) = env_text(SHELF_OPEN_CATEGORY_ENV) {
+                ui.invoke_shelf_category_select(id.into());
+            }
+            if let Some(spec) = env_text(CATEGORY_ADD_ENV) {
+                // `父id:名称`；无冒号 = 当前选中分类下。
+                let (parent, name) = match spec.split_once(':') {
+                    Some((parent, name)) => (parent.trim().parse::<i64>().ok(), name.trim()),
+                    None => (None, spec.trim()),
+                };
+                let parent = if name.is_empty() { None } else { parent };
+                drive_category(
+                    &ui,
+                    &state,
+                    &channel,
+                    &db_path,
+                    CategoryDrive::Create {
+                        parent,
+                        name: name.to_string(),
+                    },
+                );
+            }
+            if let Some(spec) = env_text(CATEGORY_RENAME_ENV) {
+                if let Some((id, name)) = spec.split_once(':') {
+                    if let Ok(parsed) = id.trim().parse::<i64>() {
+                        drive_category(
+                            &ui,
+                            &state,
+                            &channel,
+                            &db_path,
+                            CategoryDrive::Rename {
+                                id: parsed,
+                                name: name.trim().to_string(),
+                            },
+                        );
+                    }
+                }
+            }
+            if let Some(spec) = env_text(CATEGORY_MOVE_ENV) {
+                if let Some((id, target)) = spec.split_once(':') {
+                    if let Ok(parsed) = id.trim().parse::<i64>() {
+                        drive_category(
+                            &ui,
+                            &state,
+                            &channel,
+                            &db_path,
+                            CategoryDrive::Move {
+                                id: parsed,
+                                target: target.trim().parse::<i64>().ok(),
+                            },
+                        );
+                    }
+                }
+            }
+            if let Some(spec) = env_text(CATEGORY_DELETE_ENV) {
+                if let Some((id, destination)) = spec.split_once(':') {
+                    if let Ok(parsed) = id.trim().parse::<i64>() {
+                        // 缺省（空 / 非法）= **未选去向** → 必须被拒（规格 R3）。
+                        let choice = match destination.trim() {
+                            "root" => crate::category_ops::DeleteChoice::MoveToRoot,
+                            "remove" => crate::category_ops::DeleteChoice::RemoveFromShelf,
+                            other => other
+                                .strip_prefix("other:")
+                                .and_then(|value| value.trim().parse::<i64>().ok())
+                                .map(crate::category_ops::DeleteChoice::MoveToCategory)
+                                .unwrap_or(crate::category_ops::DeleteChoice::None),
+                        };
+                        drive_category(
+                            &ui,
+                            &state,
+                            &channel,
+                            &db_path,
+                            CategoryDrive::Delete { id: parsed, choice },
+                        );
+                    }
+                }
+            }
+            if let Some(spec) = env_text(BOOK_MOVE_ENV) {
+                if let Some((book, category)) = spec.split_once(':') {
+                    if let Ok(parsed) = book.trim().parse::<i64>() {
+                        let outcome = crate::category_ops::move_book(
+                            &db_path,
+                            parsed,
+                            category.trim().parse::<i64>().ok(),
+                        );
+                        let text = match outcome {
+                            Ok(message) => message,
+                            Err(message) => format!("移动书籍失败：{message}"),
+                        };
+                        mutate_and_refresh(&ui, &state, |guard| {
+                            guard.set_status(text.clone());
+                        });
+                        submit_shelf_refresh(&state, &channel, &db_path);
+                    }
+                }
+            }
+            // 背景图驱动：与界面设置页**同一写入路径**
+            // （`background_ops::install` / `clear`），不复制逻辑。
+            if env_flag(BACKGROUND_CLEAR_ENV) {
+                match crate::background_ops::clear(&db_path, import::now_unix()) {
+                    Ok(()) => log_line("NR-BG cleared=1"),
+                    Err(message) => log_line(&format!("NR-BG cleared=0 detail={message}")),
+                }
+                if let Ok(fresh) = settings::load(&db_path) {
+                    *lock(&settings_slot) = fresh;
+                }
+                refresh_background_ui(&ui, &state, &db_path);
+            }
+            if let Some(spec) = env_text(BACKGROUND_SET_ENV) {
+                // 解析 `<源路径>[:fit][:scrim]`（Windows 盘符含冒号，故从右往左取）。
+                let mut parts: Vec<&str> = spec.rsplitn(3, ':').collect();
+                let source = parts.pop().unwrap_or_default();
+                let fit = parts.pop().and_then(|token| match token {
+                    "cover" => Some(reading_storage::background::FitMode::Cover),
+                    "tile" => Some(reading_storage::background::FitMode::Tile),
+                    "center" => Some(reading_storage::background::FitMode::Center),
+                    _ => None,
+                });
+                let scrim = parts.pop().and_then(|token| token.parse::<i64>().ok());
+                match crate::background_ops::install(
+                    &db_path,
+                    Path::new(source),
+                    fit,
+                    scrim,
+                    import::now_unix(),
+                ) {
+                    Ok(view) => log_line(&format!(
+                        "NR-BG installed=1 scrim={} fit={} alpha={}",
+                        view.scrim_permille,
+                        view.fit_mode.as_i64(),
+                        view.scrim_alpha
+                    )),
+                    Err(message) => log_line(&format!("NR-BG installed=0 detail={message}")),
+                }
+                if let Ok(fresh) = settings::load(&db_path) {
+                    *lock(&settings_slot) = fresh;
+                }
+                refresh_background_ui(&ui, &state, &db_path);
+            }
+
+            // 自定义配色驱动：与界面设置页**同一写入路径**
+            // （`write_theme_base` / `write_theme_enabled`），不复制逻辑。
+            if let Some(spec) = env_text(THEME_SET_ENV) {
+                for item in spec.split(';').map(str::trim).filter(|s| !s.is_empty()) {
+                    if let Some((raw_key, raw_value)) = item.split_once('=') {
+                        let field = raw_key.trim();
+                        let value = raw_value.trim();
+                        let outcome = if field == "on" {
+                            write_theme_enabled(&db_path, value == "1" || value == "true")
+                        } else {
+                            let key = match field {
+                                "fg" => settings::KEY_BASE_FOREGROUND,
+                                "bg" => settings::KEY_BASE_BACKGROUND,
+                                "primary" => settings::KEY_BASE_PRIMARY,
+                                "accent" => settings::KEY_BASE_ACCENT,
+                                other => {
+                                    log_line(&format!(
+                                        "NR-THEME field=0 detail=unknown key={other}"
+                                    ));
+                                    continue;
+                                }
+                            };
+                            write_theme_base(&db_path, key, value)
+                        };
+                        match outcome {
+                            Ok(()) => {
+                                log_line(&format!("NR-THEME field=1 key={field} value={value}"))
+                            }
+                            Err(message) => {
+                                log_line(&format!("NR-THEME field=0 key={field} detail={message}"))
+                            }
+                        }
+                    }
+                }
+                // 重载设置并重新注入（与界面改完基色后的路径一致）。
+                if let Ok(fresh) = settings::load(&db_path) {
+                    *lock(&settings_slot) = fresh;
+                }
+                let dark = lock(&settings_slot).theme_dark();
+                match apply_custom_theme(&ui, &db_path, dark) {
+                    Ok(Some(report)) => log_line(&format!(
+                        "NR-THEME applied=1 contrast={} passes={}",
+                        report.label(),
+                        report.passes
+                    )),
+                    Ok(None) => log_line("NR-THEME applied=1 custom=0"),
+                    Err(message) => log_line(&format!("NR-THEME applied=0 detail={message}")),
+                }
+            }
+
+            // 阅读历史驱动：与界面按钮**同一回调**（Q5：独立菜单项，不在侧栏）。
+            if let Some(value) = env_text(HISTORY_VIEW_ENV) {
+                let want_history = !matches!(value.as_str(), "0" | "off" | "shelf");
+                let current = lock(&state).history_mode();
+                if want_history != current {
+                    ui.invoke_shelf_history_toggle();
+                }
+            }
+            if env_flag(HISTORY_CLEAR_ENV) {
+                // 与界面「清空历史」**同一回调**：它内部弹确认，此处再点一次确认。
+                ui.invoke_shelf_history_clear();
+                ui.invoke_dialog_confirm(false);
+            }
+
+            // 批量导入归类驱动：走**与界面按钮相同**的两个函数
+            // （`open_organize_dialog` → `execute_organize_import`）。
+            if let Some(spec) = env_text(IMPORT_ORGANIZE_ENV) {
+                // 解析 `<目录>[:yes|no][:remember]`（Windows 路径含盘符冒号，
+                // 故只按**最后两段**判定，不在前段切）。
+                let mut parts: Vec<&str> = spec.split(':').collect();
+                let mut remember = false;
+                if parts.last() == Some(&"remember") {
+                    remember = true;
+                    parts.pop();
+                }
+                let organized = !parts.last().is_some_and(|last| *last == "no");
+                if parts
+                    .last()
+                    .is_some_and(|last| matches!(*last, "yes" | "no"))
+                {
+                    parts.pop();
+                }
+                let directory = parts.join(":");
+                if !directory.is_empty() {
+                    open_organize_dialog(&ui, &state, &db_path, vec![PathBuf::from(&directory)]);
+                    if remember {
+                        mutate_and_refresh(&ui, &state, |guard| {
+                            let mut dialog = guard.dialog().clone();
+                            dialog.organize_remember = true;
+                            guard.set_dialog(dialog);
+                        });
+                    }
+                    // 驱动**直接确认**（界面路径需要用户点按钮）。
+                    execute_organize_import(&ui, &state, &channel, &db_path, organized);
+                }
+            }
+
             // 0a) 书架「阅读」入口（与整行点击**同一函数**）。
             if let Some(target) = env_text(SHELF_OPEN_ENV) {
                 open_reader_from_shelf(
@@ -3856,9 +5809,16 @@ pub fn run() -> Result<(), slint::PlatformError> {
             // 注意：`lock(&state)` 的临时 guard 会活到语句结束，绝不能出现在参数位置
             // （否则 open_reader 内投影时会对同一把锁再次加锁 → 自锁死）。
             let toolbar_open_now = lock(&state).project().reader.toolbar_open;
-            let Some(mut session) =
-                open_reader(&ui, &state, &db_path, viewport, font, toolbar_open_now, &loaded, &selection)
-            else {
+            let Some(mut session) = open_reader(
+                &ui,
+                &state,
+                &db_path,
+                viewport,
+                font,
+                toolbar_open_now,
+                &loaded,
+                &selection,
+            ) else {
                 return;
             };
             // 全局设置（按文本设置并持久化）。

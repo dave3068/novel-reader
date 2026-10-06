@@ -37,6 +37,65 @@ export struct BookRow {
     can-open: bool,
 }
 
+// 分类侧栏一行（V1.1）。
+//
+// 全部字段由 Rust 的 `category_tree::project` 投影给出：层级（depth）、
+// 计数、选中、折叠、循环不可选（move-blocked）**全部是 Rust 的判定**，
+// 界面只按 depth 缩进、按 selected/expanded 上色、按 move-blocked 置灰。
+export struct CategoryRow {
+    id: string,
+    name: string,
+    // 0 基深度（根下分类为 1，因为「全部书籍」占第 0 行）。
+    depth: int,
+    direct-count: int,
+    total-count: int,
+    has-children: bool,
+    expanded: bool,
+    selected: bool,
+    // 移动分类时不可选（自身与全部子孙；判定来自 Rust）。
+    move-blocked: bool,
+    // 虚拟行（全部书籍 / 未分类）不显示行内菜单。
+    virtual-row: bool,
+    // 0=全部书籍 1=未分类 2=真实分类。
+    kind: int,
+}
+
+// 导入归类对话框一行（V1.1；批量导入的预览与两个确认态）。
+//
+// `count` 是**已格式化**的文本（Rust 侧拼好，如 "3 本"）：界面不做数字统计，
+// 也不做 int→string 转换。
+export struct OrganizeRow {
+    name: string,
+    count: string,
+}
+
+// 阅读历史流水一行（V1.1；设计稿 H1）。
+//
+// 全部字段由 Rust 的 `history_view::project` 给出：时间标签、位置标签、
+// 进入方式与语义色**都是 Rust 的判定**；界面只渲染（不排序、不格式化时间）。
+export struct HistoryRow {
+    id: string,
+    book-id: string,
+    // 时间标签：今天 HH:MM / 本年 MM-DD HH:MM / 跨年 yyyy-MM-dd HH:MM。
+    time-label: string,
+    book-title: string,
+    // 文件名（定位符末段；不暴露绝对路径）。
+    file-label: string,
+    position-label: string,
+    entry-kind-label: string,
+    // 语义色槽位：0=中性（书架打开）2=成功（进度恢复/书签/章节跳转）。
+    entry-kind-tone: int,
+}
+
+// 阅读历史按书聚合的组头一行（V1.1；设计稿 H2）。
+export struct HistoryGroupHead {
+    book-id: string,
+    book-title: string,
+    count: int,
+    last-time-label: string,
+    expanded: bool,
+}
+
 // 目录一行（序号 / 标题 / 偏移量都由 Rust 给出；当前章由 Rust 标记）。
 export struct TocRow {
     sequence: string,
@@ -60,6 +119,10 @@ export struct MarkRow {
 export struct ChoiceRow {
     name: string,
     current: bool,
+    // 是否可选（V1.1：移动分类时自身与子孙不可选）。
+    // 判定**完全来自 Rust**（`category_ops::move_targets`）；界面不得解析
+    // 显示文案来推断 —— 那会把「循环可达性」语义下沉到 `.slint`。
+    enabled: bool,
 }
 
 // 设置一行（键 / 名称 / 值 / 说明 / 控件类型都由 Rust 生成）。
@@ -79,6 +142,8 @@ export struct SettingsRow {
     value-step: int,
     value-current: int,
     options: [string],
+    // V1.1：基色色块（`kind = 8` 时有效；Rust 投影时算好，界面不解析颜色）。
+    swatch: color,
     current-index: int,
     checked: bool,
     // 值文本用等宽字体（机器可核对信息，如数据库路径）。
@@ -168,6 +233,21 @@ export global UiMetrics {
     in property <length> page-header-height: 0px;
     in property <length> panel-header-height: 0px;
     in property <length> panel-hint-height: 0px;
+    // 分类侧栏（V1.1；数值由 Rust 的 layout.rs 注入）
+    in property <length> sidebar-width: 0px;
+    in property <length> sidebar-head-height: 0px;
+    in property <length> sidebar-row-height: 0px;
+    in property <length> sidebar-indent: 0px;
+    in property <length> tree-arrow-size: 0px;
+    in property <length> sidebar-collapsed-width: 0px;
+    // 阅读历史（V1.1；数值由 Rust 的 layout.rs 注入）
+    in property <length> history-row-height: 0px;
+    in property <length> history-group-head-height: 0px;
+    in property <length> history-time-width: 0px;
+    in property <length> history-position-width: 0px;
+    in property <length> history-kind-width: 0px;
+    // 基色色块边长（V1.1；取色器）
+    in property <length> swatch-size: 0px;
     // 滚动条
     in property <length> scrollbar-width: 0px;
     in property <length> scrollbar-gutter: 0px;
@@ -1458,7 +1538,715 @@ component RowMenuStrip inherits Rectangle {
                 }
 }
 
+// 分类侧栏树行（V1.1）。
+//
+// 纯投影组件：缩进按 `depth`、高亮按 `selected`、置灰按 `move-blocked`。
+// **不在此处做任何层级/计数/循环判定** —— 那些由 Rust 的
+// `category_tree::project` 给出（门禁会扫本文件核对）。
+component CategoryRowView inherits Rectangle {
+    in property <string> row-id: "";
+    in property <string> row-name: "";
+    in property <int> row-depth: 0;
+    in property <int> direct-count: 0;
+    in property <int> total-count: 0;
+    in property <bool> has-children: false;
+    in property <bool> expanded: true;
+    in property <bool> selected: false;
+    in property <bool> move-blocked: false;
+    in property <bool> virtual-row: false;
+    in property <int> row-kind: 0;
+    callback row-clicked(string);
+    callback toggle(string);
+    callback row-menu(string);
+
+    height: UiMetrics.sidebar-row-height;
+    background: root.selected ? Skin.primary-soft : Skin.field-01;
+
+    // 选中态左侧 2 像素 主色条（与列表选中同口径）。
+    if root.selected : Rectangle {
+        x: 0;
+        y: 0;
+        width: UiMetrics.focus-ring-width;
+        height: parent.height;
+        background: Skin.primary;
+    }
+
+    // 展开箭头（有子分类时占位，空占位保持文字对齐）。
+    Rectangle {
+        x: UiMetrics.space-8 + root.row-depth * UiMetrics.sidebar-indent;
+        y: (parent.height - UiMetrics.tree-arrow-size) / 2;
+        width: UiMetrics.tree-arrow-size;
+        height: UiMetrics.tree-arrow-size;
+        background: transparent;
+
+        // `Path` 无 `rotation` 属性（实测编译报错），故用**两种图标形状**表达
+        // 展开/收起，而不是旋转同一个箭头。形状全部取自既有 `Icons`（不新增素材）。
+        if root.has-children : Icon {
+            shape: root.expanded ? Icons.chevron-down : Icons.chevron-right;
+            size: UiMetrics.tree-arrow-size;
+            x: 0;
+            y: 0;
+            color: root.selected ? Skin.primary-strong : Skin.text-secondary;
+        }
+        TouchArea {
+            clicked => {
+                root.toggle(root.row-id);
+            }
+        }
+    }
+
+    // 分类名（缩进后）。
+    Text {
+        x: UiMetrics.space-8 + UiMetrics.tree-arrow-size + UiMetrics.space-8
+            + root.row-depth * UiMetrics.sidebar-indent;
+        y: 0;
+        width: parent.width - self.x - UiMetrics.space-8 - UiMetrics.space-24;
+        height: parent.height;
+        text: root.row-name;
+        font-size: UiMetrics.ui-font-size;
+        font-weight: root.selected ? 600 : 400;
+        // 不可选（移动模式的自身与子孙）用 disabled 文字色。
+        color: root.move-blocked ? Skin.text-disabled
+            : (root.selected ? Skin.primary-strong : Skin.text-primary);
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    // 书籍计数（直属；有子孙时显示合计）。
+    Text {
+        x: parent.width - self.width - UiMetrics.space-8;
+        y: 0;
+        height: parent.height;
+        width: UiMetrics.space-24;
+        text: root.has-children ? root.total-count : root.direct-count;
+        font-size: UiMetrics.caption-font-size;
+        color: root.move-blocked ? Skin.text-disabled : Skin.text-secondary;
+        horizontal-alignment: right;
+        vertical-alignment: center;
+    }
+
+    // 整行点击 = 选中（再点已选中项回到根，由 Rust 判定）。
+    TouchArea {
+        clicked => {
+            root.row-clicked(root.row-id);
+        }
+    }
+
+    // 行尾「…」：仅真实分类有（虚拟行不可重命名/移动/删除）。
+    if !root.virtual-row : IconButton {
+        x: parent.width - UiMetrics.icon-button-size - UiMetrics.space-4;
+        y: (parent.height - UiMetrics.icon-button-size) / 2;
+        shape: Icons.more;
+        tip-below: false;
+        activated => {
+            root.row-menu(root.row-id);
+        }
+    }
+}
+
+// 分类行内菜单条（V1.1；设计稿 C2）。
+//
+// 宽度 = 侧栏宽，出现在该行下方；阴影 + 1px 边。
+// 菜单项固定四个，**删除永远在最后**（`category_ops::menu_items` 的口径）。
+// 「不可选」的判定不在这里做 —— 每个入口打开的浮层会自行校验。
+component CategoryMenuStrip inherits Rectangle {
+    in property <string> target-id: "";
+    callback picked(string, string);
+    callback closed();
+
+    height: UiMetrics.list-row-height;
+    background: Skin.layer-02;
+    border-width: UiMetrics.hairline;
+    border-color: Skin.primary-border;
+    drop-shadow-color: #00000026;
+    drop-shadow-blur: UiMetrics.space-8;
+    drop-shadow-offset-y: UiMetrics.space-4;
+
+    HorizontalLayout {
+        x: UiMetrics.space-8;
+        y: 0;
+        width: parent.width - 2 * self.x;
+        spacing: UiMetrics.space-4;
+        alignment: start;
+
+        TextButton {
+            variant: 1;
+            padding-x: UiMetrics.space-8;
+            compact: true;
+            caption: "新建子分类";
+            activated => {
+                root.picked("category-add-child", root.target-id);
+            }
+        }
+        TextButton {
+            variant: 1;
+            padding-x: UiMetrics.space-8;
+            compact: true;
+            caption: "重命名";
+            activated => {
+                root.picked("category-rename", root.target-id);
+            }
+        }
+        TextButton {
+            variant: 1;
+            padding-x: UiMetrics.space-8;
+            compact: true;
+            caption: "移动";
+            activated => {
+                root.picked("category-move", root.target-id);
+            }
+        }
+        TextButton {
+            variant: 3;
+            padding-x: UiMetrics.space-8;
+            compact: true;
+            caption: "删除";
+            activated => {
+                root.picked("category-delete", root.target-id);
+            }
+        }
+    }
+
+    // 点击条外关闭。
+    TouchArea {
+        x: 0;
+        y: parent.height;
+        width: parent.width;
+        height: UiMetrics.space-48;
+        clicked => {
+            root.closed();
+        }
+    }
+}
+
+// 分类操作浮层（V1.1；新建/重命名 + 删除去向 + 移动到分类）。
+//
+// 三态由 Rust 驱动（`category_ops`），界面只收集输入与单选：
+// - `mode` 0=新建/重命名 1=删除 2=移动；
+// - 「删除」态的确认按钮在**未选去向**时保持 disabled（`can-confirm` 由 Rust 给出），
+//   界面**不推断**合法性（规格 R3 / 设计稿 C4）。
+component CategoryActionDialog inherits Rectangle {
+    in property <int> mode: 0;
+    in property <string> title: "";
+    in property <string> parent-line: "";
+    in-out property <string> name-value: "";
+    in property <string> error-line: "";
+    in property <string> confirm-label: "保存";
+    in property <bool> can-confirm: true;
+    in property <string> note-line: "";
+    in property <[ChoiceRow]> targets: [];
+    in property <int> target-index: -1;
+    callback cancelled();
+    callback name-edited(string);
+    callback target-picked(int);
+    callback confirmed();
+
+    background: transparent;
+
+    Overlay {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        dismissed => {
+            root.cancelled();
+        }
+    }
+
+    panel := Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: UiMetrics.modal-width-confirm;
+        height: content.preferred-height + UiMetrics.space-24 * 2;
+        background: Skin.layer-02;
+        border-width: UiMetrics.hairline;
+        border-color: Skin.border-strong;
+
+        TouchArea { }
+
+        content := VerticalLayout {
+            x: UiMetrics.space-24;
+            y: UiMetrics.space-24;
+            width: parent.width - 2 * UiMetrics.space-24;
+            spacing: UiMetrics.space-16;
+
+            Text {
+                text: root.title;
+                font-size: UiMetrics.heading-font-size;
+                font-weight: 600;
+                color: Skin.text-primary;
+                height: self.preferred-height;
+            }
+
+            // 父分类只读行（新建时默认 = 进入时选中的分类）。
+            if root.mode != 2 : Text {
+                text: root.parent-line;
+                font-size: UiMetrics.label-font-size;
+                color: Skin.text-secondary;
+                height: self.preferred-height;
+            }
+
+            // 名称输入（新建 / 重命名）。
+            if root.mode == 0 : TextField {
+                text: root.name-value;
+                label: "分类名称";
+                edited(text) => {
+                    root.name-edited(text);
+                }
+            }
+
+            // 移动目标列表（设计稿 C5）。
+            if root.mode == 2 : VerticalLayout {
+                width: parent.width;
+                spacing: UiMetrics.space-4;
+                for row[index] in root.targets : RadioItem {
+                    width: parent.width;
+                    caption: row.name;
+                    checked: root.target-index == index;
+                    // 可选性由 Rust 给出（`enabled`），界面不解析文案。
+                    enabled: row.enabled;
+                    selected => {
+                        root.target-picked(index);
+                    }
+                }
+            }
+
+            // 删除态的三个去向（必选；默认全空）。
+            if root.mode == 1 : VerticalLayout {
+                width: parent.width;
+                spacing: UiMetrics.space-4;
+                RadioItem {
+                    width: parent.width;
+                    caption: "移入另一分类…";
+                    checked: root.target-index == 1;
+                    selected => {
+                        root.target-picked(1);
+                    }
+                }
+                RadioItem {
+                    width: parent.width;
+                    caption: "一并移出书架（原始文件未改动）";
+                    checked: root.target-index == 2;
+                    selected => {
+                        root.target-picked(2);
+                    }
+                }
+                RadioItem {
+                    width: parent.width;
+                    caption: "移回根（未分类）";
+                    checked: root.target-index == 3;
+                    selected => {
+                        root.target-picked(3);
+                    }
+                }
+            }
+
+            // 说明 / 错误（同父同名、循环移动等，均由 Rust 给出）。
+            if root.note-line != "" : Text {
+                text: root.note-line;
+                font-size: UiMetrics.label-font-size;
+                color: Skin.text-secondary;
+                wrap: word-wrap;
+                width: parent.width;
+                height: self.preferred-height;
+            }
+            if root.error-line != "" : Text {
+                text: root.error-line;
+                font-size: UiMetrics.label-font-size;
+                color: Skin.support-error;
+                wrap: word-wrap;
+                width: parent.width;
+                height: self.preferred-height;
+            }
+
+            HorizontalLayout {
+                width: parent.width;
+                spacing: UiMetrics.space-8;
+                alignment: end;
+                TextButton {
+                    caption: "取消";
+                    variant: 1;
+                    activated => {
+                        root.cancelled();
+                    }
+                }
+                TextButton {
+                    caption: root.confirm-label;
+                    // 0=Primary；未选去向 / 名称为空时禁用 —— 判定由 Rust 给（`can-confirm`）。
+                    variant: 0;
+                    enabled: root.can-confirm;
+                    activated => {
+                        root.confirmed();
+                    }
+                }
+            }
+        }
+    }
+}
+
+// 导入归类浮层（V1.1；设计稿 C7）。
+//
+// 只在「多选文件 / 选目录」时出现（单文件导入直接归入当前分类）。
+// 两个确认态按钮：「不归类，全部导入」/「按目录名归类并导入」；
+// 「记住」勾选由 Rust 持久化（下次不再询问）。
+// 预览行（目录名 + 书数）由 Rust 的 `batch_import::plan_import` 给出，
+// 界面**不自己统计**。
+component ImportOrganizeDialog inherits Rectangle {
+    in property <string> title: "";
+    in property <string> scope-line: "";
+    in property <string> summary-line: "";
+    in property <[OrganizeRow]> preview: [];
+    in-out property <bool> remember: false;
+    callback cancelled();
+    callback remembered(bool);
+    callback import-plain();
+    callback import-organized();
+
+    background: transparent;
+
+    Overlay {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        dismissed => {
+            root.cancelled();
+        }
+    }
+
+    panel := Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: UiMetrics.modal-width-confirm;
+        height: content.preferred-height + UiMetrics.space-24 * 2;
+        background: Skin.layer-02;
+        border-width: UiMetrics.hairline;
+        border-color: Skin.border-strong;
+
+        TouchArea { }
+
+        content := VerticalLayout {
+            x: UiMetrics.space-24;
+            y: UiMetrics.space-24;
+            width: parent.width - 2 * UiMetrics.space-24;
+            spacing: UiMetrics.space-16;
+
+            Text {
+                text: root.title;
+                font-size: UiMetrics.heading-font-size;
+                font-weight: 600;
+                color: Skin.text-primary;
+                height: self.preferred-height;
+            }
+            Text {
+                text: root.scope-line;
+                font-size: UiMetrics.label-font-size;
+                color: Skin.text-secondary;
+                wrap: word-wrap;
+                width: parent.width;
+                height: self.preferred-height;
+            }
+            Text {
+                text: root.summary-line;
+                font-size: UiMetrics.label-font-size;
+                color: Skin.text-primary;
+                wrap: word-wrap;
+                width: parent.width;
+                height: self.preferred-height;
+            }
+
+            // 预览：按目录名归类将新建的分类与各分类书数（Rust 给出）。
+            if root.preview.length > 0 : VerticalLayout {
+                width: parent.width;
+                spacing: UiMetrics.space-4;
+                for row[index] in root.preview : Rectangle {
+                    width: parent.width;
+                    height: UiMetrics.list-row-height;
+                    // Slint 用 Math.mod（`%` 不是合法运算符）。
+                    background: Math.mod(index, 2) == 0 ? Skin.layer-01 : transparent;
+                    Text {
+                        x: UiMetrics.space-8;
+                        y: 0;
+                        height: parent.height;
+                        text: row.name;
+                        font-size: UiMetrics.ui-font-size;
+                        color: Skin.text-primary;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        x: parent.width - self.width - UiMetrics.space-8;
+                        y: 0;
+                        height: parent.height;
+                        // count 由 Rust 给出（string），界面不做统计也不做转换。
+                        text: row.count;
+                        font-size: UiMetrics.caption-font-size;
+                        color: Skin.text-secondary;
+                        horizontal-alignment: right;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            // 「记住我的选择」。
+            Rectangle {
+                width: parent.width;
+                height: UiMetrics.space-24;
+                background: transparent;
+                Rectangle {
+                    x: 0;
+                    y: (parent.height - self.height) / 2;
+                    width: UiMetrics.radio-size;
+                    height: UiMetrics.radio-size;
+                    border-radius: self.height / 2;
+                    background: root.remember ? Skin.primary : Skin.field-01;
+                    border-width: root.remember ? UiMetrics.space-4 : UiMetrics.hairline;
+                    border-color: root.remember ? Skin.primary : Skin.control-track;
+                }
+                Text {
+                    x: UiMetrics.radio-size + UiMetrics.space-8;
+                    y: 0;
+                    height: parent.height;
+                    text: "记住我的选择，下次不再询问";
+                    font-size: UiMetrics.label-font-size;
+                    color: Skin.text-secondary;
+                    vertical-alignment: center;
+                }
+                TouchArea {
+                    clicked => {
+                        root.remembered(!root.remember);
+                    }
+                }
+            }
+
+            VerticalLayout {
+                width: parent.width;
+                spacing: UiMetrics.space-8;
+                TextButton {
+                    width: parent.width;
+                    caption: "按目录名归类并导入";
+                    variant: 0;
+                    activated => {
+                        root.import-organized();
+                    }
+                }
+                TextButton {
+                    width: parent.width;
+                    caption: "不归类，全部导入到当前分类";
+                    variant: 1;
+                    activated => {
+                        root.import-plain();
+                    }
+                }
+                TextButton {
+                    width: parent.width;
+                    caption: "取消";
+                    variant: 2;
+                    activated => {
+                        root.cancelled();
+                    }
+                }
+            }
+        }
+    }
+}
+
+// 阅读历史流水行（V1.1；设计稿 H1）。
+//
+// 纯渲染：时间（等宽）/ 书名 + 文件 / 位置 / 进入方式 tag / 行尾「…」。
+// **不在此排序或格式化时间** —— 全部由 Rust 投影给出。
+component HistoryRowView inherits Rectangle {
+    in property <string> row-id: "";
+    in property <string> book-id: "";
+    in property <string> time-label: "";
+    in property <string> book-title: "";
+    in property <string> file-label: "";
+    in property <string> position-label: "";
+    in property <string> entry-kind-label: "";
+    in property <int> entry-kind-tone: 0;
+    callback open-book(string);
+    callback row-menu(string);
+
+    height: UiMetrics.history-row-height;
+    background: transparent;
+
+    // 时间（等宽；今天只到分钟）。
+    Text {
+        x: UiMetrics.space-16;
+        y: 0;
+        width: UiMetrics.history-time-width;
+        height: parent.height;
+        text: root.time-label;
+        font-family: "monospace";
+        font-size: UiMetrics.caption-font-size;
+        color: Skin.text-secondary;
+        vertical-alignment: center;
+    }
+
+    // 书名 + 文件名（静态分隔文本，非尺寸令牌）。
+    Text {
+        x: UiMetrics.space-16 + UiMetrics.history-time-width + UiMetrics.space-16;
+        y: 0;
+        width: parent.width - self.x - UiMetrics.history-position-width
+            - UiMetrics.history-kind-width - UiMetrics.space-32;
+        height: parent.height;
+        text: root.book-title + " · " + root.file-label;
+        font-size: UiMetrics.ui-font-size;
+        color: Skin.text-primary;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    // 位置（打开时刻的章节与偏移）。
+    Text {
+        x: parent.width - UiMetrics.space-16 - UiMetrics.history-kind-width
+            - UiMetrics.history-position-width;
+        y: 0;
+        width: UiMetrics.history-position-width;
+        height: parent.height;
+        text: root.position-label;
+        font-size: UiMetrics.caption-font-size;
+        color: Skin.text-secondary;
+        horizontal-alignment: right;
+        vertical-alignment: center;
+    }
+
+    // 进入方式 tag（语义色由 Rust 判定）。
+    Tag {
+        x: parent.width - UiMetrics.space-16 - UiMetrics.history-kind-width;
+        y: (parent.height - UiMetrics.tag-height) / 2;
+        text: root.entry-kind-label;
+        tone: root.entry-kind-tone;
+    }
+
+    // 行尾「…」（打开这本书 / 清除这条）。
+    IconButton {
+        x: parent.width - UiMetrics.icon-button-size - UiMetrics.space-4;
+        y: (parent.height - UiMetrics.icon-button-size) / 2;
+        shape: Icons.more;
+        activated => {
+            root.row-menu(root.row-id);
+        }
+    }
+
+    // 整行点击 = 打开这本书。
+    TouchArea {
+        clicked => {
+            root.open-book(root.book-id);
+        }
+    }
+}
+
+// 阅读历史按书聚合的组头（V1.1；设计稿 H2）。
+component HistoryGroupHeadView inherits Rectangle {
+    in property <string> book-id: "";
+    in property <string> book-title: "";
+    in property <int> count: 0;
+    in property <string> last-time-label: "";
+    in property <bool> expanded: false;
+    callback toggled(string);
+    callback open-book(string);
+    callback group-menu(string);
+
+    height: UiMetrics.history-group-head-height;
+    background: Skin.layer-01;
+
+    // 展开箭头（`Path` 无 rotation，用两种既有形状切换）。
+    Icon {
+        x: UiMetrics.space-16;
+        y: (parent.height - UiMetrics.tree-arrow-size) / 2;
+        size: UiMetrics.tree-arrow-size;
+        shape: root.expanded ? Icons.chevron-down : Icons.chevron-right;
+        color: Skin.text-secondary;
+    }
+
+    Text {
+        x: UiMetrics.space-16 + UiMetrics.tree-arrow-size + UiMetrics.space-8;
+        y: 0;
+        width: parent.width - self.x - UiMetrics.history-position-width
+            - UiMetrics.icon-button-size - UiMetrics.space-32;
+        height: parent.height;
+        text: root.book-title;
+        font-size: UiMetrics.ui-font-size;
+        font-weight: 600;
+        color: Skin.text-primary;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    // 次数 tag（Rust 给次数，界面只渲染）。
+    Tag {
+        x: parent.width - UiMetrics.space-16 - UiMetrics.history-position-width
+            - UiMetrics.icon-button-size;
+        y: (parent.height - UiMetrics.tag-height) / 2;
+        text: root.count;
+        tone: 1;
+    }
+
+    // 最近时间。
+    Text {
+        x: parent.width - UiMetrics.space-16 - UiMetrics.history-position-width;
+        y: 0;
+        width: UiMetrics.history-position-width;
+        height: parent.height;
+        text: root.last-time-label;
+        font-family: "monospace";
+        font-size: UiMetrics.caption-font-size;
+        color: Skin.text-secondary;
+        horizontal-alignment: right;
+        vertical-alignment: center;
+    }
+
+    IconButton {
+        x: parent.width - UiMetrics.icon-button-size - UiMetrics.space-4;
+        y: (parent.height - UiMetrics.icon-button-size) / 2;
+        shape: Icons.more;
+        activated => {
+            root.group-menu(root.book-id);
+        }
+    }
+
+    TouchArea {
+        clicked => {
+            root.toggled(root.book-id);
+        }
+    }
+}
+
 component ShelfPage inherits Rectangle {
+    // ---- 分类侧栏（V1.1）----
+    in property <[CategoryRow]> categories: [];
+    in property <bool> sidebar-visible: false;
+    in property <string> selected-category-id: "";
+    // 行内菜单（V1.1）：菜单挂在第几行（Rust 依据 id 算出下标；-1 = 未打开）。
+    in property <string> category-menu-id: "";
+    in property <int> category-menu-offset: -1;
+    callback category-menu-picked(string, string);
+    callback category-menu-close();
+    // 分类操作对话框（新建 / 重命名 / 移动 / 删除）由 Rust 驱动。
+    callback category-select(string);
+    callback category-toggle(string);
+    callback category-menu(string);
+    callback category-add();
+    // 批量导入（V1.1）：多选 / 选目录 + 「按目录名归类」询问。
+    callback import-batch();
+    // ---- 阅读历史（V1.1；设计稿 H1–H3）----
+    in property <bool> history-mode: false;
+    in property <[HistoryRow]> history-rows: [];
+    in property <[HistoryGroupHead]> history-groups: [];
+    in property <bool> history-grouped: false;
+    in property <bool> history-empty: false;
+    in property <string> history-empty-title: "";
+    in property <string> history-empty-desc: "";
+    in property <string> history-count: "";
+    callback history-open(string);
+    callback history-row-menu(string);
+    callback history-group-toggle(string);
+    callback history-group-menu(string);
+    callback history-view-set(bool);
+    // 「最近阅读」入口：进入 / 返回书架（Q5：不进分类侧栏）。
+    callback history-toggle();
+    // 「清空历史」：弹确认，确认后才删（设计稿 H3）。
+    callback history-clear();
     in property <[BookRow]> rows: [];
     in property <bool> is-empty: false;
     in property <string> empty-title: "";
@@ -1491,6 +2279,246 @@ component ShelfPage inherits Rectangle {
 
     background: transparent;
 
+    // ---- 分类侧栏（V1.1；宽度与断点由 Rust 投影，界面不自算）----
+    // 层级靠「缩进 + 1px 分隔线」表达，不加卡片阴影（设计稿 §1）。
+    if root.sidebar-visible : Rectangle {
+        x: 0;
+        y: 0;
+        width: UiMetrics.sidebar-width;
+        height: parent.height;
+        background: Skin.layer-01;
+
+        // 侧栏头（标题 + 新建）。
+        // 宽度按「侧栏宽 - 左右固定留白 - 按钮槽」给出：不用 `parent.width - self.width`
+        // （那会让 Text 宽度依赖自身 preferred-width，而父宽又含它 → 绑定循环，实测报错）。
+        Text {
+            x: UiMetrics.space-16;
+            y: 0;
+            width: UiMetrics.sidebar-width - UiMetrics.space-16 * 2
+                - UiMetrics.icon-button-size - UiMetrics.space-8;
+            height: UiMetrics.sidebar-head-height;
+            text: "分类";
+            font-size: UiMetrics.ui-font-size;
+            font-weight: 600;
+            color: Skin.text-primary;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        IconButton {
+            x: parent.width - UiMetrics.icon-button-size - UiMetrics.space-8;
+            y: (UiMetrics.sidebar-head-height - UiMetrics.icon-button-size) / 2;
+            shape: Icons.info;
+            tip-below: true;
+            // 语义（新建）由 Rust 的可访问名称给出；此处只转发动作。
+            activated => {
+                root.category-add();
+            }
+        }
+
+        // 树区（可滚动；行高与缩进全走 UiMetrics）。
+        Flickable {
+            x: 0;
+            y: UiMetrics.sidebar-head-height;
+            width: parent.width;
+            height: parent.height - UiMetrics.sidebar-head-height;
+            viewport-height: root.categories.length * UiMetrics.sidebar-row-height;
+            viewport-y: clamp(0px, self.height - self.viewport-height, self.y);
+
+            for row[index] in root.categories : CategoryRowView {
+                x: 0;
+                y: index * UiMetrics.sidebar-row-height;
+                width: parent.width;
+                row-id: row.id;
+                row-name: row.name;
+                row-depth: row.depth;
+                direct-count: row.direct-count;
+                total-count: row.total-count;
+                has-children: row.has-children;
+                expanded: row.expanded;
+                selected: row.selected;
+                move-blocked: row.move-blocked;
+                virtual-row: row.virtual-row;
+                row-kind: row.kind;
+                row-clicked(id) => {
+                    root.category-select(id);
+                }
+                toggle(id) => {
+                    root.category-toggle(id);
+                }
+                row-menu(id) => {
+                    root.category-menu(id);
+                }
+            }
+            ScrollBar {
+                x: parent.width - UiMetrics.scrollbar-gutter;
+                y: 0;
+                height: parent.height;
+                ratio: root.categories.length == 0 ? 0
+                    : (parent.height / (root.categories.length * UiMetrics.sidebar-row-height));
+                handle-ratio: clamp(0.1, 1, self.ratio);
+            }
+        }
+
+        // 行内菜单条（V1.1；打开的分类 id 由 Rust 给出，空串 = 未打开）。
+        if root.category-menu-id != "" : CategoryMenuStrip {
+            x: 0;
+            y: UiMetrics.sidebar-head-height
+                + root.category-menu-offset * UiMetrics.sidebar-row-height
+                + UiMetrics.sidebar-row-height;
+            width: parent.width;
+            target-id: root.category-menu-id;
+            picked(action, id) => {
+                root.category-menu-picked(action, id);
+            }
+            closed => {
+                root.category-menu-close();
+            }
+        }
+
+        // 右侧 1px 分隔线。
+        Rectangle {
+            x: parent.width - UiMetrics.hairline;
+            y: 0;
+            width: UiMetrics.hairline;
+            height: parent.height;
+            background: Skin.border-subtle;
+        }
+    }
+
+    // ---- 阅读历史视图（V1.1；设计稿 H1–H3）----
+    // 与书架列表**互斥**：进入历史时不显示分类侧栏（Q5 裁定）。
+    if root.history-mode : Rectangle {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        background: transparent;
+
+        // 页头（标题 + 计数 + 视图切换 + 清空）。
+        Rectangle {
+            x: 0;
+            y: 0;
+            width: parent.width;
+            height: UiMetrics.page-header-height;
+            background: transparent;
+
+            Text {
+                x: UiMetrics.space-16;
+                y: 0;
+                width: parent.width / 2;
+                height: parent.height;
+                text: "最近阅读";
+                font-size: UiMetrics.title-font-size;
+                font-weight: 600;
+                color: Skin.text-primary;
+                vertical-alignment: center;
+            }
+            Text {
+                x: parent.width / 2;
+                y: 0;
+                width: parent.width / 4;
+                height: parent.height;
+                text: root.history-count;
+                font-size: UiMetrics.label-font-size;
+                color: Skin.text-secondary;
+                vertical-alignment: center;
+            }
+            // 「清空历史」：**先弹确认**（H3），确认后才删 —— 直接删是数据事故。
+            TextButton {
+                x: parent.width - UiMetrics.space-16 - UiMetrics.button-height-compact
+                    - UiMetrics.space-8 - UiMetrics.button-height-compact;
+                y: (parent.height - UiMetrics.button-height-compact) / 2;
+                variant: 3;
+                compact: true;
+                caption: "清空历史";
+                enabled: !root.history-empty;
+                activated => {
+                    root.history-clear();
+                }
+            }
+            TextButton {
+                x: parent.width - UiMetrics.space-16 - UiMetrics.button-height-compact;
+                y: (parent.height - UiMetrics.button-height-compact) / 2;
+                variant: 1;
+                compact: true;
+                caption: root.history-grouped ? "按时间" : "按书聚合";
+                activated => {
+                    root.history-view-set(!root.history-grouped);
+                }
+            }
+        }
+
+        // 流水视图（H1）或按书聚合视图（H2）。
+        if root.history-grouped : Flickable {
+            x: 0;
+            y: UiMetrics.page-header-height;
+            width: parent.width;
+            height: parent.height - UiMetrics.page-header-height;
+            viewport-width: self.width;
+            viewport-height: root.history-groups.length * UiMetrics.history-group-head-height;
+            interactive: self.viewport-height > self.height;
+
+            for group[index] in root.history-groups : HistoryGroupHeadView {
+                x: 0;
+                y: index * UiMetrics.history-group-head-height;
+                width: parent.width;
+                book-id: group.book-id;
+                book-title: group.book-title;
+                count: group.count;
+                last-time-label: group.last-time-label;
+                expanded: group.expanded;
+                toggled(id) => {
+                    root.history-group-toggle(id);
+                }
+                group-menu(id) => {
+                    root.history-group-menu(id);
+                }
+            }
+        }
+        if !root.history-grouped : Flickable {
+            x: 0;
+            y: UiMetrics.page-header-height;
+            width: parent.width;
+            height: parent.height - UiMetrics.page-header-height;
+            viewport-width: self.width;
+            viewport-height: root.history-rows.length * UiMetrics.history-row-height;
+            interactive: self.viewport-height > self.height;
+
+            for row[index] in root.history-rows : HistoryRowView {
+                x: 0;
+                y: index * UiMetrics.history-row-height;
+                width: parent.width;
+                row-id: row.id;
+                book-id: row.book-id;
+                time-label: row.time-label;
+                book-title: row.book-title;
+                file-label: row.file-label;
+                position-label: row.position-label;
+                entry-kind-label: row.entry-kind-label;
+                entry-kind-tone: row.entry-kind-tone;
+                open-book(id) => {
+                    root.history-open(id);
+                }
+                row-menu(id) => {
+                    root.history-row-menu(id);
+                }
+            }
+        }
+
+        // 空态（设计稿 H1 固定文案；文案由 Rust 给出）。
+        if root.history-empty : EmptyState {
+            x: 0;
+            y: UiMetrics.page-header-height;
+            width: parent.width;
+            height: parent.height - UiMetrics.page-header-height;
+            shape: Icons.book;
+            title: root.history-empty-title;
+            description: root.history-empty-desc;
+            notes: [];
+            action-label: "";
+        }
+    }
+
     // 列可见性（§2.5 断点：窗口 < 960 隐藏「最近阅读」列）。
     // 紧凑档（<720）：设计 §2.5 规定「书架切卡片视图」——
     // 表格的固定列（状态/进度/最近/操作，合计约 40 个 em）会把书名列压到极窄，
@@ -1500,24 +2528,28 @@ component ShelfPage inherits Rectangle {
     private property <bool> recent-visible: root.width >= UiMetrics.breakpoint-compact;
     // 列表区起始 y（页头 80 + 可选通知条 96）。
     private property <length> list-top: UiMetrics.page-header-height + (root.notice ? UiMetrics.space-48 * 2 : 0px);
+    // 侧栏可见时列表区整体右移并收窄（V1.1）。
+    private property <length> list-left: root.sidebar-visible ? UiMetrics.sidebar-width : 0px;
+    // 宽度由列表区自身给出（`private property` 内不可引用 `parent`）。
+    private property <length> list-width: root.width - root.list-left;
     // 表格列位置（从右向左排布，右侧固定宽列）。
-    private property <length> col-actions-x: root.width - UiMetrics.space-16 - UiMetrics.column-actions-width;
+    private property <length> col-actions-x: root.list-width - UiMetrics.space-16 - UiMetrics.column-actions-width;
     private property <length> col-recent-x: root.col-actions-x - (root.recent-visible ? UiMetrics.column-recent-width : 0px);
     private property <length> col-progress-x: root.col-recent-x - UiMetrics.column-progress-width;
     private property <length> col-status-x: root.col-progress-x - UiMetrics.column-status-width;
     // 卡片模式菜单条的可用右边界（可视区内；右侧留出滚动条与页边距）。
-    private property <length> cards-menu-max-x: root.width - UiMetrics.scrollbar-gutter - 2 * UiMetrics.space-16;
+    private property <length> cards-menu-max-x: root.list-width - UiMetrics.scrollbar-gutter - 2 * UiMetrics.space-16;
     // 卡片列数（3 / 2 / 1）。
-    private property <int> card-columns: root.width >= (UiMetrics.card-width * 3 + UiMetrics.space-32 + UiMetrics.space-32) ? 3 : (root.width >= (UiMetrics.card-width * 2 + UiMetrics.space-16 + UiMetrics.space-32) ? 2 : 1);
+    private property <int> card-columns: root.list-width >= (UiMetrics.card-width * 3 + UiMetrics.space-32 + UiMetrics.space-32) ? 3 : (root.list-width >= (UiMetrics.card-width * 2 + UiMetrics.space-16 + UiMetrics.space-32) ? 2 : 1);
     private property <length> card-gap: UiMetrics.space-16;
     private property <length> cards-height: Math.floor((root.rows.length + root.card-columns - 1) / root.card-columns) * (UiMetrics.card-height + root.card-gap) + root.card-gap + (root.menu-index >= 0 ? UiMetrics.list-row-height + UiMetrics.space-4 : 0px);
     private property <length> table-height: root.rows.length * UiMetrics.table-row-height + (root.menu-index >= 0 ? UiMetrics.list-row-height : 0px) + UiMetrics.space-16;
 
     // ---- S4：失效源文件通知（宽 = 内容区）----
     if root.notice : InlineNotice {
-        x: UiMetrics.space-16;
+        x: root.list-left + UiMetrics.space-16;
         y: UiMetrics.page-header-height;
-        width: parent.width - 2 * UiMetrics.space-16;
+        width: root.list-width - 2 * UiMetrics.space-16;
         height: UiMetrics.space-48 * 2;
         tone: 4;
         title: root.notice-title;
@@ -1534,9 +2566,9 @@ component ShelfPage inherits Rectangle {
     // ---- 列表区（表格 / 卡片；可滚动）----
     list-view := Flickable {
         visible: !root.is-empty;
-        x: 0;
+        x: root.list-left;
         y: root.list-top;
-        width: parent.width;
+        width: root.list-width;
         height: parent.height - root.list-top;
         viewport-width: self.width;
         viewport-height: root.view == 0 ? root.table-height + UiMetrics.table-header-height : root.cards-height;
@@ -1916,9 +2948,9 @@ component ShelfPage inherits Rectangle {
 
     // ---- S3：空态 ----
     if root.is-empty : EmptyState {
-        x: 0;
+        x: root.list-left;
         y: UiMetrics.page-header-height;
-        width: parent.width;
+        width: root.list-width;
         height: parent.height - UiMetrics.page-header-height;
         shape: Icons.book;
         title: root.empty-title;
@@ -1960,13 +2992,33 @@ component ShelfPage inherits Rectangle {
             font-size: UiMetrics.title-font-size;
             font-weight: 600;
         }
-        import-btn := TextButton {
+        // 「批量导入」（V1.1）：多选文件 / 选目录，导入前询问是否按目录名归类。
+        batch-btn := TextButton {
             x: parent.width - UiMetrics.space-16 - self.width;
+            y: (parent.height - self.height) / 2;
+            variant: 1;
+            caption: "批量导入…";
+            activated => {
+                root.import-batch();
+            }
+        }
+        import-btn := TextButton {
+            x: batch-btn.x - UiMetrics.space-16 - self.width;
             y: (parent.height - self.height) / 2;
             variant: 0;
             caption: "导入 TXT…";
             activated => {
                 root.import-txt();
+            }
+        }
+        // 「最近阅读」（V1.1；Q5 裁定：**独立菜单项**，不在分类侧栏）。
+        history-btn := TextButton {
+            x: import-btn.x - UiMetrics.space-16 - self.width;
+            y: (parent.height - self.height) / 2;
+            variant: root.history-mode ? 0 : 1;
+            caption: root.history-mode ? "返回书架" : "最近阅读";
+            activated => {
+                root.history-toggle();
             }
         }
         sort-field := Rectangle {
@@ -2089,6 +3141,14 @@ component ReaderPage inherits Rectangle {
     in property <bool> show-floating: false;
     in property <bool> gesture-mode: false;
     in property <[string]> page-lines: [];
+    // ---- 全局背景图（V1.1；设计稿 B1–B3）----
+    // `background-path` 由 Rust 注入（数据目录下的绝对路径）。
+    in property <image> background-image;
+    in property <bool> background-set: false;
+    // 0=覆盖铺满 1=原始尺寸平铺 2=原始尺寸居中（FitMode 序号，Rust 给）。
+    in property <int> background-fit: 0;
+    // 遮罩 alpha（0–255；Rust 已从千分比换算，界面不再换算）。
+    in property <int> background-scrim: 0;
     in property <length> line-pitch: 0px;
     in property <length> body-font-size: 0px;
     in property <string> body-font-family: "";
@@ -2142,6 +3202,47 @@ component ReaderPage inherits Rectangle {
     callback wheel-input(length, length);
 
     background: Skin.background;
+
+    // ---- 全局阅读背景图（V1.1；设计稿 B1–B3）----
+    //
+    // 三层结构（图 + 遮罩 + 正文），声明在**工具条之前**，
+    // 保证正文永远画在背景之上。
+    //
+    // 缩放口径由 `background-fit`（FitMode 序号）映射，**判定在 Rust**
+    // （0=覆盖铺满 1=原始尺寸平铺 2=原始尺寸居中）；这里只按序号选
+    // Slint 的三种 `image-fit` 值，不做缩放算法。
+    if root.background-set : Rectangle {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        background: transparent;
+
+        Image {
+            x: 0;
+            y: 0;
+            width: parent.width;
+            height: parent.height;
+            source: root.background-image;
+            image-fit: root.background-fit == 0 ? cover
+                : (root.background-fit == 1 ? preserve : contain);
+            // 平铺时 Slint 不支持 repeat，故用 `preserve` 并由 Rust 预先
+            // 在图片本身处理（本期限制：不支持平铺，退化为原始尺寸居中）。
+            image-rendering: smooth;
+        }
+
+        // 遮罩层：保证正文可读（alpha 由 Rust 从千分比换算）。
+        Rectangle {
+            x: 0;
+            y: 0;
+            width: parent.width;
+            height: parent.height;
+            // 遮罩颜色 + `opacity` 表达不透明度（Slint 无 alpha 乘法表达式）。
+            // `background-scrim` 是 0–255 的 alpha（Rust 从千分比换算）。
+            background: #000000;
+            opacity: root.background-scrim / 255;
+        }
+    }
 
     // 工具条高度（沉浸态 0；收起态 0；紧凑档 40）。
     // 收起态仍保留一行高度（只放「展开工具条」按钮），避免窄窗下按钮压住正文；
@@ -3280,6 +4381,57 @@ component SettingsPage inherits Rectangle {
                     horizontal-alignment: right;
                 }
 
+                // kind 8：基色输入（V1.1；设计稿 T1「四个取色器」）。
+                //
+                // 左色块**直接用该基色**填充（`swatch` 由 Rust 投影时算好），
+                // 右侧是可编辑的 `#RRGGBB` 文本；**校验在 Rust**，
+                // 界面不做颜色解析（也不判断对比度）。
+                if row.kind == 8 : Rectangle {
+                    x: root.control-x;
+                    y: UiMetrics.space-8 + (UiMetrics.list-row-height - UiMetrics.swatch-size) / 2;
+                    width: UiMetrics.swatch-size;
+                    height: UiMetrics.swatch-size;
+                    border-radius: UiMetrics.space-4;
+                    // 无效色值时用 `skin.border-strong` 描边示意（`row.effective` 由 Rust 判定）。
+                    background: row.effective ? row.swatch : Skin.field-01;
+                    border-width: UiMetrics.hairline;
+                    border-color: row.effective ? Skin.border-subtle : Skin.support-error;
+                }
+                if row.kind == 8 : TextField {
+                    x: root.control-x + UiMetrics.swatch-size + UiMetrics.space-8;
+                    y: UiMetrics.space-8;
+                    width: parent.width - self.x - UiMetrics.space-16;
+                    // 提示语含格式要求（`#RRGGBB`）；实际校验在 Rust。
+                    label: row.value;
+                    edited(text) => {
+                        root.set-text(row.key, text);
+                    }
+                }
+
+                // kind 9：通用动作行（V1.1；如「选择背景图…」/「清除背景图」）。
+                //
+                // 具体动作由 **Rust 按 key 分派**（`.slint` 不认识业务含义，
+                // 也不判断文件是否存在）。
+                if row.kind == 9 : TextButton {
+                    x: root.control-x;
+                    y: UiMetrics.space-8;
+                    variant: 1;
+                    compact: true;
+                    caption: row.label;
+                    activated => {
+                        root.cycle(row.key);
+                    }
+                }
+                if row.kind == 9 : Text {
+                    x: root.control-x;
+                    y: UiMetrics.space-8 + UiMetrics.space-16 + UiMetrics.space-4;
+                    width: parent.width - self.x - UiMetrics.space-16;
+                    text: row.value;
+                    font-size: UiMetrics.caption-font-size;
+                    color: Skin.text-placeholder;
+                    overflow: elide;
+                }
+
                 // kind 6：动作行（如「清理章节索引与分页缓存…」）。
                 if row.kind == 6 : TextButton {
                     x: root.control-x;
@@ -3701,6 +4853,49 @@ export component AppWindow inherits Window {
     in property <string> shelf-notice-title: "";
     in property <string> shelf-notice-body: "";
     in property <int> shelf-menu-index: -1;
+    // 分类侧栏（V1.1）：行投影由 Rust 给出；可见性与选中态也是 Rust 判定。
+    in property <[CategoryRow]> category-rows: [];
+    in property <bool> shelf-sidebar-visible: false;
+    in property <string> shelf-selected-category: "";
+    // 分类行内菜单（V1.1）。
+    in property <string> category-menu-id: "";
+    in property <int> category-menu-offset: -1;
+    // 分类操作浮层（V1.1）。can-confirm 由 Rust 判定（未选去向 / 名称为空 → 禁用）。
+    in property <bool> category-dialog-open: false;
+    in property <int> category-dialog-mode: 0;
+    in property <string> category-dialog-title: "";
+    in property <string> category-dialog-parent: "";
+    in property <string> category-dialog-value: "";
+    in property <string> category-dialog-error: "";
+    in property <string> category-dialog-note: "";
+    in property <string> category-dialog-label: "保存";
+    in property <bool> category-dialog-can-confirm: false;
+    in property <[ChoiceRow]> category-target-rows: [];
+    in property <int> category-target-index: -1;
+    // 导入归类浮层（V1.1；设计稿 C7）。
+    in property <bool> organize-dialog-open: false;
+    in property <string> organize-title: "";
+    in property <string> organize-scope: "";
+    in property <string> organize-summary: "";
+    in property <[OrganizeRow]> organize-preview: [];
+    in property <bool> organize-remember: false;
+    // 全局阅读背景图（V1.1；设计稿 B1–B3）。
+    // 图片本身由 Rust 加载后注入（`slint::Image`）；路径不进界面。
+    in property <image> reader-background-image;
+    // 三项都由 Rust 投影：`fit` 是 FitMode 序号、`scrim` 是 0–255 的 alpha
+    // （界面不换算千分比，也**不参与分页** —— 分页只看文字流）。
+    in property <bool> reader-background-set: false;
+    in property <int> reader-background-fit: 0;
+    in property <int> reader-background-scrim: 0;
+    // 阅读历史（V1.1；设计稿 H1–H3）。
+    in property <bool> history-mode: false;
+    in property <[HistoryRow]> history-rows: [];
+    in property <[HistoryGroupHead]> history-groups: [];
+    in property <bool> history-grouped: false;
+    in property <bool> history-empty: false;
+    in property <string> history-empty-title: "";
+    in property <string> history-empty-desc: "";
+    in property <string> history-count: "";
     // 设置
     in property <[SettingsRow]> settings-rows: [];
     in property <string> settings-note: "";
@@ -3789,6 +4984,31 @@ export component AppWindow inherits Window {
     callback shelf-row-action(string, string);
     callback shelf-relink-all();
     callback shelf-notice-dismiss();
+    // 分类侧栏（V1.1）：选中 / 折叠 / 行菜单 / 新建 / 批量导入。
+    callback shelf-category-select(string);
+    callback shelf-category-toggle(string);
+    callback shelf-category-menu(string);
+    callback shelf-category-add();
+    callback shelf-import-batch();
+    // 分类行内菜单（V1.1）。
+    callback category-menu-picked(string, string);
+    callback category-menu-close();
+    // 分类操作浮层（V1.1）。
+    callback category-dialog-name-edited(string);
+    callback category-dialog-target-picked(int);
+    callback category-dialog-confirm();
+    // 导入归类浮层（V1.1）。
+    callback organize-remembered(bool);
+    callback organize-import-plain();
+    callback organize-import-organized();
+    // 阅读历史（V1.1）。
+    callback shelf-history-toggle();
+    callback shelf-history-clear();
+    callback shelf-history-open(string);
+    callback shelf-history-row-menu(string);
+    callback shelf-history-group-toggle(string);
+    callback shelf-history-group-menu(string);
+    callback shelf-history-view-set(bool);
     // 设置
     callback settings-cycle(string);
     callback settings-set-int(string, int);
@@ -3985,6 +5205,61 @@ export component AppWindow inherits Window {
         notice-title: root.shelf-notice-title;
         notice-body: root.shelf-notice-body;
         menu-index: root.shelf-menu-index;
+        categories: root.category-rows;
+        sidebar-visible: root.shelf-sidebar-visible;
+        selected-category-id: root.shelf-selected-category;
+        category-menu-id: root.category-menu-id;
+        category-menu-offset: root.category-menu-offset;
+        history-mode: root.history-mode;
+        history-rows: root.history-rows;
+        history-groups: root.history-groups;
+        history-grouped: root.history-grouped;
+        history-empty: root.history-empty;
+        history-empty-title: root.history-empty-title;
+        history-empty-desc: root.history-empty-desc;
+        history-count: root.history-count;
+        category-select(id) => {
+            root.shelf-category-select(id);
+        }
+        category-toggle(id) => {
+            root.shelf-category-toggle(id);
+        }
+        category-menu(id) => {
+            root.shelf-category-menu(id);
+        }
+        category-add => {
+            root.shelf-category-add();
+        }
+        import-batch => {
+            root.shelf-import-batch();
+        }
+        category-menu-picked(action, id) => {
+            root.category-menu-picked(action, id);
+        }
+        category-menu-close => {
+            root.category-menu-close();
+        }
+        history-open(id) => {
+            root.shelf-history-open(id);
+        }
+        history-row-menu(id) => {
+            root.shelf-history-row-menu(id);
+        }
+        history-group-toggle(id) => {
+            root.shelf-history-group-toggle(id);
+        }
+        history-group-menu(id) => {
+            root.shelf-history-group-menu(id);
+        }
+        history-view-set(grouped) => {
+            root.shelf-history-view-set(grouped);
+        }
+        history-toggle => {
+            root.shelf-history-toggle();
+        }
+        history-clear => {
+            root.shelf-history-clear();
+        }
         import-txt => {
             root.shelf-import();
         }
@@ -4028,6 +5303,10 @@ export component AppWindow inherits Window {
         show-floating: root.reader-floating-toolbar;
         gesture-mode: root.reader-gesture-mode;
         page-lines: root.reader-page-lines;
+        background-image: root.reader-background-image;
+        background-set: root.reader-background-set;
+        background-fit: root.reader-background-fit;
+        background-scrim: root.reader-background-scrim;
         line-pitch: root.reader-line-pitch;
         body-font-size: root.reader-body-font-size;
         body-font-family: root.reader-body-font-family;
@@ -4394,6 +5673,61 @@ export component AppWindow inherits Window {
         }
         saved(text) => {
             root.dialog-rename-save(text);
+        }
+    }
+
+    // ---- 分类操作浮层（V1.1；新建/重命名、删除去向、移动到分类）----
+    if root.category-dialog-open : CategoryActionDialog {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        mode: root.category-dialog-mode;
+        title: root.category-dialog-title;
+        parent-line: root.category-dialog-parent;
+        name-value: root.category-dialog-value;
+        error-line: root.category-dialog-error;
+        note-line: root.category-dialog-note;
+        confirm-label: root.category-dialog-label;
+        can-confirm: root.category-dialog-can-confirm;
+        targets: root.category-target-rows;
+        target-index: root.category-target-index;
+        name-edited(text) => {
+            root.category-dialog-name-edited(text);
+        }
+        target-picked(index) => {
+            root.category-dialog-target-picked(index);
+        }
+        confirmed => {
+            root.category-dialog-confirm();
+        }
+        cancelled => {
+            root.dialog-cancel();
+        }
+    }
+
+    // ---- 导入归类浮层（V1.1）----
+    if root.organize-dialog-open : ImportOrganizeDialog {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        title: root.organize-title;
+        scope-line: root.organize-scope;
+        summary-line: root.organize-summary;
+        preview: root.organize-preview;
+        remember: root.organize-remember;
+        remembered(value) => {
+            root.organize-remembered(value);
+        }
+        import-plain => {
+            root.organize-import-plain();
+        }
+        import-organized => {
+            root.organize-import-organized();
+        }
+        cancelled => {
+            root.dialog-cancel();
         }
     }
 
