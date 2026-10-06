@@ -28,9 +28,10 @@ pub mod position;
 
 pub use chapter::{
     chapter_scan_session, generate_anchor, map_source_error, position_at_offset, restore_position,
-    scan_chapters_from_source, scan_chapters_from_source_with_encoding, virtual_chapter_index, AnchorRecovery, AnchorSearch, AnchorStatus,
-    ChapterIndex, ChapterRange, ChapterRule, RestoredPosition, ScanStep, ANCHOR_QUOTE_CHARS,
-    DEFAULT_ANCHOR_RADIUS_BYTES, MAX_ANCHOR_RADIUS_BYTES, VIRTUAL_CHAPTER_TITLE,
+    scan_chapters_from_source, scan_chapters_from_source_with_encoding, virtual_chapter_index,
+    AnchorRecovery, AnchorSearch, AnchorStatus, ChapterIndex, ChapterRange, ChapterRule,
+    RestoredPosition, ScanStep, ANCHOR_QUOTE_CHARS, DEFAULT_ANCHOR_RADIUS_BYTES,
+    MAX_ANCHOR_RADIUS_BYTES, VIRTUAL_CHAPTER_TITLE,
 };
 pub use content_unit::{ContentUnit, CONTENT_UNIT_VERSION, SINGLE_CONTENT_UNIT_ID};
 pub use error::{ErrorCode, NrError, NrResult, ERROR_CODE_COUNT};

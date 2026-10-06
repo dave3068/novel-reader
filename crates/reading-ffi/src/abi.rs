@@ -56,7 +56,7 @@ pub const CONTENT_UNIT_SINGLE: u32 = 1;
 ///
 /// 与 `results/gates/gate-0-baseline.md` §2.7 逐项一致：16 项最小接口 +
 /// `nr_release_buffer` + `nr_abi_version`。
-pub const ABI_ENTRY_NAMES: [&str; 19] = [
+pub const ABI_ENTRY_NAMES: [&str; 40] = [
     "nr_abi_version",
     "nr_engine_create",
     "nr_engine_destroy",
@@ -73,6 +73,32 @@ pub const ABI_ENTRY_NAMES: [&str; 19] = [
     "nr_invalidate_layout",
     "nr_rebuild_index",
     "nr_set_encoding",
+    // ---- V1.1 分类（加性契约修订；规格 P5 §3.1）----
+    "nr_list_categories",
+    "nr_create_category",
+    "nr_move_book_to_category",
+    "nr_delete_category",
+    // ---- V1.1 阅读历史（加性契约修订；规格 P5 §3.2）----
+    "nr_list_history",
+    "nr_clear_history_entry",
+    "nr_clear_history_for_book",
+    // ---- V1.1 自定义配色（加性契约修订；规格 P5 §3.3/§3.5）----
+    "nr_get_theme_base",
+    "nr_set_theme_base",
+    "nr_set_theme_enabled",
+    "nr_get_theme_token",
+    "nr_get_theme_contrast",
+    // ---- V1.1 全局背景图（加性契约修订；规格 P5 §3.4）----
+    "nr_get_background",
+    "nr_set_background",
+    "nr_set_background_scrim",
+    "nr_clear_background",
+    // ---- V1.1 书籍分类映射（筛选前置；规格 §3.1）----
+    "nr_category_move_targets",
+    "nr_rename_category",
+    "nr_move_category",
+    "nr_list_books_in_scope",
+    "nr_list_book_categories",
     "nr_cancel_request",
     "nr_get_last_error",
     "nr_release_buffer",
@@ -85,7 +111,7 @@ pub const ABI_VERSION_MACRO_TEXT: &str = "NR_ABI_VERSION";
 ///
 /// 与 [`ABI_ENTRY_NAMES`] 一一对应；`tests/header_parity.rs` 用它逐项比对
 /// `include/novel_reader.h` 的函数声明，使"头文件与 Rust 导出符号逐项一致"变成机器校验。
-pub const ABI_FUNCTIONS: [(&str, &str); 19] = [
+pub const ABI_FUNCTIONS: [(&str, &str); 40] = [
     ("nr_abi_version", "uint32_t(void)"),
     (
         "nr_engine_create",
@@ -140,6 +166,89 @@ pub const ABI_FUNCTIONS: [(&str, &str); 19] = [
     (
         "nr_set_encoding",
         "int32_t(uint64_t, uint64_t, uint32_t, nr_set_encoding_result *)",
+    ),
+    // ---- V1.1 分类（加性契约修订；规格 P5 §3.1）----
+    (
+        "nr_list_categories",
+        "int32_t(uint64_t, nr_category_batch *)",
+    ),
+    (
+        "nr_create_category",
+        "int32_t(uint64_t, int64_t, const uint8_t *, uint32_t, int64_t *)",
+    ),
+    (
+        "nr_move_book_to_category",
+        "int32_t(uint64_t, int64_t, int64_t)",
+    ),
+    (
+        "nr_delete_category",
+        "int32_t(uint64_t, int64_t, int32_t, int64_t, uint32_t *)",
+    ),
+    // ---- V1.1 阅读历史（加性契约修订；规格 P5 §3.2）----
+    (
+        "nr_list_history",
+        "int32_t(uint64_t, int64_t, int32_t, int32_t, nr_history_batch *)",
+    ),
+    (
+        "nr_clear_history_entry",
+        "int32_t(uint64_t, int64_t, uint32_t *)",
+    ),
+    (
+        "nr_clear_history_for_book",
+        "int32_t(uint64_t, int64_t, uint32_t *)",
+    ),
+    // ---- V1.1 自定义配色（加性契约修订；规格 P5 §3.3/§3.5）----
+    ("nr_get_theme_base", "int32_t(uint64_t, nr_theme_base *)"),
+    (
+        "nr_set_theme_base",
+        "int32_t(uint64_t, uint32_t, const uint8_t *, uint32_t)",
+    ),
+    ("nr_set_theme_enabled", "int32_t(uint64_t, uint32_t)"),
+    (
+        "nr_get_theme_token",
+        "int32_t(uint64_t, uint32_t, uint32_t, uint8_t *)",
+    ),
+    (
+        "nr_get_theme_contrast",
+        "int32_t(uint64_t, nr_theme_contrast_result *)",
+    ),
+    // ---- V1.1 全局背景图（加性契约修订；规格 P5 §3.4）----
+    (
+        "nr_get_background",
+        "int32_t(uint64_t, nr_background_batch *)",
+    ),
+    (
+        "nr_set_background",
+        "int32_t(uint64_t, const uint8_t *, uint32_t, const uint8_t *, uint32_t, int32_t, int32_t, nr_background_batch *)",
+    ),
+    (
+        "nr_set_background_scrim",
+        "int32_t(uint64_t, int32_t, nr_background_batch *)",
+    ),
+    (
+        "nr_clear_background",
+        "int32_t(uint64_t, const uint8_t *, uint32_t, nr_background_batch *)",
+    ),
+    // ---- V1.1 书籍分类映射（筛选前置；规格 §3.1）----
+    (
+        "nr_category_move_targets",
+        "int32_t(uint64_t, int64_t, nr_category_choice_batch *)",
+    ),
+    (
+        "nr_rename_category",
+        "int32_t(uint64_t, int64_t, const uint8_t *, uint32_t)",
+    ),
+    (
+        "nr_move_category",
+        "int32_t(uint64_t, int64_t, int64_t)",
+    ),
+    (
+        "nr_list_books_in_scope",
+        "int32_t(uint64_t, int32_t, int64_t, nr_id_list *)",
+    ),
+    (
+        "nr_list_book_categories",
+        "int32_t(uint64_t, nr_book_category_batch *)",
     ),
     ("nr_cancel_request", "int32_t(uint64_t, uint64_t)"),
     ("nr_get_last_error", "int32_t(uint64_t, nr_error_info *)"),
@@ -445,7 +554,11 @@ mod tests {
     fn entry_list_is_unique_and_matches_frozen_count() {
         let mut names = ABI_ENTRY_NAMES.to_vec();
         // 18 项冻结契约 + 向后兼容新增的 `nr_set_encoding`。
-        assert_eq!(names.len(), 19, "18 项冻结 + nr_set_encoding");
+        assert_eq!(
+            names.len(),
+            40,
+            "18 项冻结 + nr_set_encoding + V1.1 分类 4 + 历史 3 + 配色 5 + 背景 4 + 作用域书籍 1 + 书籍分类映射 1 + 分类改名/移动 2 + 移动目标 1 项"
+        );
         let total = names.len();
         names.sort_unstable();
         names.dedup();

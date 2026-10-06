@@ -11,8 +11,11 @@
 //!
 //! 全程不整本读取、不把正文留在内存里（章节扫描只保留标题行与区间）。
 
-use reading_index::{scan_chapters_with_encoding, anchor::{locate_anchor_bounded, make_anchor_from_source, AnchorSample}};
 use reading_index::chapter::{scan_chapters, ChapterScanSession, ScanStats};
+use reading_index::{
+    anchor::{locate_anchor_bounded, make_anchor_from_source, AnchorSample},
+    scan_chapters_with_encoding,
+};
 use reading_source::{SourceError, TextEncoding, TextSource};
 
 use crate::error::{ErrorCode, NrError, NrResult};

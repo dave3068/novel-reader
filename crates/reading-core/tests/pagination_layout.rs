@@ -107,8 +107,12 @@ fn pagination_forward_and_backward_pages_are_contiguous_without_gap_or_overlap()
         );
         assert_eq!(outcome.error_code, 0);
         // 每个 end 都必须真的落在字符边界（重新从数据源核对，而不是相信构造器）。
-        assert!(is_char_boundary_at(&source, 0, boundary.end_byte, TextEncoding::Utf8).expect("边界探测"));
-        validate_page_boundary(&source, boundary, total, TextEncoding::Utf8).expect("提交的边界必须合法");
+        assert!(
+            is_char_boundary_at(&source, 0, boundary.end_byte, TextEncoding::Utf8)
+                .expect("边界探测")
+        );
+        validate_page_boundary(&source, boundary, total, TextEncoding::Utf8)
+            .expect("提交的边界必须合法");
     }
 
     // 连续性：相邻页面首尾相接，既不丢字也不重字。
@@ -356,7 +360,9 @@ fn invalidate_by_signature_bumps_generation_and_drops_inflight() {
         start_byte: pages[0].start_byte,
         end_byte: pages[0].end_byte,
     };
-    assert!(cache.commit_page_boundary(&source, &current, TextEncoding::Utf8).is_committed());
+    assert!(cache
+        .commit_page_boundary(&source, &current, TextEncoding::Utf8)
+        .is_committed());
     let noop_same_generation = cache.invalidate(&other);
     assert_eq!(noop_same_generation.removed, 0);
     assert!(!noop_same_generation.generation_bumped);
@@ -416,7 +422,9 @@ fn stale_layout_result_rejected_by_layout_id_and_request_id() {
         request_id: newest_request_id,
         ..stale_old.clone()
     };
-    assert!(cache.commit_page_boundary(&source, &newest, TextEncoding::Utf8).is_committed());
+    assert!(cache
+        .commit_page_boundary(&source, &newest, TextEncoding::Utf8)
+        .is_committed());
 
     // 2) layout_id 过期：重排后旧世代的结果必须被丢弃。
     let previous_layout_id = cache.layout_id();

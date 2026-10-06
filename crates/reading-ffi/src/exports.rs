@@ -32,7 +32,14 @@ use crate::cancel;
 use crate::engine::{Engine, EngineConfig, OpenTxtSpec, PositionSpec};
 use crate::external::NrSourceProvider;
 use crate::handle;
-use crate::structs::{NrBookmarkInput, NrBoundaryResult, NrChapterBatch, NrEngineConfig, NrErrorInfo, NrLayoutSignature, NrOpenRequest, NrOpenResult, NrPageBoundarySubmission, NrPosition, NrPositionResult, NrRebuildResult, NrSetEncodingResult, NrWindow};
+use crate::structs::{
+    NrBackground, NrBackgroundBatch, NrBookCategory, NrBookCategoryBatch, NrBookmarkInput,
+    NrBoundaryResult, NrCategory, NrCategoryBatch, NrCategoryChoice, NrCategoryChoiceBatch,
+    NrChapterBatch, NrEngineConfig, NrErrorInfo, NrHistory, NrHistoryBatch, NrIdList,
+    NrLayoutSignature, NrOpenRequest, NrOpenResult, NrPageBoundarySubmission, NrPosition,
+    NrPositionResult, NrRebuildResult, NrSetEncodingResult, NrThemeBase, NrThemeContrastResult,
+    NrWindow,
+};
 
 /// 在引擎互斥锁下执行一次调用，并把任意 panic 转成 `NR_ERR_INTERNAL`。
 fn with_engine(handle_id: u64, body: impl FnOnce(&mut Engine) -> NrResult<()>) -> i32 {
@@ -665,6 +672,748 @@ fn encoding_code_of(encoding: TextEncoding) -> u32 {
     }
 }
 
+/// 列出分类树（`nr_list_categories`；V1.1，规格 P5 §3.1）。
+///
+/// 一次性返回**整棵树**（定长行 + 名称字节池），避免逐条查询的 JNI 往返。
+/// 排序与层级由核心给出（`categories::project_tree`），调用方不得自行排序。
+///
+/// # Safety
+///
+/// `out_batch` 必须指向可写的 [`NrCategoryBatch`]（可为 `NULL`：此时只做校验不写回执）。
+#[no_mangle]
+pub unsafe extern "C" fn nr_list_categories(engine: u64, out_batch: *mut NrCategoryBatch) -> i32 {
+    with_engine(engine, |engine| {
+        let data = engine.category_rows()?;
+        // 布局与 `chapter_batch` **同构**：定长行在头部、名称字节紧随其后，
+        // 偏移用**游标**从行区末尾起算（不做事后平移 —— 那种写法一旦字段
+        // 重排就会静默错位）。
+        let row_size = std::mem::size_of::<NrCategory>();
+        let mut bytes: Vec<u8> = Vec::with_capacity(data.rows.len() * row_size + data.bytes.len());
+        let mut pool: Vec<u8> = Vec::with_capacity(data.bytes.len());
+        let mut cursor = (data.rows.len() * row_size) as u32;
+        for row in &data.rows {
+            pool.extend_from_slice(
+                &data.bytes
+                    [row.name_offset as usize..row.name_offset as usize + row.name_len as usize],
+            );
+            bytes.extend_from_slice(&struct_bytes(&NrCategory {
+                id: row.id,
+                parent_id: row.parent_id,
+                direct_book_count: row.direct_book_count,
+                total_book_count: row.total_book_count,
+                depth: row.depth,
+                name_offset: cursor,
+                name_len: row.name_len,
+                reserved0: 0,
+            }));
+            cursor += row.name_len;
+        }
+        bytes.extend_from_slice(&pool);
+        write_out(
+            out_batch,
+            NrCategoryBatch {
+                count: data.count,
+                reserved0: 0,
+                bytes: NrBuffer::from_vec(bytes),
+            },
+        )
+    })
+}
+
+/// 新建分类（`nr_create_category`；V1.1）。
+///
+/// `parent_id` 传 `-1` 表示根下。**同父同名由核心拒绝**（与桌面同语义）。
+/// `out_category_id` 可为 `NULL`。
+///
+/// # Safety
+///
+/// `name_ptr` / `name_len` 必须指向有效的 UTF-8 字节。
+#[no_mangle]
+pub unsafe extern "C" fn nr_create_category(
+    engine: u64,
+    parent_id: i64,
+    name_ptr: *const u8,
+    name_len: u32,
+    out_category_id: *mut i64,
+) -> i32 {
+    // 空名 = 拒绝（`read_utf8` 对空/坏 UTF-8 返回 `None`）。
+    // 读取放在 `with_engine` 之外，故此处需把 `NrResult` 摊平成错误码。
+    let name = match read_utf8(name_ptr, name_len as usize, "分类名称") {
+        Ok(Some(text)) => text,
+        Ok(None) => {
+            return invalid("分类名称不得为空，且必须是合法 UTF-8")
+                .code()
+                .as_c()
+        }
+        Err(error) => {
+            return with_engine(engine, |_| Err::<(), _>(error));
+        }
+    };
+    with_engine(engine, |engine| {
+        let id = engine.create_category(category_id_opt(parent_id), &name)?;
+        write_out(out_category_id, id)
+    })
+}
+
+/// 移动书籍到分类（`nr_move_book_to_category`；V1.1）。
+///
+/// `category_id` 传 `-1` 表示移到未分类（根）。
+///
+/// # Safety
+///
+/// 无指针参数；句柄必须有效。
+#[no_mangle]
+pub unsafe extern "C" fn nr_move_book_to_category(
+    engine: u64,
+    book_id: i64,
+    category_id: i64,
+) -> i32 {
+    with_engine(engine, |engine| {
+        engine.move_book_to_category(book_id, category_id_opt(category_id))
+    })
+}
+
+/// 删除分类（`nr_delete_category`；V1.1）。
+///
+/// `destination` **必须显式给出**：`1` = 移入 `target_id`、`2` = 一并移出书架、
+/// `3` = 移回根。`0`（未选去向）返回 `NR_ERR_INVALID_ARGUMENT` 且**零副作用**
+/// —— 与桌面侧 `DeleteChoice::None` 同语义（规格 R3）。
+///
+/// `out_moved_count` 可为 `NULL`。
+///
+/// # Safety
+///
+/// 句柄必须有效；`target_id` 仅在 `destination = 1` 时被读取。
+#[no_mangle]
+pub unsafe extern "C" fn nr_delete_category(
+    engine: u64,
+    category_id: i64,
+    destination: i32,
+    target_id: i64,
+    out_moved_count: *mut u32,
+) -> i32 {
+    with_engine(engine, |engine| {
+        let moved = engine.delete_category(category_id, destination, category_id_opt(target_id))?;
+        write_out(out_moved_count, moved)
+    })
+}
+
+/// ABI 哨兵 `-1` → `None`（根下 / 未分类）。
+fn category_id_opt(sentinel: i64) -> Option<i64> {
+    (sentinel >= 0).then_some(sentinel)
+}
+
+/// 把 `#[repr(C)]` 结构按其内存布局写入 `Vec<u8>`（与 `chapter_batch` 同构）。
+///
+/// # Safety
+///
+/// 调用点必须传 `#[repr(C)]` 结构（本模块只用于 ABI 结构）。
+unsafe fn struct_bytes<T>(value: &T) -> Vec<u8> {
+    let bytes =
+        std::slice::from_raw_parts((value as *const T).cast::<u8>(), std::mem::size_of::<T>());
+    bytes.to_vec()
+}
+
+/// 列出阅读历史（`nr_list_history`；V1.1，规格 P5 §3.2）。
+///
+/// `book_id > 0` 限定单书，`limit > 0` 限量，`grouped != 0` 走按书聚合。
+/// **排序在存储层完成**（`opened_at DESC`），调用方不得自行排序。
+///
+/// # Safety
+///
+/// `out_batch` 必须指向可写的 [`NrHistoryBatch`]（可为 `NULL`：此时只做校验不写回执）。
+#[no_mangle]
+pub unsafe extern "C" fn nr_list_history(
+    engine: u64,
+    book_id: i64,
+    limit: i32,
+    grouped: i32,
+    out_batch: *mut NrHistoryBatch,
+) -> i32 {
+    with_engine(engine, |engine| {
+        let data = engine.history_rows(book_id, limit, grouped != 0)?;
+        // 布局与 `nr_list_categories` 同构：定长行在头部、字节紧随其后。
+        //
+        // 偏移换算：引擎给的 `title_offset` / `file_offset` 是**字节池内相对偏移**
+        // （`data.bytes` 的下标），而 ABI 要求相对**整个缓冲区**。故只需统一加上
+        // 一个基准 `pool_base = count * row_size`。
+        //
+        // 早前版本用了两个游标（标题一个、文件名另一个）分别累加 —— 那是**错的**：
+        // 引擎的池里每行已是「书名 + 文件名」紧邻，两段之间没有别的行，
+        // 用单一基准换算才与引擎口径一致（越界问题由此暴露，实测踩中）。
+        let row_size = std::mem::size_of::<NrHistory>();
+        let pool_base = (data.rows.len() * row_size) as u32;
+        let mut bytes: Vec<u8> = Vec::with_capacity(data.bytes.len() + pool_base as usize);
+        for row in &data.rows {
+            bytes.extend_from_slice(&struct_bytes(&NrHistory {
+                id: row.id,
+                book_id: row.book_id,
+                opened_at: row.opened_at,
+                chapter_index: row.chapter_index,
+                byte_offset: row.byte_offset,
+                entry_kind: row.entry_kind,
+                title_offset: pool_base + row.title_offset,
+                title_len: row.title_len,
+                file_offset: pool_base + row.file_offset,
+                file_len: row.file_len,
+                label_offset: pool_base + row.label_offset,
+                label_len: row.label_len,
+            }));
+        }
+        bytes.extend_from_slice(&data.bytes);
+        write_out(
+            out_batch,
+            NrHistoryBatch {
+                count: data.count,
+                total: data.total,
+                bytes: NrBuffer::from_vec(bytes),
+            },
+        )
+    })
+}
+
+/// 清除一条阅读流水（`nr_clear_history_entry`；V1.1）。
+///
+/// `out_removed` 写回 `1` = 已清除、`0` = 该 id 不存在。
+/// **只删流水**：不动书籍 / 进度 / 书签。
+///
+/// # Safety
+///
+/// `out_removed` 可为 `NULL`。
+#[no_mangle]
+pub unsafe extern "C" fn nr_clear_history_entry(
+    engine: u64,
+    entry_id: i64,
+    out_removed: *mut u32,
+) -> i32 {
+    with_engine(engine, |engine| {
+        let removed = engine.clear_history_entry(entry_id)?;
+        write_out(out_removed, u32::from(removed))
+    })
+}
+
+/// 清除某本书的全部阅读流水（`nr_clear_history_for_book`；V1.1）。
+///
+/// `out_removed_count` 写回实际删除条数。**只删流水**。
+///
+/// # Safety
+///
+/// `out_removed_count` 可为 `NULL`。
+#[no_mangle]
+pub unsafe extern "C" fn nr_clear_history_for_book(
+    engine: u64,
+    book_id: i64,
+    out_removed_count: *mut u32,
+) -> i32 {
+    with_engine(engine, |engine| {
+        let removed = engine.clear_history_for_book(book_id)?;
+        write_out(out_removed_count, removed)
+    })
+}
+
+/// 读回自定义配色的基色（`nr_get_theme_base`；V1.1，规格 P5 §3.3）。
+///
+/// **只回 4 个基色与 enabled** —— 40 个语义令牌不落库（规格 R11）。
+/// 四项各 12 字节，**全 0 = 该项未设置**（沿用内置值）。
+///
+/// # Safety
+///
+/// `out_base` 必须指向可写的 [`NrThemeBase`]（可为 `NULL`：此时只做校验）。
+#[no_mangle]
+pub unsafe extern "C" fn nr_get_theme_base(engine: u64, out_base: *mut NrThemeBase) -> i32 {
+    with_engine(engine, |engine| {
+        let data = engine.theme_base();
+        write_out(
+            out_base,
+            NrThemeBase {
+                struct_size: std::mem::size_of::<NrThemeBase>() as u32,
+                enabled: u32::from(data.enabled),
+                foreground: hex_field(&data.foreground),
+                background: hex_field(&data.background),
+                primary: hex_field(&data.primary),
+                accent: hex_field(&data.accent),
+            },
+        )
+    })
+}
+
+/// 写入一个基色（`nr_set_theme_base`；V1.1）。
+///
+/// `which`：`0`=正文 `1`=背景 `2`=主色 `3`=强调。
+/// `value_ptr`/`value_len` 传**空串**（长度 0）= **清除该项**（回落内置值）；
+/// 非空但不是合法 `#RRGGBB` 时返回 `NR_ERR_INVALID_ARGUMENT` 且**保留原值**。
+///
+/// # Safety
+///
+/// `value_ptr` 必须指向 `value_len` 字节的有效内存。
+#[no_mangle]
+pub unsafe extern "C" fn nr_set_theme_base(
+    engine: u64,
+    which: u32,
+    value_ptr: *const u8,
+    value_len: u32,
+) -> i32 {
+    // 空串是**合法输入**（清除该项），故不走 `read_utf8` 的「空即拒」。
+    let value = if value_len == 0 {
+        String::new()
+    } else {
+        match read_utf8(value_ptr, value_len as usize, "基色") {
+            Ok(Some(text)) => text,
+            Ok(None) => return invalid("基色不得包含空字节").code().as_c(),
+            Err(error) => return with_engine(engine, |_| Err::<(), _>(error)),
+        }
+    };
+    with_engine(engine, |engine| {
+        engine.set_theme_base(which, &value).map(|_| ())
+    })
+}
+
+/// 切换「启用自定义配色」（`nr_set_theme_enabled`；V1.1）。
+///
+/// 关闭时**保留基色**（用户下次开启不必重选）。
+///
+/// # Safety
+///
+/// 无指针参数；句柄必须有效。
+#[no_mangle]
+pub unsafe extern "C" fn nr_set_theme_enabled(engine: u64, enabled: u32) -> i32 {
+    with_engine(engine, |engine| {
+        engine.set_theme_enabled(enabled != 0).map(|_| ())
+    })
+}
+
+/// 取一个派生令牌的 RGBA（`nr_get_theme_token`；V1.1）。
+///
+/// `which` 是令牌表（`PALETTE_FIELDS`）的下标；`dark != 0` 取暗色一套。
+/// 越界索引返回 `NR_ERR_INVALID_ARGUMENT`。
+///
+/// 派生**全在核心**（`reading_storage::theme_derive`）—— 桌面与 Android 同一
+/// 函数，故同一个基色在两端显示一致（规格 §3.3 的硬要求）。
+///
+/// # Safety
+///
+/// `out_rgba` 必须是可写的 4 字节指针（可为 `NULL`：此时只做校验）。
+#[no_mangle]
+pub unsafe extern "C" fn nr_get_theme_token(
+    engine: u64,
+    which: u32,
+    dark: u32,
+    out_rgba: *mut u8,
+) -> i32 {
+    with_engine(engine, |engine| {
+        let rgba = engine.theme_token(which, dark != 0)?;
+        if out_rgba.is_null() {
+            return Err(invalid("out_rgba 不得为 NULL"));
+        }
+        // 写 4 字节 RGBA（不是 `write_out` —— 那是给结构体用的）。
+        std::ptr::copy_nonoverlapping(rgba.as_ptr(), out_rgba, 4);
+        Ok(())
+    })
+}
+
+/// 取对比度读数（`nr_get_theme_contrast`；V1.1）。
+///
+/// 比值用**整数 × 100**（如 `4.54:1` ⇒ `454`）；`passes` 不足时**已保留用户基色**
+/// （规格 R12 —— 界面只提示，不强改）。
+///
+/// # Safety
+///
+/// `out_result` 必须指向可写的 [`NrThemeContrastResult`]（可为 `NULL`：只校验）。
+#[no_mangle]
+pub unsafe extern "C" fn nr_get_theme_contrast(
+    engine: u64,
+    out_result: *mut NrThemeContrastResult,
+) -> i32 {
+    with_engine(engine, |engine| {
+        let data = engine.theme_contrast()?;
+        write_out(
+            out_result,
+            NrThemeContrastResult {
+                struct_size: std::mem::size_of::<NrThemeContrastResult>() as u32,
+                ratio_x100: data.ratio_permille_x100,
+                passes: data.passes,
+                worst_in_dark: data.worst_in_dark,
+                reserved0: 0,
+                reserved1: 0,
+            },
+        )
+    })
+}
+
+/// 把 `#RRGGBB` 写进 12 字节定长槽（末尾补 NUL；**空串写全 0**）。
+fn hex_field(value: &str) -> [u8; 12] {
+    let mut slot = [0u8; 12];
+    if value.is_empty() {
+        return slot;
+    }
+    let bytes = value.as_bytes();
+    let take = bytes.len().min(11);
+    slot[..take].copy_from_slice(&bytes[..take]);
+    slot[take] = 0;
+    slot
+}
+
+/// 读回全局背景（`nr_get_background`；V1.1，规格 P5 §3.4）。
+///
+/// **只回相对文件名**（R15）—— 调用方拼自己的 app-private 前缀。
+/// `file_name_len = 0` 表示未设置（此时 `out_batch` 仍会写回批次头）。
+///
+/// # Safety
+///
+/// `out_batch` 必须指向可写的 [`NrBackgroundBatch`]（可为 `NULL`：只做校验）。
+#[no_mangle]
+pub unsafe extern "C" fn nr_get_background(engine: u64, out_batch: *mut NrBackgroundBatch) -> i32 {
+    with_engine(engine, |engine| {
+        let data = match engine.background() {
+            Ok(value) => value,
+            // 读失败：按「未设置」如实回报（不打断阅读），但**不隐瞒**——
+            // 错误码仍返回，调用方可据此提示。
+            Err(message) => {
+                return Err(internal(format!("读取背景设置失败：{message}")));
+            }
+        };
+        let header_size = std::mem::size_of::<NrBackground>();
+        let mut bytes: Vec<u8> = Vec::new();
+        // 文件名在**定长头之后**（游标从行区末尾起算，与其它批次同构）。
+        let name_offset = header_size as u32;
+        bytes.extend_from_slice(data.file_name.as_bytes());
+        let entry = NrBackground {
+            file_size: data.file_size,
+            scrim_permille: data.scrim_permille,
+            fit_mode: data.fit_mode,
+            reserved0: 0,
+            scrim_alpha: data.scrim_alpha,
+            reserved1: 0,
+            reserved2: 0,
+            file_name_len: data.file_name.len() as u32,
+            file_name_offset: name_offset,
+            reserved3: 0,
+        };
+        let mut full: Vec<u8> = Vec::with_capacity(header_size + bytes.len());
+        full.extend_from_slice(&struct_bytes(&entry));
+        full.extend_from_slice(&bytes);
+        write_out(
+            out_batch,
+            NrBackgroundBatch {
+                count: u32::from(!data.file_name.is_empty()),
+                reserved0: 0,
+                bytes: NrBuffer::from_vec(full),
+            },
+        )
+    })
+}
+
+/// 设置全局背景（`nr_set_background`；V1.1）。
+///
+/// `src_path` 是图片路径，`dest_dir` 是**调用方**的 app-private / 数据目录
+/// —— 核心**不猜平台数据目录**（`XDG_DATA_HOME` 在 Android 上不存在）。
+/// 核心**复制**图片（原图只读）、生成安全文件名、只把相对名写库（R14–R16）。
+///
+/// # Safety
+///
+/// `src_path_ptr` / `dest_dir_ptr` 必须是合法 UTF-8 字节。
+#[no_mangle]
+pub unsafe extern "C" fn nr_set_background(
+    engine: u64,
+    src_path_ptr: *const u8,
+    src_path_len: u32,
+    dest_dir_ptr: *const u8,
+    dest_dir_len: u32,
+    fit_mode: i32,
+    scrim_permille: i32,
+    out_batch: *mut NrBackgroundBatch,
+) -> i32 {
+    let src = match read_utf8(src_path_ptr, src_path_len as usize, "背景图路径") {
+        Ok(Some(text)) => std::path::PathBuf::from(text),
+        Ok(None) => return invalid("背景图路径不得为空").code().as_c(),
+        Err(error) => return with_engine(engine, |_| Err::<(), _>(error)),
+    };
+    let dir = match read_utf8(dest_dir_ptr, dest_dir_len as usize, "背景图目录") {
+        Ok(Some(text)) => std::path::PathBuf::from(text),
+        Ok(None) => return invalid("背景图目录不得为空").code().as_c(),
+        Err(error) => return with_engine(engine, |_| Err::<(), _>(error)),
+    };
+    with_engine(engine, |engine| {
+        // `fit_mode < 0` = 用默认值（`Cover`）；`scrim_permille < 0` = 用默认遮罩。
+        let fit = (fit_mode >= 0).then_some(fit_mode as i64);
+        let scrim = (scrim_permille >= 0).then_some(scrim_permille as i64);
+        let data = engine
+            .set_background(
+                &src,
+                &dir,
+                fit,
+                scrim,
+                // Unix 秒（`engine.rs` 内部用同一个 `connection::now_unix`；
+                // 此处独立算，避免把 engine 的私有导入暴露到本层）。
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|value| value.as_secs() as i64)
+                    .unwrap_or(0),
+            )
+            .map_err(internal)?;
+        let header_size = std::mem::size_of::<NrBackground>();
+        let mut full: Vec<u8> = Vec::new();
+        full.extend_from_slice(&struct_bytes(&NrBackground {
+            file_size: data.file_size,
+            scrim_permille: data.scrim_permille,
+            fit_mode: data.fit_mode,
+            reserved0: 0,
+            scrim_alpha: data.scrim_alpha,
+            reserved1: 0,
+            reserved2: 0,
+            file_name_len: data.file_name.len() as u32,
+            file_name_offset: header_size as u32,
+            reserved3: 0,
+        }));
+        full.extend_from_slice(data.file_name.as_bytes());
+        if out_batch.is_null() {
+            return Ok(());
+        }
+        write_out(
+            out_batch,
+            NrBackgroundBatch {
+                count: 1,
+                reserved0: 0,
+                bytes: NrBuffer::from_vec(full),
+            },
+        )
+    })
+}
+
+/// 只调背景遮罩强度（`nr_set_background_scrim`；V1.1；不换图）。
+///
+/// # Safety
+///
+/// `out_batch` 可为 `NULL`（只做校验与写库）。
+#[no_mangle]
+pub unsafe extern "C" fn nr_set_background_scrim(
+    engine: u64,
+    scrim_permille: i32,
+    out_batch: *mut NrBackgroundBatch,
+) -> i32 {
+    with_engine(engine, |engine| {
+        engine
+            .set_background_scrim(scrim_permille as i64)
+            .map_err(internal)?;
+        if out_batch.is_null() {
+            return Ok(());
+        }
+        write_out(
+            out_batch,
+            NrBackgroundBatch {
+                count: 0,
+                reserved0: 0,
+                bytes: NrBuffer::from_vec(Vec::new()),
+            },
+        )
+    })
+}
+
+/// 清除全局背景（`nr_clear_background`；V1.1）。
+///
+/// **只删核心生成的文件**（`bg-*` 前缀）；**不动用户原图**。
+///
+/// # Safety
+///
+/// `dest_dir_ptr` 必须是合法 UTF-8 字节。
+#[no_mangle]
+pub unsafe extern "C" fn nr_clear_background(
+    engine: u64,
+    dest_dir_ptr: *const u8,
+    dest_dir_len: u32,
+    out_batch: *mut NrBackgroundBatch,
+) -> i32 {
+    let dir = match read_utf8(dest_dir_ptr, dest_dir_len as usize, "背景图目录") {
+        Ok(Some(text)) => std::path::PathBuf::from(text),
+        Ok(None) => return invalid("背景图目录不得为空").code().as_c(),
+        Err(error) => return with_engine(engine, |_| Err::<(), _>(error)),
+    };
+    with_engine(engine, |engine| {
+        let data = engine.clear_background(&dir).map_err(internal)?;
+        let header_size = std::mem::size_of::<NrBackground>();
+        let mut full: Vec<u8> = Vec::new();
+        full.extend_from_slice(&struct_bytes(&NrBackground {
+            file_size: data.file_size,
+            scrim_permille: data.scrim_permille,
+            fit_mode: data.fit_mode,
+            reserved0: 0,
+            scrim_alpha: data.scrim_alpha,
+            reserved1: 0,
+            reserved2: 0,
+            file_name_len: data.file_name.len() as u32,
+            file_name_offset: header_size as u32,
+            reserved3: 0,
+        }));
+        full.extend_from_slice(data.file_name.as_bytes());
+        if out_batch.is_null() {
+            return Ok(());
+        }
+        write_out(
+            out_batch,
+            NrBackgroundBatch {
+                count: u32::from(!data.file_name.is_empty()),
+                reserved0: 0,
+                bytes: NrBuffer::from_vec(full),
+            },
+        )
+    })
+}
+
+/// 合法的移动 / 删除目标（`nr_category_move_targets`；V1.1）。
+///
+/// 含「未分类」（`id = -1`）；`source_id` 自身与全部子孙 `selectable = 0`。
+/// **环判定在核心完成** —— 界面不得自行遍历父子链。
+///
+/// # Safety
+///
+/// `out_batch` 必须指向可写的 [`NrCategoryChoiceBatch`]（可为 `NULL`：只做校验）。
+#[no_mangle]
+pub unsafe extern "C" fn nr_category_move_targets(
+    engine: u64,
+    source_id: i64,
+    out_batch: *mut NrCategoryChoiceBatch,
+) -> i32 {
+    with_engine(engine, |engine| {
+        let targets = engine.category_move_targets(source_id)?;
+        let row_size = std::mem::size_of::<NrCategoryChoice>();
+        let mut bytes: Vec<u8> = Vec::with_capacity(targets.len() * row_size);
+        let mut pool: Vec<u8> = Vec::new();
+        let pool_base = targets.len() * row_size;
+        for target in &targets {
+            let name = target.name.as_bytes();
+            bytes.extend_from_slice(&struct_bytes(&NrCategoryChoice {
+                id: target.id,
+                depth: target.depth,
+                selectable: if target.selectable { 1 } else { 0 },
+                total_count: target.total_count,
+                name_offset: (pool_base + pool.len()) as u32,
+                name_len: name.len() as u32,
+                reserved0: 0,
+                reserved1: 0,
+            }));
+            pool.extend_from_slice(name);
+        }
+        bytes.extend_from_slice(&pool);
+        write_out(
+            out_batch,
+            NrCategoryChoiceBatch {
+                count: targets.len() as u32,
+                reserved0: 0,
+                bytes: NrBuffer::from_vec(bytes),
+            },
+        )
+    })
+}
+
+/// 重命名分类（`nr_rename_category`；V1.1）。
+///
+/// 同名冲突 / 不存在的 id 由核心拒绝并**保留原值**。
+///
+/// # Safety
+///
+/// `name` 必须指向 `name_len` 个有效 UTF-8 字节（可为 `NULL` 当 `name_len == 0`）。
+#[no_mangle]
+pub unsafe extern "C" fn nr_rename_category(
+    engine: u64,
+    category_id: i64,
+    name: *const u8,
+    name_len: u32,
+) -> i32 {
+    // 空名 / 坏 UTF-8 一律拒绝（`read_utf8` 对这两种情况返回 `None`）。
+    let name = name as *const u8;
+    let name_len = name_len as usize;
+    with_engine(engine, |engine| {
+        match read_utf8(name, name_len, "分类名称")? {
+            Some(text) => engine.rename_category(category_id, &text),
+            None => Err(invalid("分类名称不得为空，且必须是合法 UTF-8")),
+        }
+    })
+}
+
+/// 移动分类到新的父分类（`nr_move_category`；V1.1）。
+///
+/// `new_parent_id = -1` 表示移到根层。**移入自身或子孙必须拒绝**（规格 R5）。
+#[no_mangle]
+pub unsafe extern "C" fn nr_move_category(
+    engine: u64,
+    category_id: i64,
+    new_parent_id: i64,
+) -> i32 {
+    with_engine(engine, |engine| {
+        engine.move_category(category_id, new_parent_id)
+    })
+}
+
+/// 列出某作用域下的**在架**书籍 id（`nr_list_books_in_scope`；V1.1）。
+///
+/// `scope_kind`：`0` = 全部、`1` = 仅未分类、`2` = 指定分类（**含子孙**）。
+/// `SCOPE_CATEGORY` 时 `category_id` 必填；其余两种忽略。
+///
+/// 子树展开在**核心**完成 —— 界面只做集合成员判断。
+///
+/// # Safety
+///
+/// `out_batch` 必须指向可写的 [`NrIdList`]（可为 `NULL`：只做校验）。
+#[no_mangle]
+pub unsafe extern "C" fn nr_list_books_in_scope(
+    engine: u64,
+    scope_kind: i32,
+    category_id: i64,
+    out_batch: *mut NrIdList,
+) -> i32 {
+    with_engine(engine, |engine| {
+        let ids = engine.books_in_scope(scope_kind, category_id)?;
+        let mut bytes: Vec<u8> = Vec::with_capacity(ids.len() * 8);
+        for id in &ids {
+            bytes.extend_from_slice(&id.to_le_bytes());
+        }
+        write_out(
+            out_batch,
+            NrIdList {
+                count: ids.len() as u32,
+                reserved0: 0,
+                bytes: NrBuffer::from_vec(bytes),
+            },
+        )
+    })
+}
+
+/// 列出书籍 → 分类 映射（`nr_list_book_categories`；V1.1，规格 §3.1 的筛选前置）。
+///
+/// 只含**在架**书籍；`category_id = -1` 表示未分类。
+///
+/// 用途：界面把书架条目按分类过滤 —— 宿主目录给出 `sourceIdentity → bookId`，
+/// 本入口给出 `bookId → categoryId`，两者相合即可筛选（不必把书目搬进核心）。
+///
+/// # Safety
+///
+/// `out_batch` 必须指向可写的 [`NrBookCategoryBatch`]（可为 `NULL`：只做校验）。
+#[no_mangle]
+pub unsafe extern "C" fn nr_list_book_categories(
+    engine: u64,
+    out_batch: *mut NrBookCategoryBatch,
+) -> i32 {
+    with_engine(engine, |engine| {
+        let pairs = engine.book_categories()?;
+        let row_size = std::mem::size_of::<NrBookCategory>();
+        let mut bytes: Vec<u8> = Vec::with_capacity(pairs.len() * row_size);
+        for (book_id, category_id) in &pairs {
+            bytes.extend_from_slice(&struct_bytes(&NrBookCategory {
+                book_id: *book_id,
+                category_id: *category_id,
+            }));
+        }
+        write_out(
+            out_batch,
+            NrBookCategoryBatch {
+                count: pairs.len() as u32,
+                reserved0: 0,
+                bytes: NrBuffer::from_vec(bytes),
+            },
+        )
+    })
+}
+
 /// 取消请求（`nr_cancel_request`）：协作式、跨线程可见。
 ///
 /// # Safety
@@ -791,7 +1540,7 @@ fn record_outcome_error(engine: &mut Engine, code: i32, outcome: &crate::engine:
 }
 
 /// 供测试与文档使用：冻结入口清单。
-pub fn entry_names() -> &'static [&'static str; 19] {
+pub fn entry_names() -> &'static [&'static str; 40] {
     &ABI_ENTRY_NAMES
 }
 

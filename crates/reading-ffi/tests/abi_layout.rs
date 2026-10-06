@@ -9,13 +9,15 @@ use std::mem::size_of;
 use reading_ffi::buffer::NrBuffer;
 use reading_ffi::external::NrSourceProvider;
 use reading_ffi::structs::{
-    NrBookmarkInput, NrBoundaryResult, NrChapter, NrChapterBatch, NrEngineConfig, NrErrorInfo,
+    NrBackground, NrBackgroundBatch, NrBookCategory, NrBookCategoryBatch, NrBookmarkInput,
+    NrBoundaryResult, NrCategory, NrCategoryBatch, NrCategoryChoice, NrCategoryChoiceBatch,
+    NrChapter, NrChapterBatch, NrEngineConfig, NrErrorInfo, NrHistory, NrHistoryBatch, NrIdList,
     NrLayoutSignature, NrOpenRequest, NrOpenResult, NrPageBoundarySubmission, NrPosition,
-    NrPositionResult, NrRebuildResult, NrWindow,
+    NrPositionResult, NrRebuildResult, NrThemeBase, NrThemeContrastResult, NrWindow,
 };
 
 /// 64 位 LP64 下冻结的结构体字节大小：`(C 结构体名, 字节数)`。
-pub const EXPECTED_SIZES: [(&str, usize); 17] = [
+pub const EXPECTED_SIZES: [(&str, usize); 30] = [
     ("nr_buffer", 24),
     ("nr_source_provider", 16),
     ("nr_engine_config", 40),
@@ -29,13 +31,37 @@ pub const EXPECTED_SIZES: [(&str, usize); 17] = [
     ("nr_position_result", 80),
     ("nr_chapter", 40),
     ("nr_chapter_batch", 40),
+    // V1.1 分类：`nr_category` = 4 个 i64 + 4 个 u32 = 32 + 16 = 48；
+    // `nr_category_batch` = 2 个 u32 + `nr_buffer`(3 × usize = 24) = 32。
+    // （不是 `nr_chapter_batch` 的 40 —— 那个多一个 `total_chapters` u32。）
+    ("nr_category", 48),
+    ("nr_category_batch", 32),
+    // V1.1 阅读历史：`nr_history` = 6 个 i64 + 6 个 u32 = 48 + 24 = 72（含核心格式化的时间标签）；
+    // `nr_history_batch` = 2 个 u32 + `nr_buffer`(3 × usize = 24) = 32。
+    ("nr_history", 72),
+    ("nr_history_batch", 32),
+    // V1.1 配色：`nr_theme_base` = 2 × u32 + 4 × [u8; 12] = 8 + 48 = 56；
+    // `nr_theme_contrast_result` = 5 × u32 = 20。
+    ("nr_theme_base", 56),
+    ("nr_theme_contrast_result", 24),
+    // V1.1 背景：`nr_background` = 3 × i64 + i64 + u8 + u8 + u16 + 3 × u32
+    // = 32 + 1 + 1 + 2 + 12 = 48；`nr_background_batch` = 2 × u32 + nr_buffer(24) = 32。
+    ("nr_background", 48),
+    ("nr_background_batch", 32),
+    // V1.1 书籍分类映射：`nr_book_category` = 2 × i64 = 16；
+    // `nr_book_category_batch` = 2 × u32 + nr_buffer(24) = 32。
+    ("nr_category_choice", 40),
+    ("nr_category_choice_batch", 32),
+    ("nr_id_list", 32),
+    ("nr_book_category", 16),
+    ("nr_book_category_batch", 32),
     ("nr_bookmark_input", 48),
     ("nr_set_encoding_result", 24),
     ("nr_rebuild_result", 40),
     ("nr_error_info", 32),
 ];
 
-fn rust_sizes() -> [(&'static str, usize); 17] {
+fn rust_sizes() -> [(&'static str, usize); 30] {
     [
         ("nr_buffer", size_of::<NrBuffer>()),
         ("nr_source_provider", size_of::<NrSourceProvider>()),
@@ -53,8 +79,30 @@ fn rust_sizes() -> [(&'static str, usize); 17] {
         ("nr_position_result", size_of::<NrPositionResult>()),
         ("nr_chapter", size_of::<NrChapter>()),
         ("nr_chapter_batch", size_of::<NrChapterBatch>()),
+        ("nr_category", size_of::<NrCategory>()),
+        ("nr_category_batch", size_of::<NrCategoryBatch>()),
+        ("nr_history", size_of::<NrHistory>()),
+        ("nr_history_batch", size_of::<NrHistoryBatch>()),
+        ("nr_theme_base", size_of::<NrThemeBase>()),
+        (
+            "nr_theme_contrast_result",
+            size_of::<NrThemeContrastResult>(),
+        ),
+        ("nr_background", size_of::<NrBackground>()),
+        ("nr_background_batch", size_of::<NrBackgroundBatch>()),
+        ("nr_category_choice", size_of::<NrCategoryChoice>()),
+        (
+            "nr_category_choice_batch",
+            size_of::<NrCategoryChoiceBatch>(),
+        ),
+        ("nr_id_list", size_of::<NrIdList>()),
+        ("nr_book_category", size_of::<NrBookCategory>()),
+        ("nr_book_category_batch", size_of::<NrBookCategoryBatch>()),
         ("nr_bookmark_input", size_of::<NrBookmarkInput>()),
-        ("nr_set_encoding_result", size_of::<reading_ffi::structs::NrSetEncodingResult>()),
+        (
+            "nr_set_encoding_result",
+            size_of::<reading_ffi::structs::NrSetEncodingResult>(),
+        ),
         ("nr_rebuild_result", size_of::<NrRebuildResult>()),
         ("nr_error_info", size_of::<NrErrorInfo>()),
     ]

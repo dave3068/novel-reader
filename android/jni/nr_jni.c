@@ -69,6 +69,19 @@ _Static_assert(sizeof(nr_window) == 48, "nr_window 布局变化，请同步 Kotl
 _Static_assert(sizeof(nr_boundary_result) == 80, "nr_boundary_result 布局变化，请同步 Kotlin 解析");
 _Static_assert(sizeof(nr_position_result) == 80, "nr_position_result 布局变化，请同步 Kotlin 解析");
 _Static_assert(sizeof(nr_chapter_batch) == 40, "nr_chapter_batch 布局变化，请同步 Kotlin 解析");
+_Static_assert(sizeof(nr_category) == 48, "nr_category 布局变化，请同步 Kotlin 解析");
+_Static_assert(sizeof(nr_category_batch) == 32, "nr_category_batch 布局变化，请同步 Kotlin 解析");
+_Static_assert(sizeof(nr_history) == 72, "nr_history 布局变化，请同步 Kotlin 解析");
+_Static_assert(sizeof(nr_history_batch) == 32, "nr_history_batch 布局变化，请同步 Kotlin 解析");
+_Static_assert(sizeof(nr_theme_base) == 56, "nr_theme_base 布局变化，请同步 Kotlin 解析");
+_Static_assert(sizeof(nr_theme_contrast_result) == 24, "nr_theme_contrast_result 布局变化，请同步 Kotlin 解析");
+_Static_assert(sizeof(nr_background) == 48, "nr_background 布局变化，请同步 Kotlin 解析");
+_Static_assert(sizeof(nr_background_batch) == 32, "nr_background_batch 布局变化，请同步 Kotlin 解析");
+_Static_assert(sizeof(nr_book_category) == 16, "nr_book_category 布局变化，请同步 Kotlin 解析");
+_Static_assert(sizeof(nr_id_list) == 32, "nr_id_list 布局变化，请同步 Kotlin 解析");
+_Static_assert(sizeof(nr_category_choice) == 40, "nr_category_choice 布局变化，请同步 Kotlin 解析");
+_Static_assert(sizeof(nr_category_choice_batch) == 32, "nr_category_choice_batch 布局变化，请同步 Kotlin 解析");
+_Static_assert(sizeof(nr_book_category_batch) == 32, "nr_book_category_batch 布局变化，请同步 Kotlin 解析");
 _Static_assert(sizeof(nr_rebuild_result) == 40, "nr_rebuild_result 布局变化，请同步 Kotlin 解析");
 _Static_assert(sizeof(nr_error_info) == 32, "nr_error_info 布局变化，请同步 Kotlin 解析");
 _Static_assert(sizeof(nr_layout_signature) == 72, "nr_layout_signature 布局变化，请同步 Kotlin 解析");
@@ -752,6 +765,436 @@ JNIEXPORT jint JNICALL NR_JNI(nr_1set_1encoding)(JNIEnv *env, jobject self, jlon
         }
     }
     return (jint)code;
+}
+
+/* ---- 分类树（V1.1；加性契约修订）----
+ * 注意 JNI 名字转义：每个 `_` 必须写成 `_1`（否则能编译、运行时才
+ * UnsatisfiedLinkError；scripts/build-android-libs.sh 会 grep 这个错误）。 */
+
+/* nr_list_categories(engine, out_batch): jbyteArray
+ *     一次性返回整棵树；缓冲区按 `nr_get_chapters` 同一套流程归还。 */
+JNIEXPORT jbyteArray JNICALL NR_JNI(nr_1list_1categories)(JNIEnv *env, jobject self,
+                                                          jlong engine, jbyteArray out_batch,
+                                                          jlongArray out_buffer) {
+    (void)self;
+    nr_category_batch batch;
+    memset(&batch, 0, sizeof(batch));
+    int32_t code = nr_list_categories((uint64_t)engine, &batch);
+    if (code != NR_ERR_OK) {
+        return NULL;
+    }
+    if (jni_write_out(env, out_batch, &batch, sizeof(batch)) != NR_ERR_OK) {
+        nr_release_buffer(&batch.bytes);
+        return NULL;
+    }
+    return jni_take_buffer(env, &batch.bytes, out_buffer);
+}
+
+/* nr_create_category(engine, parent_id, name, out_category_id): jint
+ *     parent_id 传 -1 = 根下；同父同名由核心拒绝。 */
+JNIEXPORT jint JNICALL NR_JNI(nr_1create_1category)(JNIEnv *env, jobject self, jlong engine,
+                                                    jlong parent_id, jbyteArray name,
+                                                    jlongArray out_category_id) {
+    (void)self;
+    jsize name_len = 0;
+    jbyte *name_pinned = NULL;
+    const uint8_t *name_bytes = jni_borrow_bytes(env, name, &name_len, &name_pinned);
+
+    int64_t category_id = 0;
+    int32_t code = nr_create_category((uint64_t)engine, (int64_t)parent_id, name_bytes,
+                                      (uint32_t)name_len, &category_id);
+    if (name_pinned != NULL) {
+        (*env)->ReleaseByteArrayElements(env, name, name_pinned, 0);
+    }
+    if (code == NR_ERR_OK && out_category_id != NULL) {
+        int32_t write_code = jni_write_out(env, out_category_id, &category_id,
+                                           sizeof(category_id));
+        if (write_code != NR_ERR_OK) {
+            return (jint)write_code;
+        }
+    }
+    return (jint)code;
+}
+
+/* nr_move_book_to_category(engine, book_id, category_id): jint
+ *     category_id 传 -1 = 未分类（根）。 */
+JNIEXPORT jint JNICALL NR_JNI(nr_1move_1book_1to_1category)(JNIEnv *env, jobject self,
+                                                           jlong engine, jlong book_id,
+                                                           jlong category_id) {
+    (void)self;
+    (void)env;
+    return (jint)nr_move_book_to_category((uint64_t)engine, (int64_t)book_id,
+                                          (int64_t)category_id);
+}
+
+/* nr_delete_category(engine, category_id, destination, target_id, out_moved_count): jint
+ *     destination 必须显式给出；传 0（未选去向）核心会拒绝且零副作用。 */
+JNIEXPORT jint JNICALL NR_JNI(nr_1delete_1category)(JNIEnv *env, jobject self, jlong engine,
+                                                   jlong category_id, jint destination,
+                                                   jlong target_id, jintArray out_moved_count) {
+    (void)self;
+    uint32_t moved = 0;
+    int32_t code = nr_delete_category((uint64_t)engine, (int64_t)category_id,
+                                      (int32_t)destination, (int64_t)target_id, &moved);
+    if (code == NR_ERR_OK && out_moved_count != NULL) {
+        int32_t write_code = jni_write_out(env, out_moved_count, &moved, sizeof(moved));
+        if (write_code != NR_ERR_OK) {
+            return (jint)write_code;
+        }
+    }
+    return (jint)code;
+}
+
+/* ---- 阅读历史（V1.1；加性契约修订）----
+ * 与分类同样注意 JNI 名字转义（`_` → `_1`）。 */
+
+/* nr_list_history(engine, book_id, limit, grouped, out_batch): jbyteArray
+ *     book_id > 0 限定单书；limit > 0 限量；grouped != 0 走按书聚合。 */
+JNIEXPORT jbyteArray JNICALL NR_JNI(nr_1list_1history)(JNIEnv *env, jobject self,
+                                                      jlong engine, jlong book_id,
+                                                      jint limit, jint grouped,
+                                                      jbyteArray out_batch,
+                                                      jlongArray out_buffer) {
+    (void)self;
+    nr_history_batch batch;
+    memset(&batch, 0, sizeof(batch));
+    int32_t code = nr_list_history((uint64_t)engine, (int64_t)book_id, (int32_t)limit,
+                                   (int32_t)grouped, &batch);
+    if (code != NR_ERR_OK) {
+        return NULL;
+    }
+    if (jni_write_out(env, out_batch, &batch, sizeof(batch)) != NR_ERR_OK) {
+        nr_release_buffer(&batch.bytes);
+        return NULL;
+    }
+    return jni_take_buffer(env, &batch.bytes, out_buffer);
+}
+
+/* nr_clear_history_entry(engine, entry_id, out_removed): jint
+ *     out_removed 写回 1 = 已清除、0 = 该 id 不存在。 */
+JNIEXPORT jint JNICALL NR_JNI(nr_1clear_1history_1entry)(JNIEnv *env, jobject self,
+                                                         jlong engine, jlong entry_id,
+                                                         jintArray out_removed) {
+    (void)self;
+    uint32_t removed = 0;
+    int32_t code =
+        nr_clear_history_entry((uint64_t)engine, (int64_t)entry_id, &removed);
+    if (code == NR_ERR_OK && out_removed != NULL) {
+        int32_t write_code = jni_write_out(env, out_removed, &removed, sizeof(removed));
+        if (write_code != NR_ERR_OK) {
+            return (jint)write_code;
+        }
+    }
+    return (jint)code;
+}
+
+/* nr_clear_history_for_book(engine, book_id, out_removed_count): jint
+ *     只删流水：不动书籍 / 进度 / 书签。 */
+JNIEXPORT jint JNICALL NR_JNI(nr_1clear_1history_1for_1book)(JNIEnv *env, jobject self,
+                                                           jlong engine, jlong book_id,
+                                                           jintArray out_removed_count) {
+    (void)self;
+    uint32_t removed = 0;
+    int32_t code =
+        nr_clear_history_for_book((uint64_t)engine, (int64_t)book_id, &removed);
+    if (code == NR_ERR_OK && out_removed_count != NULL) {
+        int32_t write_code = jni_write_out(env, out_removed_count, &removed, sizeof(removed));
+        if (write_code != NR_ERR_OK) {
+            return (jint)write_code;
+        }
+    }
+    return (jint)code;
+}
+
+/* ---- 自定义配色（V1.1；加性契约修订）----
+ * 派生与对比度**全在核心**（桌面与 Android 同一函数），本层只搬运。 */
+
+/* nr_get_theme_base(engine, out_base): jint
+ *     只回 4 个基色与 enabled；四项各 12 字节，全 0 = 未设置。 */
+JNIEXPORT jint JNICALL NR_JNI(nr_1get_1theme_1base)(JNIEnv *env, jobject self,
+                                                     jlong engine,
+                                                     jbyteArray out_base) {
+    (void)self;
+    nr_theme_base base;
+    memset(&base, 0, sizeof(base));
+    int32_t code = nr_get_theme_base((uint64_t)engine, &base);
+    if (code == NR_ERR_OK) {
+        int32_t write_code = jni_write_out(env, out_base, &base, sizeof(base));
+        if (write_code != NR_ERR_OK) {
+            return (jint)write_code;
+        }
+    }
+    return (jint)code;
+}
+
+/* nr_set_theme_base(engine, which, value): jint
+ *     which：0=正文 1=背景 2=主色 3=强调；value 长度 0 = 清除该项。 */
+JNIEXPORT jint JNICALL NR_JNI(nr_1set_1theme_1base)(JNIEnv *env, jobject self,
+                                                     jlong engine, jint which,
+                                                     jbyteArray value) {
+    (void)self;
+    jsize value_len = 0;
+    jbyte *value_pinned = NULL;
+    const uint8_t *value_bytes = jni_borrow_bytes(env, value, &value_len, &value_pinned);
+    int32_t code = nr_set_theme_base((uint64_t)engine, (uint32_t)which, value_bytes,
+                                     (uint32_t)value_len);
+    if (value_pinned != NULL) {
+        (*env)->ReleaseByteArrayElements(env, value, value_pinned, 0);
+    }
+    return (jint)code;
+}
+
+/* nr_set_theme_enabled(engine, enabled): jint */
+JNIEXPORT jint JNICALL NR_JNI(nr_1set_1theme_1enabled)(JNIEnv *env, jobject self,
+                                                        jlong engine, jint enabled) {
+    (void)self;
+    (void)env;
+    return (jint)nr_set_theme_enabled((uint64_t)engine, (uint32_t)enabled);
+}
+
+/* nr_get_theme_token(engine, which, dark, outRGBA): jint
+ *     写 4 字节 RGBA；越界索引由核心拒绝。 */
+JNIEXPORT jint JNICALL NR_JNI(nr_1get_1theme_1token)(JNIEnv *env, jobject self,
+                                                      jlong engine, jint which,
+                                                      jint dark, jbyteArray out_rgba) {
+    (void)self;
+    uint8_t rgba[4];
+    memset(rgba, 0, sizeof(rgba));
+    int32_t code = nr_get_theme_token((uint64_t)engine, (uint32_t)which, (uint32_t)dark, rgba);
+    if (code == NR_ERR_OK) {
+        int32_t write_code = jni_write_out(env, out_rgba, rgba, sizeof(rgba));
+        if (write_code != NR_ERR_OK) {
+            return (jint)write_code;
+        }
+    }
+    return (jint)code;
+}
+
+/* nr_get_theme_contrast(engine, outResult): jint
+ *     比值为整数 × 100（如 4.54:1 ⇒ 454）；passes=0 时核心已保留用户基色。 */
+JNIEXPORT jint JNICALL NR_JNI(nr_1get_1theme_1contrast)(JNIEnv *env, jobject self,
+                                                        jlong engine,
+                                                        jbyteArray out_result) {
+    (void)self;
+    nr_theme_contrast_result result;
+    memset(&result, 0, sizeof(result));
+    int32_t code = nr_get_theme_contrast((uint64_t)engine, &result);
+    if (code == NR_ERR_OK) {
+        int32_t write_code = jni_write_out(env, out_result, &result, sizeof(result));
+        if (write_code != NR_ERR_OK) {
+            return (jint)write_code;
+        }
+    }
+    return (jint)code;
+}
+
+/* ---- 全局背景图（V1.1；加性契约修订）----
+ * 核心**复制**图片并只回相对文件名（R14–R16）；本层不碰文件。 */
+
+/* 读背景批次并取回字节缓冲（4 个入口共用的收尾）。
+ * 返回 `NULL` 表示失败；`*out_buffer` 由 Kotlin 侧归还。 */
+/* 静态辅助（**不用** `NR_JNI(...)` —— 那是给导出符号用的 JNI 名字转义宏）。
+ * 本函数不出现在 `.so` 导出表里，故直接用 C 名字。 */
+static jbyteArray nr_background_result(JNIEnv *env, jbyteArray out_batch,
+                                       nr_background_batch *batch, jlongArray out_buffer) {
+    if (jni_write_out(env, out_batch, batch, sizeof(*batch)) != NR_ERR_OK) {
+        nr_release_buffer(&batch->bytes);
+        return NULL;
+    }
+    return jni_take_buffer(env, &batch->bytes, out_buffer);
+}
+
+/* nr_get_background(engine, outBatch, outBuffer): jbyteArray
+ *     只回相对文件名（R15）；fileNameLen = 0 表示未设置。 */
+JNIEXPORT jbyteArray JNICALL NR_JNI(nr_1get_1background)(JNIEnv *env, jobject self,
+                                                         jlong engine,
+                                                         jbyteArray out_batch,
+                                                         jlongArray out_buffer) {
+    (void)self;
+    nr_background_batch batch;
+    memset(&batch, 0, sizeof(batch));
+    int32_t code = nr_get_background((uint64_t)engine, &batch);
+    if (code != NR_ERR_OK) {
+        return NULL;
+    }
+    return nr_background_result(env, out_batch, &batch, out_buffer);
+}
+
+/* nr_set_background(engine, srcPath, destDir, fitMode, scrimPermille, outBatch, outBuffer)
+ *     fitMode < 0 或 scrimPermille < 0 = 用默认值。
+ *     destDir 由调用方给（Android 传 app-private 目录）—— 核心不猜平台数据目录。 */
+JNIEXPORT jbyteArray JNICALL NR_JNI(nr_1set_1background)(JNIEnv *env, jobject self,
+                                                         jlong engine,
+                                                         jbyteArray src_path,
+                                                         jbyteArray dest_dir,
+                                                         jint fit_mode,
+                                                         jint scrim_permille,
+                                                         jbyteArray out_batch,
+                                                         jlongArray out_buffer) {
+    (void)self;
+    jsize src_len = 0, dir_len = 0;
+    jbyte *src_pinned = NULL, *dir_pinned = NULL;
+    const uint8_t *src_bytes = jni_borrow_bytes(env, src_path, &src_len, &src_pinned);
+    const uint8_t *dir_bytes = jni_borrow_bytes(env, dest_dir, &dir_len, &dir_pinned);
+
+    nr_background_batch batch;
+    memset(&batch, 0, sizeof(batch));
+    int32_t code = nr_set_background((uint64_t)engine, src_bytes, (uint32_t)src_len,
+                                     dir_bytes, (uint32_t)dir_len, (int32_t)fit_mode,
+                                     (int32_t)scrim_permille, &batch);
+    if (src_pinned != NULL) {
+        (*env)->ReleaseByteArrayElements(env, src_path, src_pinned, 0);
+    }
+    if (dir_pinned != NULL) {
+        (*env)->ReleaseByteArrayElements(env, dest_dir, dir_pinned, 0);
+    }
+    if (code != NR_ERR_OK) {
+        return NULL;
+    }
+    return nr_background_result(env, out_batch, &batch, out_buffer);
+}
+
+/* nr_set_background_scrim(engine, scrimPermille, outBatch, outBuffer): jbyteArray
+ *     只调遮罩强度（不换图）；permille 必须在 0..=1000。 */
+JNIEXPORT jbyteArray JNICALL NR_JNI(nr_1set_1background_1scrim)(JNIEnv *env, jobject self,
+                                                                jlong engine,
+                                                                jint scrim_permille,
+                                                                jbyteArray out_batch,
+                                                                jlongArray out_buffer) {
+    (void)self;
+    nr_background_batch batch;
+    memset(&batch, 0, sizeof(batch));
+    int32_t code = nr_set_background_scrim((uint64_t)engine, (int32_t)scrim_permille, &batch);
+    if (code != NR_ERR_OK) {
+        return NULL;
+    }
+    return nr_background_result(env, out_batch, &batch, out_buffer);
+}
+
+/* nr_clear_background(engine, destDir, outBatch, outBuffer): jbyteArray
+ *     **只删核心生成的文件**（bg-* 前缀）；**不动用户原图**。 */
+JNIEXPORT jbyteArray JNICALL NR_JNI(nr_1clear_1background)(JNIEnv *env, jobject self,
+                                                           jlong engine,
+                                                           jbyteArray dest_dir,
+                                                           jbyteArray out_batch,
+                                                           jlongArray out_buffer) {
+    (void)self;
+    jsize dir_len = 0;
+    jbyte *dir_pinned = NULL;
+    const uint8_t *dir_bytes = jni_borrow_bytes(env, dest_dir, &dir_len, &dir_pinned);
+
+    nr_background_batch batch;
+    memset(&batch, 0, sizeof(batch));
+    int32_t code = nr_clear_background((uint64_t)engine, dir_bytes, (uint32_t)dir_len, &batch);
+    if (dir_pinned != NULL) {
+        (*env)->ReleaseByteArrayElements(env, dest_dir, dir_pinned, 0);
+    }
+    if (code != NR_ERR_OK) {
+        return NULL;
+    }
+    return nr_background_result(env, out_batch, &batch, out_buffer);
+}
+
+/* ---- 移动 / 删除目标（V1.1）---- */
+
+/* nr_category_move_targets(engine, source_id, out_batch, out_buffer): jbyteArray
+ *     含「未分类」（id = -1）；自身与全部子孙 selectable = 0（不隐藏，只标记）。 */
+JNIEXPORT jbyteArray JNICALL NR_JNI(nr_1category_1move_1targets)(JNIEnv *env, jobject self,
+                                                                 jlong engine,
+                                                                 jlong source_id,
+                                                                 jbyteArray out_batch,
+                                                                 jlongArray out_buffer) {
+    (void)self;
+    nr_category_choice_batch batch;
+    memset(&batch, 0, sizeof(batch));
+    int32_t code = nr_category_move_targets((uint64_t)engine, (int64_t)source_id, &batch);
+    if (code != NR_ERR_OK) {
+        return NULL;
+    }
+    if (jni_write_out(env, out_batch, &batch, sizeof(batch)) != NR_ERR_OK) {
+        nr_release_buffer(&batch.bytes);
+        return NULL;
+    }
+    return jni_take_buffer(env, &batch.bytes, out_buffer);
+}
+
+/* ---- 分类改名 / 移动（V1.1）---- */
+
+/* nr_rename_category(engine, category_id, name, name_len): jint
+ *     空名 / 坏 UTF-8 由核心拒绝（返回 INVALID_ARGUMENT）。 */
+JNIEXPORT jint JNICALL NR_JNI(nr_1rename_1category)(JNIEnv *env, jobject self,
+                                                    jlong engine,
+                                                    jlong category_id,
+                                                    jbyteArray name) {
+    (void)self;
+    jsize name_len = 0;
+    jbyte *name_pinned = NULL;
+    const uint8_t *name_bytes = jni_borrow_bytes(env, name, &name_len, &name_pinned);
+
+    int32_t code =
+        nr_rename_category((uint64_t)engine, (int64_t)category_id, name_bytes, (uint32_t)name_len);
+    if (name_pinned != NULL) {
+        (*env)->ReleaseByteArrayElements(env, name, name_pinned, 0);
+    }
+    return (jint)code;
+}
+
+/* nr_move_category(engine, category_id, new_parent_id): jint
+ *     new_parent_id = -1 表示移到根层；移入自身或子孙必须拒绝。 */
+JNIEXPORT jint JNICALL NR_JNI(nr_1move_1category)(JNIEnv *env, jobject self,
+                                                  jlong engine,
+                                                  jlong category_id,
+                                                  jlong new_parent_id) {
+    (void)env;
+    (void)self;
+    return (jint)nr_move_category((uint64_t)engine, (int64_t)category_id, (int64_t)new_parent_id);
+}
+
+/* ---- 作用域书籍 id（V1.1）---- */
+
+/* nr_list_books_in_scope(engine, scope_kind, category_id, out_batch, out_buffer): jbyteArray
+ *     scope_kind: 0 = 全部、1 = 仅未分类、2 = 指定分类（含子孙）。 */
+JNIEXPORT jbyteArray JNICALL NR_JNI(nr_1list_1books_1in_1scope)(JNIEnv *env, jobject self,
+                                                                jlong engine,
+                                                                jint scope_kind,
+                                                                jlong category_id,
+                                                                jbyteArray out_batch,
+                                                                jlongArray out_buffer) {
+    (void)self;
+    nr_id_list batch;
+    memset(&batch, 0, sizeof(batch));
+    int32_t code =
+        nr_list_books_in_scope((uint64_t)engine, (int32_t)scope_kind, (int64_t)category_id, &batch);
+    if (code != NR_ERR_OK) {
+        return NULL;
+    }
+    if (jni_write_out(env, out_batch, &batch, sizeof(batch)) != NR_ERR_OK) {
+        nr_release_buffer(&batch.bytes);
+        return NULL;
+    }
+    return jni_take_buffer(env, &batch.bytes, out_buffer);
+}
+
+/* ---- 书籍分类映射（V1.1；筛选前置）---- */
+
+/* nr_list_book_categories(engine, out_batch, out_buffer): jbyteArray
+ *     只含在架书籍；category_id = -1 表示未分类。行内无字符串。 */
+JNIEXPORT jbyteArray JNICALL NR_JNI(nr_1list_1book_1categories)(JNIEnv *env, jobject self,
+                                                                jlong engine,
+                                                                jbyteArray out_batch,
+                                                                jlongArray out_buffer) {
+    (void)self;
+    nr_book_category_batch batch;
+    memset(&batch, 0, sizeof(batch));
+    int32_t code = nr_list_book_categories((uint64_t)engine, &batch);
+    if (code != NR_ERR_OK) {
+        return NULL;
+    }
+    if (jni_write_out(env, out_batch, &batch, sizeof(batch)) != NR_ERR_OK) {
+        nr_release_buffer(&batch.bytes);
+        return NULL;
+    }
+    return jni_take_buffer(env, &batch.bytes, out_buffer);
 }
 
 /* 16. nr_cancel_request(engine, request_id) */

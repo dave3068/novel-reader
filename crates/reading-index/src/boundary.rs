@@ -258,7 +258,11 @@ pub fn is_char_boundary_at<S: TextSource + ?Sized>(
         if span <= MAX_ANCHOR_SPAN_BYTES {
             let window = source.read_at_with_encoding(anchor, span as usize, encoding)?;
             if window.dropped_leading == 0 && window.data.len() as u64 == span {
-                return Ok(reading_source::is_boundary(&window.data, span as usize, encoding));
+                return Ok(reading_source::is_boundary(
+                    &window.data,
+                    span as usize,
+                    encoding,
+                ));
             }
         }
         // 跨度超出可验证范围或基点未对齐：**接受**（不猜测、不误拒——误拒会让整页无法提交）。
@@ -661,18 +665,42 @@ mod tests {
         let text = "中文abc";
         let bytes = text.as_bytes();
         let window = make_window(0, bytes, 0);
-        assert_eq!(is_char_boundary_in_window(&window, 0, TextEncoding::Utf8), Some(true));
-        assert_eq!(is_char_boundary_in_window(&window, 1, TextEncoding::Utf8), Some(false));
-        assert_eq!(is_char_boundary_in_window(&window, 3, TextEncoding::Utf8), Some(true));
-        assert_eq!(is_char_boundary_in_window(&window, 4, TextEncoding::Utf8), Some(false));
-        assert_eq!(is_char_boundary_in_window(&window, 9, TextEncoding::Utf8), Some(true));
-        assert_eq!(is_char_boundary_in_window(&window, 10, TextEncoding::Utf8), None);
+        assert_eq!(
+            is_char_boundary_in_window(&window, 0, TextEncoding::Utf8),
+            Some(true)
+        );
+        assert_eq!(
+            is_char_boundary_in_window(&window, 1, TextEncoding::Utf8),
+            Some(false)
+        );
+        assert_eq!(
+            is_char_boundary_in_window(&window, 3, TextEncoding::Utf8),
+            Some(true)
+        );
+        assert_eq!(
+            is_char_boundary_in_window(&window, 4, TextEncoding::Utf8),
+            Some(false)
+        );
+        assert_eq!(
+            is_char_boundary_in_window(&window, 9, TextEncoding::Utf8),
+            Some(true)
+        );
+        assert_eq!(
+            is_char_boundary_in_window(&window, 10, TextEncoding::Utf8),
+            None
+        );
 
         // 窗口首部被裁剪时，窗口起点与终点仍视为边界。
         let trimmed = make_window(0, &bytes[3..], 3);
         assert_eq!(trimmed.start(), 3);
-        assert_eq!(is_char_boundary_in_window(&trimmed, 3, TextEncoding::Utf8), Some(true));
-        assert_eq!(is_char_boundary_in_window(&trimmed, 4, TextEncoding::Utf8), Some(false));
+        assert_eq!(
+            is_char_boundary_in_window(&trimmed, 3, TextEncoding::Utf8),
+            Some(true)
+        );
+        assert_eq!(
+            is_char_boundary_in_window(&trimmed, 4, TextEncoding::Utf8),
+            Some(false)
+        );
     }
 
     #[test]

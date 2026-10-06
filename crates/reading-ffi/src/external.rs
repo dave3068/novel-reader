@@ -28,7 +28,10 @@
 use std::os::raw::c_void;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use reading_source::{align_to_utf8_boundaries, Fingerprint, ReadStats, SourceError, SourceMetadata, TextSource, TextWindow, TextEncoding};
+use reading_source::{
+    align_to_utf8_boundaries, Fingerprint, ReadStats, SourceError, SourceMetadata, TextEncoding,
+    TextSource, TextWindow,
+};
 
 use crate::abi::invalid;
 

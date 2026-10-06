@@ -40,7 +40,7 @@ pub use reading_core::{ABI_VERSION, CORE_VERSION};
 /// V1 冻结的 ABI 入口数量（16 项最小接口 + 缓冲区释放 + ABI 版本查询）。
 ///
 /// 冻结依据：`results/gates/gate-0-baseline.md` §2.7。
-pub const ABI_ENTRY_COUNT: usize = 19;
+pub const ABI_ENTRY_COUNT: usize = 40;
 
 #[cfg(test)]
 mod tests {
@@ -55,7 +55,10 @@ mod tests {
 
     #[test]
     fn abi_entry_count_matches_frozen_baseline() {
-        assert_eq!(ABI_ENTRY_COUNT, 19, "18 项冻结 + nr_set_encoding");
+        assert_eq!(
+            ABI_ENTRY_COUNT, 40,
+            "18 项冻结 + nr_set_encoding + V1.1 分类 4 + 历史 3 + 配色 5 + 背景 4 + 作用域书籍 1 + 书籍分类映射 1 + 分类改名/移动 2 + 移动目标 1 项"
+        );
         assert_eq!(CORE_VERSION, reading_core::CORE_VERSION);
         assert_eq!(abi::ABI_ENTRY_NAMES.len(), ABI_ENTRY_COUNT);
     }
