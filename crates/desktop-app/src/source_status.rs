@@ -1257,11 +1257,7 @@ mod tests {
         let (book_id, path) = seed_book(&dir, "book.txt");
         fs::rename(&path, dir.join("parked.txt")).expect("移动测试副本");
 
-        let request = ShelfRequest {
-            request_id: 1,
-            layout_id: 1,
-            db_path: dir.db(),
-        };
+        let request = ShelfRequest::new(1, 1, dir.db());
         let result = shelf_job_with_source_check(request);
         let rows = match result.payload {
             BackgroundPayload::Shelf { rows, .. } => rows,
@@ -1274,11 +1270,7 @@ mod tests {
         assert!(rows[0].progress.contains("96"));
 
         // 标签是幂等的：再次投影不会把标签当成核心状态。
-        let again = shelf_job_with_source_check(ShelfRequest {
-            request_id: 2,
-            layout_id: 1,
-            db_path: dir.db(),
-        });
+        let again = shelf_job_with_source_check(ShelfRequest::new(2, 1, dir.db()));
         let rows = match again.payload {
             BackgroundPayload::Shelf { rows, .. } => rows,
             other => panic!("期望 Shelf 载荷，实际 {other:?}"),

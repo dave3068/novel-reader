@@ -52,6 +52,32 @@ pub const PICKER_PROGRAMS: [&str; 2] = ["zenity", "kdialog"];
 /// Open 对话框标题。
 pub const PICKER_TITLE: &str = "选择 TXT 文件";
 
+/// 多选对话框标题（V1.1）。
+pub const PICKER_TITLE_MULTI: &str = "选择多个 TXT 文件（可按住 Ctrl/Shift 多选）";
+
+/// 选目录对话框标题（V1.1）。
+pub const PICKER_TITLE_DIRECTORY: &str = "选择包含 TXT 的目录";
+
+/// 选图片对话框标题（V1.1，阅读背景图）。
+pub const PICKER_TITLE_IMAGE: &str = "选择阅读背景图片";
+
+/// 多选输出的分隔符（显式指定，不依赖 zenity 版本默认值）。
+///
+/// 选用 ASCII 单元分隔符 U+001F —— 它不可能出现在文件系统路径里，
+/// 而换行/冒号都可能（文件名可含换行）。
+pub const MULTI_SELECT_SEPARATOR: char = '\u{1f}';
+
+/// 图片过滤器（zenity 口径）。
+pub const PICKER_IMAGE_FILTER: &str = "图片文件 | *.png *.jpg *.jpeg *.bmp *.webp";
+
+/// 图片过滤器（kdialog 口径）。
+pub const PICKER_IMAGE_FILTER_KDLIB: &str = "*.png *.jpg *.jpeg *.bmp *.webp|图片文件";
+
+/// `HOME` 缺失时的对话框起始目录（根目录，不会导致对话框打不开）。
+fn home_fallback() -> String {
+    std::env::var("HOME").unwrap_or_else(|_| "/".to_string())
+}
+
 /// 当前 Unix 秒（仓储与状态列的时间口径）。
 pub fn now_unix() -> i64 {
     reading_storage::connection::now_unix()
@@ -171,9 +197,57 @@ fn storage_error(path: &Path, action: &str, error: impl std::fmt::Display) -> Im
 // ---------------------------------------------------------------------------
 
 /// 文件选择器抽象：返回 `Ok(None)` 表示用户取消（不是错误）。
+///
+/// V1.1 扩展（规格 R6 / T2）：单文件之外补**多选**与**选目录**，
+/// 以支撑「批量导入并按文件系统目录名归类」。三个方法的默认实现都是
+/// 「退回单文件选择」或「不支持」，这样既有实现（测试替身、程序化驱动）
+/// 不必立刻实现全部方法。
 pub trait FilePicker: Send + Sync {
     /// 打开系统对话框让用户选择一个 TXT 文件。
     fn pick_txt_file(&self) -> Result<Option<PathBuf>, ImportError>;
+
+    /// 多选 TXT 文件（V1.1）。
+    ///
+    /// 默认实现：退化为 `pick_txt_file`（返回 0 或 1 个），
+    /// 保证既有实现可用但**不具备**多选能力。
+    fn pick_txt_files(&self) -> Result<Option<Vec<PathBuf>>, ImportError> {
+        Ok(self.pick_txt_file()?.map(|path| vec![path]))
+    }
+
+    /// 选择一个目录（V1.1；批量导入按目录名归类的入口）。
+    ///
+    /// 默认实现：返回「不支持」，由调用方给出可理解提示，
+    /// **不得**静默退化成选文件（否则用户会以为选到了目录）。
+    fn pick_directory(&self) -> Result<Option<PathBuf>, ImportError> {
+        Err(ImportError::new(
+            ImportErrorKind::NoPicker,
+            None,
+            "当前环境不支持选择目录",
+        ))
+    }
+
+    /// 选择一张背景图片（V1.1；全局阅读背景图）。
+    ///
+    /// 默认实现：返回「不支持」—— **不得**退化成 `pick_txt_file`
+    /// （用户会以为选到了图片，实际拿到的是 TXT）。
+    fn pick_image(&self) -> Result<Option<PathBuf>, ImportError> {
+        Err(ImportError::new(
+            ImportErrorKind::NoPicker,
+            None,
+            "当前环境不支持选择图片",
+        ))
+    }
+
+    /// 选择一张图片（V1.1；阅读背景图入口，规格 R14）。
+    ///
+    /// 默认实现：返回「不支持」。
+    fn pick_image_file(&self) -> Result<Option<PathBuf>, ImportError> {
+        Err(ImportError::new(
+            ImportErrorKind::NoPicker,
+            None,
+            "当前环境不支持选择图片",
+        ))
+    }
 }
 
 /// 对话框程序方言（决定命令行参数与退出码语义）。
@@ -216,6 +290,54 @@ impl PickerFlavor {
                 "--getopenfilename".to_string(),
                 std::env::var("HOME").unwrap_or_else(|_| "/".to_string()),
                 format!("*.{TXT_EXTENSION}|TXT 文本文件"),
+            ],
+        }
+    }
+
+    /// 多选参数（V1.1 / 规格 R6）。
+    ///
+    /// `kdialog` 不支持多选，返回空切片 → 调用方按「不支持多选」如实回报，
+    /// **不**静默退化成单选（否则用户以为选了一堆）。
+    fn multi_args(self) -> Vec<String> {
+        match self {
+            PickerFlavor::Zenity => vec![
+                "--file-selection".to_string(),
+                "--multiple".to_string(),
+                // 多选时输出按分隔符拆行；显式指定以免受 zenity 版本默认值影响。
+                format!("--separator={MULTI_SELECT_SEPARATOR}"),
+                format!("--title={PICKER_TITLE_MULTI}"),
+                format!("--file-filter=TXT 文本文件 ({TXT_EXTENSION}) | *.{TXT_EXTENSION} *.TXT"),
+            ],
+            PickerFlavor::KDialog => Vec::new(),
+        }
+    }
+
+    /// 选目录参数（V1.1 / 规格 R6）。
+    fn directory_args(self) -> Vec<String> {
+        match self {
+            PickerFlavor::Zenity => vec![
+                "--file-selection".to_string(),
+                "--directory".to_string(),
+                format!("--title={PICKER_TITLE_DIRECTORY}"),
+            ],
+            PickerFlavor::KDialog => {
+                vec!["--getexistingdirectory".to_string(), home_fallback()]
+            }
+        }
+    }
+
+    /// 选图片参数（V1.1 / 规格 R14）。
+    fn image_args(self) -> Vec<String> {
+        match self {
+            PickerFlavor::Zenity => vec![
+                "--file-selection".to_string(),
+                format!("--title={PICKER_TITLE_IMAGE}"),
+                format!("--file-filter={PICKER_IMAGE_FILTER}"),
+            ],
+            PickerFlavor::KDialog => vec![
+                "--getopenfilename".to_string(),
+                home_fallback(),
+                PICKER_IMAGE_FILTER_KDLIB.to_string(),
             ],
         }
     }
@@ -355,6 +477,183 @@ impl FilePicker for SystemFilePicker {
                 )
             }))
         }
+    }
+
+    /// 多选 TXT（V1.1 / 规格 R6）。
+    ///
+    /// **Windows 未实测**：`GetOpenFileNameW` 不支持多选，需升级到
+    /// `IFileOpenDialog`（`Win32_UI_Shell`）。该路径留到 T11 收口期实现，
+    /// 本期在 Windows 上**明确返回不支持**，绝不静默退化成单选
+    /// （那会让用户以为选了一堆书，实际只导入一本）。
+    #[cfg(target_os = "windows")]
+    fn pick_txt_files(&self) -> Result<Option<Vec<PathBuf>>, ImportError> {
+        Err(windows_multi_select_unsupported())
+    }
+
+    /// 选目录（V1.1 / 规格 R6）。
+    #[cfg(target_os = "windows")]
+    fn pick_directory(&self) -> Result<Option<PathBuf>, ImportError> {
+        Err(windows_multi_select_unsupported())
+    }
+
+    /// 选图片（V1.1 / 规格 R14）。
+    ///
+    /// Windows 侧**单选**本可复用既有 `GetOpenFileNameW`（仅换过滤串），
+    /// 但为把 Windows 改动**整体隔离**到 T11 收口期（见 `pick_txt_files` 的说明），
+    /// 本期同样如实回报不支持，不在未实测路径上追加新代码。
+    #[cfg(target_os = "windows")]
+    fn pick_image_file(&self) -> Result<Option<PathBuf>, ImportError> {
+        Err(windows_multi_select_unsupported())
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_multi_select_unsupported() -> ImportError {
+    ImportError::new(
+        ImportErrorKind::NoPicker,
+        None,
+        "Windows 的多选 / 选目录 / 选图片尚未接入（需要 IFileOpenDialog）；本期请用「导入 TXT」逐个添加",
+    )
+}
+
+/// 把对话框输出解析为多条路径（按 [`MULTI_SELECT_SEPARATOR`] 拆分）。
+///
+/// 单独抽出以便单测：zenity 多选输出一条含分隔符的行。
+pub(crate) fn parse_multi_selection(stdout: &str) -> Vec<PathBuf> {
+    stdout
+        .split(MULTI_SELECT_SEPARATOR)
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(PathBuf::from)
+        .collect()
+}
+
+#[cfg(not(target_os = "windows"))]
+impl SystemFilePicker {
+    /// 在候选程序上跑一次给定参数，返回第一条成功的选择。
+    ///
+    /// 「取消」（退出码 1）立即返回 `Ok(None)`；程序缺失则继续试下一个；
+    /// 全部缺失才报 `NoPicker`。
+    fn run_picker(
+        &self,
+        args_for: fn(PickerFlavor) -> Vec<String>,
+        action: &str,
+    ) -> Result<Option<String>, ImportError> {
+        let mut last_missing: Option<ImportError> = None;
+        for program in &self.programs {
+            let flavor = PickerFlavor::from_program(program);
+            let args = args_for(flavor);
+            if args.is_empty() {
+                // 该程序不支持此能力（如 kdialog 无多选）：如实回报，不静默退化。
+                return Err(ImportError::new(
+                    ImportErrorKind::NoPicker,
+                    None,
+                    format!("`{program}` 不支持{action}"),
+                ));
+            }
+            let output = match Command::new(program).args(&args).output() {
+                Ok(output) => output,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    last_missing = Some(ImportError::new(
+                        ImportErrorKind::NoPicker,
+                        None,
+                        format!("未找到对话框程序 `{program}`"),
+                    ));
+                    continue;
+                }
+                Err(error) => {
+                    return Err(ImportError::new(
+                        ImportErrorKind::PickerFailed,
+                        None,
+                        format!("启动 `{program}` 失败：{error}"),
+                    ));
+                }
+            };
+            return match output.status.code() {
+                Some(0) => Ok(first_non_empty_line(&String::from_utf8_lossy(
+                    &output.stdout,
+                ))),
+                Some(1) => Ok(None),
+                other => Err(ImportError::new(
+                    ImportErrorKind::PickerFailed,
+                    None,
+                    format!("{action}对话框异常退出（{program} 退出码 {other:?}）"),
+                )),
+            };
+        }
+        Err(last_missing.unwrap_or_else(|| {
+            ImportError::new(
+                ImportErrorKind::NoPicker,
+                None,
+                "未配置任何对话框程序；可用 NR_FILE_PICKER 指定",
+            )
+        }))
+    }
+
+    fn pick_txt_files(&self) -> Result<Option<Vec<PathBuf>>, ImportError> {
+        let mut last_missing: Option<ImportError> = None;
+        for program in &self.programs {
+            let flavor = PickerFlavor::from_program(program);
+            let args = flavor.multi_args();
+            if args.is_empty() {
+                return Err(ImportError::new(
+                    ImportErrorKind::NoPicker,
+                    None,
+                    format!("`{program}` 不支持多选；请逐个添加文件"),
+                ));
+            }
+            let output = match Command::new(program).args(&args).output() {
+                Ok(output) => output,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    last_missing = Some(ImportError::new(
+                        ImportErrorKind::NoPicker,
+                        None,
+                        format!("未找到对话框程序 `{program}`"),
+                    ));
+                    continue;
+                }
+                Err(error) => {
+                    return Err(ImportError::new(
+                        ImportErrorKind::PickerFailed,
+                        None,
+                        format!("启动 `{program}` 失败：{error}"),
+                    ));
+                }
+            };
+            return match output.status.code() {
+                Some(0) => {
+                    let paths = parse_multi_selection(&String::from_utf8_lossy(&output.stdout));
+                    if paths.is_empty() {
+                        Ok(None)
+                    } else {
+                        Ok(Some(paths))
+                    }
+                }
+                Some(1) => Ok(None),
+                other => Err(ImportError::new(
+                    ImportErrorKind::PickerFailed,
+                    None,
+                    format!("多选对话框异常退出（{program} 退出码 {other:?}）"),
+                )),
+            };
+        }
+        Err(last_missing.unwrap_or_else(|| {
+            ImportError::new(
+                ImportErrorKind::NoPicker,
+                None,
+                "未配置任何对话框程序；可用 NR_FILE_PICKER 指定",
+            )
+        }))
+    }
+
+    fn pick_directory(&self) -> Result<Option<PathBuf>, ImportError> {
+        self.run_picker(PickerFlavor::directory_args, "选择目录")
+            .map(|value| value.map(PathBuf::from))
+    }
+
+    fn pick_image_file(&self) -> Result<Option<PathBuf>, ImportError> {
+        self.run_picker(PickerFlavor::image_args, "选择图片")
+            .map(|value| value.map(PathBuf::from))
     }
 }
 

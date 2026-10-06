@@ -160,6 +160,11 @@ pub struct ChoiceRow {
     pub name: String,
     /// 是否是当前生效的编码。
     pub current: bool,
+    /// 是否可选（V1.1：移动分类时自身与全部子孙不可选）。
+    ///
+    /// 判定**完全在 Rust**（`category_ops::move_targets`）；界面不得解析
+    /// 显示文案来推断 —— 那会把「循环可达性」语义下沉到 `.slint`。
+    pub enabled: bool,
 }
 
 /// 快捷键说明一行（tooltip 与快捷键面板同源）。
@@ -279,9 +284,110 @@ pub struct ReaderView {
     pub shortcut_immersive: String,
 }
 
-/// 书架页可显示字段（过滤 / 排序后的行 + 页头与通知）。
+/// 侧栏分类树一行（V1.1，规格 R1）。
+///
+/// 层级、计数、循环可达性**全部由 Rust 投影**，界面只做缩进与高亮
+/// （规格 R18 / 门禁 C34：语义算法不得进 `.slint`）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CategoryRow {
+    /// 分类 id 字符串（64 位字符串化，避免精度截断）。
+    pub id: String,
+    pub name: String,
+    /// 0 基深度（根下为 0；界面按此缩进）。
+    pub depth: i32,
+    /// 直属书籍数。
+    pub direct_count: i32,
+    /// 该分类及全部子孙的书籍总数。
+    pub total_count: i32,
+    /// 是否含子分类（有则显示展开箭头）。
+    pub has_children: bool,
+    /// 是否已展开（界面局部状态的回写）。
+    pub expanded: bool,
+    /// 是否为当前选中的过滤分类。
+    pub selected: bool,
+    /// 移动分类时的不可选标记（自身与全部子孙；规格 R5）。
+    /// 界面只置灰 —— **判定由 Rust 给出**。
+    pub move_blocked: bool,
+    /// 非真实分类（全部书籍 / 未分类）不显示行内菜单。
+    pub virtual_row: bool,
+    /// 0=全部书籍 1=未分类 2=真实分类。
+    pub kind: i32,
+    /// 父分类 id 字符串（真实分类才有；用于折叠状态回写）。
+    pub parent_id: String,
+}
+
+/// 阅读历史一行（V1.1；设计稿 H1）。
+///
+/// 全部字段由 Rust 的 `history_view::project` 给出：时间标签、位置标签、
+/// 进入方式与语义色**都是 Rust 的判定**，界面只渲染（不排序、不格式化）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HistoryRow {
+    /// 流水 id 字符串（64 位字符串化）。
+    pub id: String,
+    /// 书籍 id 字符串（「打开这本书」用）。
+    pub book_id: String,
+    /// 时间标签（今天 `HH:MM` / 本年 `MM-DD HH:MM` / 跨年完整）。
+    pub time_label: String,
+    /// 书名。
+    pub book_title: String,
+    /// 文件名（定位符末段，不暴露整条绝对路径）。
+    pub file_label: String,
+    /// 位置标签（`第 N 章 · 偏移 N 字节`；记录的是**打开时刻**的位置）。
+    pub position_label: String,
+    /// 进入方式（`书架打开` / `进度恢复` / …）。
+    pub entry_kind_label: String,
+    /// 语义色槽位：0=中性 2=成功。
+    pub entry_kind_tone: i32,
+}
+
+/// 按书聚合的组头（V1.1；设计稿 H2）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HistoryGroupHead {
+    pub book_id: String,
+    pub book_title: String,
+    /// 该书的流水条数。
+    pub count: i32,
+    /// 最近一次时间标签。
+    pub last_time_label: String,
+    /// 是否展开（界面局部状态的回写）。
+    pub expanded: bool,
+}
+
+/// 阅读历史视图（V1.1；设计稿 H1–H3）。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct HistoryView {
+    /// 流水行（时间倒序）。
+    pub rows: Vec<HistoryRow>,
+    /// 按书聚合的组头（组按最近时间倒序）。
+    pub groups: Vec<HistoryGroupHead>,
+    /// 当前是聚合视图（`false` = H1 流水视图）。
+    pub grouped: bool,
+    /// 是否空态。
+    pub empty: bool,
+    pub empty_title: String,
+    pub empty_desc: String,
+    /// 计数文案（`共 N 条记录` / `暂无记录`）。
+    pub count_label: String,
+    pub total_count: i64,
+    /// 历史视图**不显示**分类侧栏（Q5 裁定）。
+    pub sidebar_visible: bool,
+    /// 展开行级菜单的行下标（-1 = 未展开）。
+    pub menu_index: i32,
+}
+
+/// 书架页可显示字段（过滤 / 排序后的行 + 页头与通知 + 分类侧栏）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShelfView {
+    /// 侧栏分类树行（V1.1；首两行为「全部书籍」与「未分类」虚拟节点）。
+    pub categories: Vec<CategoryRow>,
+    /// 当前过滤的分类 id（字符串；空 = 根「全部书籍」）。
+    pub selected_category_id: String,
+    /// 侧栏是否可见（Rust 按断点投影，界面不自己算）。
+    pub sidebar_visible: bool,
+    /// 当前打开行内菜单的分类 id（V1.1；空串 = 未打开）。
+    pub category_menu_id: String,
+    /// 行内菜单挂在第几行（V1.1；-1 = 未打开）。
+    pub category_menu_offset: i32,
     /// 过滤排序后的行。
     pub rows: Vec<ShelfRow>,
     /// 是否空态。
@@ -317,6 +423,11 @@ pub struct ShelfView {
 impl Default for ShelfView {
     fn default() -> Self {
         Self {
+            categories: Vec::new(),
+            selected_category_id: String::new(),
+            sidebar_visible: true,
+            category_menu_id: String::new(),
+            category_menu_offset: -1,
             rows: Vec::new(),
             empty: true,
             empty_title: String::new(),
@@ -339,7 +450,7 @@ impl Default for ShelfView {
 /// 弹窗状态（S8 选项 / S13 移出与彻底删除 / S14 清理索引 / S15 快捷键 / 重命名）。
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DialogView {
-    /// 0=无 1=确认（通用）2=快捷键 3=选项 4=重命名。
+    /// 0=无 1=确认（通用）2=快捷键 3=选项 4=重命名 5=分类操作 6=删除分类去向。
     pub kind: i32,
     /// 确认弹窗标题。
     pub confirm_title: String,
@@ -373,6 +484,77 @@ pub struct DialogView {
     pub rename_value: String,
     /// 重命名目标书籍 id（Rust 内部使用）。
     pub rename_book_id: String,
+    // ---- V1.1 分类操作（R2/R3/R4/R5；设计稿 C3–C6）----
+    /// 分类操作弹窗标题（「新建分类」/「重命名分类」）。
+    pub category_dialog_title: String,
+    /// 分类操作弹窗的父分类行文案。
+    pub category_dialog_parent: String,
+    /// 分类操作弹窗的名称输入初值。
+    pub category_dialog_value: String,
+    /// 分类操作弹窗的错误提示（空 = 无；同父同名时由 Rust 给出）。
+    pub category_dialog_error: String,
+    /// 分类操作弹窗的主按钮文案。
+    pub category_dialog_label: String,
+    /// 分类操作弹窗针对的分类 id（新建时为空串 = 不针对既有分类）。
+    pub category_dialog_id: String,
+    /// 分类操作弹窗的父分类 id（新建/移动的落点；空串 = 根）。
+    pub category_dialog_parent_id: String,
+    /// 「删除分类」：目标分类 id。
+    pub category_delete_id: String,
+    /// 「删除分类」：目标分类名。
+    pub category_delete_name: String,
+    /// 「删除分类」：该分类 + 全部子孙下的书籍总数（计数口径 = 分类自身 + 子孙）。
+    pub category_delete_book_count: i64,
+    /// 「删除分类」：书籍去向（0=未选 1=移入某分类 2=移出书架 3=移回根）。
+    ///
+    /// 口径：**默认 0（未选）**，此时删除按钮保持 disabled 且不产生任何副作用
+    /// （规格 R3 / 设计稿 C4「必选」）。
+    pub category_delete_destination: i32,
+    /// 「删除分类」：去向为「移入某分类」时的目标 id。
+    pub category_delete_target_id: String,
+    /// 行内菜单项（新建子分类 / 重命名 / 移动到分类 / 删除）。
+    pub category_menu_items: Vec<ChoiceRow>,
+    // ---- V1.1 批量导入归类（规格 R6；设计稿 C7）----
+    /// 导入归类浮层标题。
+    pub organize_title: String,
+    /// 导入归类浮层的落点说明（当前分类面包屑）。
+    pub organize_scope: String,
+    /// 导入归类浮层的摘要（选中文件数、将建分类数）。
+    pub organize_summary: String,
+    /// 预览行（目录名 + 「N 本」；**由 Rust 拼好**，界面不统计）。
+    pub organize_preview: Vec<OrganizeRowView>,
+    /// 「记住我的选择」是否勾选。
+    pub organize_remember: bool,
+    /// 批量导入待处理的文件（绝对路径；浮层期间暂存，确认后消费）。
+    pub organize_paths: Vec<std::path::PathBuf>,
+    // ---- V1.1 阅读历史视图（规格 R8/R9；设计稿 H1–H3）----
+    /// 历史视图投影（`kind = 6` 时有效）。
+    pub history: HistoryView,
+    /// 是否处于历史视图（书架的另一种视图；Q5：不进分类侧栏）。
+    pub history_mode: bool,
+    /// 按书聚合的展开集合（会话内状态）。
+    pub history_expanded: Vec<i64>,
+    /// 历史行级菜单的行 id（空 = 未展开）。
+    pub history_menu_id: String,
+}
+
+/// 导入归类预览一行（只含可显示字段；计数已由 Rust 格式化为文本）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OrganizeRowView {
+    pub name: String,
+    pub count: String,
+}
+
+/// 行内菜单项标识（`CategoryAction` 的字符串口径，供 `row-action` 复用）。
+pub mod category_action {
+    /// 新建子分类。
+    pub const ADD_CHILD: &str = "category-add-child";
+    /// 重命名。
+    pub const RENAME: &str = "category-rename";
+    /// 移动到分类。
+    pub const MOVE: &str = "category-move";
+    /// 删除。
+    pub const DELETE: &str = "category-delete";
 }
 
 /// Toast（右下角；Rust 一次性定时器 3s 清除）。
@@ -515,6 +697,10 @@ pub struct UiSnapshot {
     pub app_version: String,
     /// 书架页字段。
     pub shelf: ShelfView,
+    /// 阅读历史视图（V1.1；`history_mode` 为真时界面用它替换书架列表）。
+    pub history: HistoryView,
+    /// 是否处于历史视图。
+    pub history_mode: bool,
     /// 阅读页字段。
     pub reader: ReaderView,
     /// 设置页字段。
@@ -576,6 +762,26 @@ pub struct ShelfRequest {
     pub layout_id: u64,
     /// 库文件路径。
     pub db_path: PathBuf,
+    /// 当前选中的分类 id 字符串（V1.1；空 = 根「全部书籍」）。
+    pub selected_category: String,
+    /// 选中分类的真实 id（`None` = 根；`Some(-1)` = 未分类；V1.1）。
+    pub selected_id: Option<i64>,
+    /// 折叠的分类 id 集合（V1.1）。
+    pub collapsed_categories: std::collections::HashSet<i64>,
+}
+
+impl ShelfRequest {
+    /// 构造「根作用域」的请求（不带分类过滤；V1 既有行为的默认值）。
+    pub fn new(request_id: u64, layout_id: u64, db_path: PathBuf) -> Self {
+        Self {
+            request_id,
+            layout_id,
+            db_path,
+            selected_category: String::new(),
+            selected_id: None,
+            collapsed_categories: std::collections::HashSet::new(),
+        }
+    }
 }
 
 /// 后台结果载荷。
@@ -593,6 +799,10 @@ pub enum BackgroundPayload {
         settings: Box<SettingsView>,
         /// 状态栏文本。
         status_text: String,
+        /// 分类侧栏行（V1.1；由 `category_tree::project` 投影）。
+        categories: Vec<CategoryRow>,
+        /// 过滤后的行数（用于页头徽标；V1.1）。
+        filtered_count: usize,
     },
     /// 失败（保留可读信息，不把错误文本当业务分支）。
     Failure {
@@ -637,6 +847,21 @@ pub struct AppState {
     shelf_view: i32,
     shelf_search: String,
     shelf_menu_id: Option<String>,
+    /// 当前选中的分类 id（字符串；空 = 根「全部书籍」，`category_tree::UNCATEGORIZED_SELECTED_ID`
+    /// = 未分类）。V1.1 新增。
+    shelf_category: String,
+    /// 折叠的分类 id 集合（会话内状态；V1.1 新增）。
+    shelf_collapsed: std::collections::HashSet<i64>,
+    /// 侧栏分类树行（后台投影；V1.1 新增）。
+    shelf_categories: Vec<CategoryRow>,
+    /// 当前打开行内菜单的分类 id（V1.1 新增；空串 = 未打开）。
+    shelf_category_menu_id: String,
+    /// 阅读历史视图投影（V1.1 新增）。
+    history: HistoryView,
+    /// 是否处于历史视图（V1.1 新增）。
+    history_mode: bool,
+    /// 按书聚合的展开集合（V1.1 新增；会话内状态）。
+    history_expanded: Vec<i64>,
     shelf_notice_ignored: bool,
     reader: ReaderView,
     settings: SettingsView,
@@ -665,6 +890,13 @@ impl AppState {
             shelf_view: 0,
             shelf_search: String::new(),
             shelf_menu_id: None,
+            shelf_category: String::new(),
+            shelf_collapsed: std::collections::HashSet::new(),
+            shelf_categories: Vec::new(),
+            shelf_category_menu_id: String::new(),
+            history: HistoryView::default(),
+            history_mode: false,
+            history_expanded: Vec::new(),
             shelf_notice_ignored: false,
             reader: ReaderView::default(),
             settings: SettingsView::default(),
@@ -792,6 +1024,129 @@ impl AppState {
         self.shelf_search = text.into();
     }
 
+    // ---- V1.1 分类侧栏状态（规格 R1）----
+
+    /// 当前选中的分类 id（空 = 根「全部书籍」）。
+    pub fn shelf_category(&self) -> &str {
+        &self.shelf_category
+    }
+
+    /// 选中分类（规格 R1；`id` 为空串 = 回到根）。
+    pub fn set_shelf_category(&mut self, id: impl Into<String>) {
+        self.shelf_category = id.into();
+    }
+
+    /// 侧栏分类树行（只读投影）。
+    pub fn shelf_categories(&self) -> &[CategoryRow] {
+        &self.shelf_categories
+    }
+
+    /// 用后台投影结果替换侧栏树。
+    pub fn set_shelf_categories(&mut self, rows: Vec<CategoryRow>) {
+        self.shelf_categories = rows;
+    }
+
+    /// 折叠集合（只读）。
+    pub fn shelf_collapsed(&self) -> &std::collections::HashSet<i64> {
+        &self.shelf_collapsed
+    }
+
+    /// 切换某分类的折叠状态（规格 R1）。
+    pub fn toggle_shelf_collapsed(&mut self, id: i64) {
+        if !self.shelf_collapsed.remove(&id) {
+            self.shelf_collapsed.insert(id);
+        }
+    }
+
+    /// 当前折叠集合的副本（供后台投影使用）。
+    pub fn shelf_collapsed_snapshot(&self) -> std::collections::HashSet<i64> {
+        self.shelf_collapsed.clone()
+    }
+
+    /// 当前选中分类的 id（供后台投影用；`None` = 根）。
+    pub fn shelf_selected_id(&self) -> Option<i64> {
+        if self.shelf_category.is_empty() {
+            return None;
+        }
+        if self.shelf_category == crate::category_tree::UNCATEGORIZED_SELECTED_ID {
+            return Some(crate::category_tree::UNCATEGORIZED_SENTINEL);
+        }
+        self.shelf_category.parse::<i64>().ok()
+    }
+
+    /// 当前打开行内菜单的分类 id（空串 = 未打开）。
+    pub fn category_menu_id(&self) -> &str {
+        &self.shelf_category_menu_id
+    }
+
+    /// 打开某分类的行内菜单。
+    pub fn set_category_menu_id(&mut self, id: impl Into<String>) {
+        self.shelf_category_menu_id = id.into();
+    }
+
+    /// 关闭行内菜单。
+    pub fn close_category_menu(&mut self) {
+        self.shelf_category_menu_id = String::new();
+    }
+
+    /// 行内菜单挂在第几行（界面按此定位；**-1 = 未打开**）。
+    ///
+    /// 下标由**已投影的行**反查（`categories`），界面不自己找。
+    pub fn category_menu_offset(&self) -> i32 {
+        if self.shelf_category_menu_id.is_empty() {
+            return -1;
+        }
+        self.shelf_categories
+            .iter()
+            .position(|row| row.id == self.shelf_category_menu_id)
+            .map(|index| index as i32)
+            .unwrap_or(-1)
+    }
+
+    // ---- V1.1 阅读历史（规格 R8/R9）----
+
+    /// 是否处于历史视图。
+    pub fn history_mode(&self) -> bool {
+        self.history_mode
+    }
+
+    /// 进入 / 离开历史视图。
+    pub fn set_history_mode(&mut self, on: bool) {
+        self.history_mode = on;
+    }
+
+    /// 历史视图投影（只读）。
+    pub fn history(&self) -> &HistoryView {
+        &self.history
+    }
+
+    /// 用后台投影结果替换历史视图。
+    pub fn set_history(&mut self, view: HistoryView) {
+        self.history = view;
+    }
+
+    /// 切换某本书的聚合展开状态（设计稿 H2）。
+    pub fn toggle_history_group(&mut self, book_id: i64) {
+        match self.history_expanded.iter().position(|id| *id == book_id) {
+            Some(index) => {
+                self.history_expanded.remove(index);
+            }
+            None => self.history_expanded.push(book_id),
+        }
+    }
+
+    /// 展开集合（只读）。
+    pub fn history_expanded(&self) -> &[i64] {
+        &self.history_expanded
+    }
+
+    /// 切换流水 / 按书聚合视图（设计稿 H2 的开关）。
+    ///
+    /// **仅界面局部状态**：本期不持久化（重启回到时间倒序，见设计稿 §9.2）。
+    pub fn set_history_grouped(&mut self, grouped: bool) {
+        self.history.grouped = grouped;
+    }
+
     /// 展开/收起行级菜单（`index` 为行下标；负值 = 收起）。
     pub fn set_shelf_menu_index(&mut self, index: i32) {
         if index < 0 {
@@ -820,6 +1175,8 @@ impl AppState {
     }
 
     /// 申请一个新的后台请求（请求号单调递增）。
+    ///
+    /// 携带当前分类作用域与折叠状态（V1.1）—— 后台据此过滤行并投影侧栏。
     pub fn next_shelf_request(&mut self, db_path: PathBuf) -> ShelfRequest {
         let request_id = self.next_request_id;
         self.next_request_id += 1;
@@ -827,6 +1184,9 @@ impl AppState {
             request_id,
             layout_id: self.current_layout_id,
             db_path,
+            selected_category: self.shelf_category.clone(),
+            selected_id: self.shelf_selected_id(),
+            collapsed_categories: self.shelf_collapsed_snapshot(),
         }
     }
 
@@ -853,8 +1213,11 @@ impl AppState {
                 removed_count,
                 settings,
                 status_text,
+                categories,
+                filtered_count: _,
             } => {
                 self.shelf_rows = rows;
+                self.shelf_categories = categories;
                 self.shelf_total = total_count;
                 self.shelf_removed = removed_count;
                 self.settings = *settings;
@@ -1195,6 +1558,11 @@ impl AppState {
         self.dialog = DialogView::default();
     }
 
+    /// 整体替换弹窗状态（V1.1 分类浮层用：整体替换避免逐字段遗漏）。
+    pub fn set_dialog(&mut self, dialog: DialogView) {
+        self.dialog = dialog;
+    }
+
     /// 当前弹窗种类。
     pub fn dialog_kind(&self) -> i32 {
         self.dialog.kind
@@ -1349,6 +1717,11 @@ impl AppState {
         let invalid = rows.iter().filter(|row| row.needs_relink).count();
         let shelf_empty = self.shelf_rows.is_empty();
         let shelf = ShelfView {
+            categories: self.shelf_categories.clone(),
+            selected_category_id: self.shelf_category.clone(),
+            sidebar_visible: true,
+            category_menu_id: self.shelf_category_menu_id.clone(),
+            category_menu_offset: self.category_menu_offset(),
             rows,
             empty: shelf_empty,
             empty_title: SHELF_EMPTY_TITLE.to_string(),
@@ -1386,6 +1759,8 @@ impl AppState {
             status_text: self.status_text.clone(),
             app_version: self.app_version.clone(),
             shelf,
+            history: self.history.clone(),
+            history_mode: self.history_mode,
             reader,
             settings: self.settings.clone(),
             dialog: self.dialog.clone(),
@@ -1402,6 +1777,58 @@ impl AppState {
 mod tests {
     use super::*;
 
+    fn category_row(id: &str, name: &str, depth: i32) -> CategoryRow {
+        CategoryRow {
+            id: id.to_string(),
+            name: name.to_string(),
+            depth,
+            direct_count: 0,
+            total_count: 0,
+            has_children: false,
+            expanded: true,
+            selected: false,
+            move_blocked: false,
+            virtual_row: false,
+            kind: 2,
+            parent_id: String::new(),
+        }
+    }
+
+    #[test]
+    fn category_menu_offset_resolves_row_index_from_projected_rows() {
+        let mut state = AppState::new("0.5.0");
+        state.set_shelf_categories(vec![
+            category_row("", "全部书籍", 0),
+            category_row("uncategorized", "未分类", 1),
+            category_row("1", "科幻", 1),
+            category_row("2", "中国科幻", 2),
+        ]);
+
+        // 未打开 → -1。
+        assert_eq!(state.category_menu_offset(), -1);
+
+        // 打开第 3 行（科幻）。
+        state.set_category_menu_id("1");
+        assert_eq!(state.category_menu_offset(), 2);
+
+        // 打开子分类行。
+        state.set_category_menu_id("2");
+        assert_eq!(state.category_menu_offset(), 3);
+
+        // 虚拟行也可打开（但界面不显示「…」，此处只保证下标可解析）。
+        state.set_category_menu_id("uncategorized");
+        assert_eq!(state.category_menu_offset(), 1);
+
+        // 未知 id → -1（界面据此不渲染菜单），**不**回退到 0。
+        state.set_category_menu_id("999");
+        assert_eq!(state.category_menu_offset(), -1);
+
+        // 关闭后回到 -1。
+        state.set_category_menu_id("1");
+        state.close_category_menu();
+        assert_eq!(state.category_menu_offset(), -1);
+    }
+
     fn shelf_result(request_id: u64, layout_id: u64, rows: Vec<ShelfRow>) -> BackgroundResult {
         BackgroundResult {
             request_id,
@@ -1412,6 +1839,8 @@ mod tests {
                 removed_count: 0,
                 settings: Box::new(SettingsView::default()),
                 status_text: format!("已加载 {request_id}"),
+                categories: Vec::new(),
+                filtered_count: 1,
             },
         }
     }

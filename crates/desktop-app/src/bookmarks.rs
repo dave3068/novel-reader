@@ -208,9 +208,7 @@ pub fn window(
     let keyword = search.trim().to_lowercase();
     let filtered: Vec<&MarkTarget> = targets
         .iter()
-        .filter(|target| {
-            keyword.is_empty() || target.title.to_lowercase().contains(&keyword)
-        })
+        .filter(|target| keyword.is_empty() || target.title.to_lowercase().contains(&keyword))
         .collect();
     if filtered.is_empty() || span == 0 {
         return (0, Vec::new());
@@ -442,7 +440,8 @@ mod tests {
         assert!(!rows[0].delete_pending);
         let (_, rows) = window(&targets, Some(&toc), 0, "", 0, 8, "", &selected);
         assert!(
-            rows.iter().any(|row| row.delete_pending && row.id == selected),
+            rows.iter()
+                .any(|row| row.delete_pending && row.id == selected),
             "删除待确认标记由入参给出"
         );
         let _ = fs::remove_dir_all(&dir);

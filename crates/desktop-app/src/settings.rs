@@ -64,6 +64,28 @@ pub const KEY_MARGIN_X: &str = "margin-x";
 pub const KEY_MARGIN_Y: &str = "margin-y";
 /// 字段键：主题（明亮/暗黑/跟随系统）。
 pub const KEY_THEME: &str = "theme";
+
+// ---- V1.1 自定义配色（规格 R10/R11；设计稿 T1）----
+/// 「启用自定义配色」开关（存 `reader_theme_custom.enabled`）。
+pub const KEY_CUSTOM_THEME: &str = "theme.custom.enabled";
+/// 正文基色（`#RRGGBB`；`NULL` = 沿用内置）。
+pub const KEY_BASE_FOREGROUND: &str = "theme.custom.foreground";
+/// 背景基色。
+pub const KEY_BASE_BACKGROUND: &str = "theme.custom.background";
+/// 主色基色。
+pub const KEY_BASE_PRIMARY: &str = "theme.custom.primary";
+/// 强调色基色。
+pub const KEY_BASE_ACCENT: &str = "theme.custom.accent";
+
+// ---- V1.1 全局阅读背景图（规格 R14–R17；设计稿 B1–B3）----
+/// 「选择背景图…」动作（复制到数据目录并启用）。
+pub const KEY_BACKGROUND_PICK: &str = "background.pick";
+/// 缩放口径（`Cover` / `Tile` / `Center`）。
+pub const KEY_BACKGROUND_FIT: &str = "background.fit";
+/// 遮罩强度（千分比 0–1000）。
+pub const KEY_BACKGROUND_SCRIM: &str = "background.scrim";
+/// 「清除背景图」动作。
+pub const KEY_BACKGROUND_CLEAR: &str = "background.clear";
 /// 字段键：交互模式（手势/按钮）。
 pub const KEY_INTERACTION_MODE: &str = "interaction-mode";
 /// 字段键：沉浸时自动隐藏工具条。
@@ -96,6 +118,12 @@ pub enum FieldKind {
     FontFamily,
     /// 数值（控件口径）。
     Numeric(NumericRange),
+    /// 开关（V1.1；如「启用自定义配色」）。
+    Toggle,
+    /// 文本（V1.1；如 `#RRGGBB` 基色）。
+    Text,
+    /// 动作（V1.1；点按执行，如「选择背景图…」）。
+    Action,
 }
 
 /// 设置字段元数据（界面只渲染，不判断语义）。
@@ -111,6 +139,14 @@ pub struct SettingsField {
     pub effective: bool,
     /// 不参与排版时的原因（`effective == true` 时为空）。
     pub note: &'static str,
+}
+
+/// 是否合法的 `#RRGGBB`（大小写不限）。
+pub fn is_hex_color(value: &str) -> bool {
+    let trimmed = value.trim();
+    trimmed
+        .strip_prefix('#')
+        .is_some_and(|hex| hex.len() == 6 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
 }
 
 /// 段距/缩进/边距在桌面 V1 的解释（不假装生效）。
@@ -200,6 +236,83 @@ pub const SETTINGS_FIELDS: &[SettingsField] = &[
         effective: true,
         note: "",
     },
+    // ---- V1.1 自定义配色（规格 R10/R11；设计稿 T1）----
+    SettingsField {
+        key: KEY_CUSTOM_THEME,
+        label: "启用自定义配色（关闭时用内置明/暗两套）",
+        kind: FieldKind::Toggle,
+        effective: true,
+        // `note` 是「未生效原因」；本字段生效，故必须为空（`field_catalog` 守这条）。
+        note: "",
+    },
+    SettingsField {
+        key: KEY_BASE_FOREGROUND,
+        // `note` 语义是「未生效原因」（生效字段必须为空，测试守这条），
+        // 故格式提示写进 label，不占用 note。
+        label: "正文色（#RRGGBB，留空沿用内置）",
+        kind: FieldKind::Text,
+        effective: true,
+        note: "",
+    },
+    SettingsField {
+        key: KEY_BASE_BACKGROUND,
+        // `note` 语义是「未生效原因」（生效字段必须为空，测试守这条），
+        // 故格式提示写进 label，不占用 note。
+        label: "背景色（#RRGGBB，留空沿用内置）",
+        kind: FieldKind::Text,
+        effective: true,
+        note: "",
+    },
+    SettingsField {
+        key: KEY_BASE_PRIMARY,
+        // `note` 语义是「未生效原因」（生效字段必须为空，测试守这条），
+        // 故格式提示写进 label，不占用 note。
+        label: "主色（#RRGGBB，留空沿用内置）",
+        kind: FieldKind::Text,
+        effective: true,
+        note: "",
+    },
+    SettingsField {
+        key: KEY_BACKGROUND_PICK,
+        label: "选择背景图…（全局一张，原图不会被改动）",
+        kind: FieldKind::Action,
+        effective: true,
+        note: "",
+    },
+    SettingsField {
+        key: KEY_BACKGROUND_FIT,
+        label: "背景缩放",
+        kind: FieldKind::Enum(&["cover", "tile", "center"]),
+        effective: true,
+        note: "",
+    },
+    SettingsField {
+        key: KEY_BACKGROUND_SCRIM,
+        label: "背景遮罩强度（保证正文可读）",
+        kind: FieldKind::Numeric(NumericRange {
+            min: 0,
+            max: 1000,
+            step: 50,
+        }),
+        effective: true,
+        note: "",
+    },
+    SettingsField {
+        key: KEY_BACKGROUND_CLEAR,
+        label: "清除背景图",
+        kind: FieldKind::Action,
+        effective: true,
+        note: "",
+    },
+    SettingsField {
+        key: KEY_BASE_ACCENT,
+        // `note` 语义是「未生效原因」（生效字段必须为空，测试守这条），
+        // 故格式提示写进 label，不占用 note。
+        label: "强调色（#RRGGBB，留空沿用内置）",
+        kind: FieldKind::Text,
+        effective: true,
+        note: "",
+    },
     SettingsField {
         key: KEY_INTERACTION_MODE,
         label: "翻页模式",
@@ -253,6 +366,8 @@ pub struct SettingsRowView {
     pub checked: bool,
     /// 值文本用等宽字体（机器可核对信息）。
     pub mono: bool,
+    /// V1.1 `kind = 8`：基色色块（`(r, g, b, a)`；Rust 解析好，界面不解析颜色）。
+    pub swatch: (u8, u8, u8, u8),
     /// 取值范围显示口径（如 `12 … 40`、`1.0 × … 2.4 ×`；空串表示不显示）。
     pub range_label: String,
     /// 行高（像素；与行内容一致：分组标题 48、滑杆行 72、其余 56）。
@@ -332,6 +447,11 @@ pub struct GlobalSettings {
     interaction_mode: String,
     immersive_autohide: bool,
     origin: SettingsOrigin,
+    /// V1.1 自定义配色的**显示快照**（从 `reader_theme_custom` 读回；只用于投影，
+    /// 实际写入走 `theme_custom::*`，保持单一写入口）。
+    custom_theme: Option<reading_storage::theme::ThemeCustom>,
+    /// V1.1 全局背景图的**显示快照**（从 `reader_background` 读回）。
+    background: Option<reading_storage::background::Background>,
 }
 
 impl Default for GlobalSettings {
@@ -341,6 +461,8 @@ impl Default for GlobalSettings {
             interaction_mode: MODE_BUTTONS.to_string(),
             immersive_autohide: true,
             origin: SettingsOrigin::Default,
+            custom_theme: None,
+            background: None,
         }
     }
 }
@@ -435,7 +557,10 @@ impl GlobalSettings {
         match key {
             KEY_LINE_SPACING => self.set_line_spacing_mult_permille(value)?,
             KEY_IMMERSIVE_AUTOHIDE => self.immersive_autohide = value != 0,
-            KEY_FONT_SIZE | KEY_PARAGRAPH_SPACING | KEY_FIRST_LINE_INDENT | KEY_MARGIN_X
+            KEY_FONT_SIZE
+            | KEY_PARAGRAPH_SPACING
+            | KEY_FIRST_LINE_INDENT
+            | KEY_MARGIN_X
             | KEY_MARGIN_Y => {
                 if let FieldKind::Numeric(range) = field.kind {
                     let clamped = value.clamp(range.min, range.max);
@@ -467,6 +592,11 @@ impl GlobalSettings {
                 "暗黑".to_string(),
             ],
             KEY_INTERACTION_MODE => vec!["按钮翻页".to_string(), "手势翻页".to_string()],
+            // V1.1 背景缩放：标签与顺序由存储层 `FitMode` 给出（单一事实源）。
+            KEY_BACKGROUND_FIT => reading_storage::background::FitMode::all()
+                .iter()
+                .map(|fit| fit.label().to_string())
+                .collect(),
             // 字体族：下拉候选 = 本机可用字体（与书架「排序」下拉同一交互口径）。
             KEY_FONT_FAMILY => FONT_FAMILIES.iter().map(|name| name.to_string()).collect(),
             _ => Vec::new(),
@@ -476,6 +606,15 @@ impl GlobalSettings {
     /// 枚举当前下标。
     pub fn option_index(&self, key: &str) -> i32 {
         match key {
+            KEY_BACKGROUND_FIT => self
+                .background
+                .as_ref()
+                .and_then(|record| {
+                    reading_storage::background::FitMode::all()
+                        .iter()
+                        .position(|fit| *fit == record.fit_mode)
+                })
+                .unwrap_or(0) as i32,
             KEY_THEME => match self.reader.theme.as_str() {
                 core_settings::THEME_LIGHT => 1,
                 core_settings::THEME_DARK => 2,
@@ -530,11 +669,11 @@ impl GlobalSettings {
     pub fn value_text(&self, key: &str) -> String {
         match key {
             KEY_FONT_FAMILY => self.reader.font_family.clone(),
-            KEY_FONT_SIZE => format!(
-                "{} px",
-                (self.reader.font_size_milli / 1_000).max(0)
+            KEY_FONT_SIZE => format!("{} px", (self.reader.font_size_milli / 1_000).max(0)),
+            KEY_LINE_SPACING => format!(
+                "{:.1} ×",
+                self.line_spacing_mult_permille() as f64 / 1_000.0
             ),
-            KEY_LINE_SPACING => format!("{:.1} ×", self.line_spacing_mult_permille() as f64 / 1_000.0),
             KEY_PARAGRAPH_SPACING => format_milli_px(self.reader.paragraph_spacing_milli),
             KEY_FIRST_LINE_INDENT => format_milli_px(self.reader.first_line_indent_milli),
             KEY_MARGIN_X => format_milli_px(self.reader.margin_x_milli),
@@ -548,7 +687,88 @@ impl GlobalSettings {
                     "关".to_string()
                 }
             }
+            // V1.1 配色字段：值不在 `GlobalSettings` 里（存 `reader_theme_custom`），
+            // 投影时由调用方用 `theme_custom_value` 覆盖。
+            KEY_CUSTOM_THEME | KEY_BASE_FOREGROUND | KEY_BASE_BACKGROUND | KEY_BASE_PRIMARY
+            | KEY_BASE_ACCENT => self.custom_theme_value(key),
+            // ---- V1.1 背景图 ----
+            KEY_BACKGROUND_PICK => match self.background.as_ref() {
+                // **只显示文件名**（相对名），不暴露用户原图的完整路径。
+                Some(record) => format!("已设置：{}", record.file_name),
+                None => "未设置".to_string(),
+            },
+            KEY_BACKGROUND_FIT => self
+                .background
+                .as_ref()
+                .map(|record| record.fit_mode.label().to_string())
+                .unwrap_or_else(|| "覆盖铺满".to_string()),
+            KEY_BACKGROUND_SCRIM => self
+                .background
+                .as_ref()
+                .map(|record| format!("{}%", record.scrim_permille / 10))
+                .unwrap_or_else(|| {
+                    format!(
+                        "{}%",
+                        reading_storage::background::DEFAULT_SCRIM_PERMILLE / 10
+                    )
+                }),
+            KEY_BACKGROUND_CLEAR => match self.background.as_ref() {
+                Some(record) => format!("清除（{}）", record.file_name),
+                None => "未设置，无需清除".to_string(),
+            },
             _ => String::new(),
+        }
+    }
+
+    /// V1.1：当前背景图记录（`None` = 未设置）。
+    pub fn background(&self) -> Option<&reading_storage::background::Background> {
+        self.background.as_ref()
+    }
+
+    /// V1.1：某个基色字段的色块 RGBA（`None` = 未设置该基色）。
+    ///
+    /// **只解析用户所选的值**；未设置时返回 `None`，界面显示空底 + 红框
+    /// （而不是拿内置值冒充用户的选择）。
+    pub fn custom_theme_swatch(&self, key: &str) -> Option<(u8, u8, u8, u8)> {
+        let theme = self.custom_theme.as_ref()?;
+        let raw = match key {
+            KEY_BASE_FOREGROUND => theme.base.foreground.as_deref(),
+            KEY_BASE_BACKGROUND => theme.base.background.as_deref(),
+            KEY_BASE_PRIMARY => theme.base.primary.as_deref(),
+            KEY_BASE_ACCENT => theme.base.accent.as_deref(),
+            _ => return None,
+        };
+        let rgb = reading_storage::theme::parse_hex(raw)?;
+        Some((rgb[0], rgb[1], rgb[2], 0xff))
+    }
+
+    /// V1.1：配色字段的显示值（来自内联快照；未加载时给出明确占位）。
+    pub fn custom_theme_value(&self, key: &str) -> String {
+        let Some(theme) = self.custom_theme.as_ref() else {
+            return "（未设置）".to_string();
+        };
+        if key == KEY_CUSTOM_THEME {
+            return if theme.enabled {
+                "开".to_string()
+            } else {
+                "关".to_string()
+            };
+        }
+        let value = match key {
+            KEY_BASE_FOREGROUND => theme.base.foreground.as_deref(),
+            KEY_BASE_BACKGROUND => theme.base.background.as_deref(),
+            KEY_BASE_PRIMARY => theme.base.primary.as_deref(),
+            KEY_BASE_ACCENT => theme.base.accent.as_deref(),
+            _ => None,
+        };
+        value.unwrap_or("（沿用内置）").to_string()
+    }
+
+    /// 开关字段的当前值（V1.1）。
+    pub fn toggle_value(&self, key: &str) -> bool {
+        match key {
+            KEY_CUSTOM_THEME => self.custom_theme.as_ref().is_some_and(|t| t.enabled),
+            _ => false,
         }
     }
 
@@ -590,6 +810,14 @@ impl GlobalSettings {
                 let current = self.control_value(key);
                 let next = (current + (delta as i32) * range.step).clamp(range.min, range.max);
                 self.set_control_value(key, next)?;
+            }
+            // V1.1：开关与文本**不参与 delta 调整**（开关是点按、文本是输入）。
+            // 这里如实报错而不是静默吞掉，避免界面以为改成功了。
+            (key, FieldKind::Toggle | FieldKind::Text | FieldKind::Action) => {
+                return Err(SettingsError::InvalidValue {
+                    key: key.to_string(),
+                    detail: "不支持步进调整（开关与动作请点按，文本请直接输入）".to_string(),
+                });
             }
         }
         Ok(self.value_text(key) != before)
@@ -641,6 +869,31 @@ impl GlobalSettings {
                 }
                 self.set_control_value(key, number)?;
             }
+            // V1.1：开关（点按由 `set_bool` 处理）与基色文本（写入 `reader_theme_custom`）
+            // **不走** `GlobalSettings` 的内存字段 —— 它们存自己的表。
+            FieldKind::Toggle => {
+                return Err(SettingsError::InvalidValue {
+                    key: key.to_string(),
+                    detail: "开关请用点按接口（set_bool），不接受文本值".to_string(),
+                });
+            }
+            FieldKind::Text => {
+                // 基色由 `theme_custom::*` 持久化；这里只做格式校验并放行，
+                // 真正的写入由设置页回调调用存储层完成（保持单一写入口）。
+                if !value.is_empty() && !is_hex_color(value) {
+                    return Err(SettingsError::InvalidValue {
+                        key: key.to_string(),
+                        detail: format!("应为 #RRGGBB（收到 {value}）"),
+                    });
+                }
+            }
+            // V1.1：动作行不接受文本值（它们是点按）。
+            FieldKind::Action => {
+                return Err(SettingsError::InvalidValue {
+                    key: key.to_string(),
+                    detail: "动作行只响应点按，不接受文本值".to_string(),
+                });
+            }
         }
         Ok(())
     }
@@ -650,7 +903,8 @@ impl GlobalSettings {
         format!(
             "NR-SETTINGS changes={} origin={} font_family={} font_size_milli={} \
              line_spacing_milli={} paragraph_spacing_milli={} first_line_indent_milli={} \
-             margin_x_milli={} margin_y_milli={} theme={} interaction={} autohide={} dark={}",
+             margin_x_milli={} margin_y_milli={} theme={} interaction={} autohide={} dark={} \
+             custom_theme={} custom_fg={} custom_bg={} custom_primary={} custom_accent={}",
             changes,
             self.origin.as_str(),
             self.reader.font_family.replace(' ', "_"),
@@ -664,6 +918,11 @@ impl GlobalSettings {
             self.interaction_mode,
             u8::from(self.immersive_autohide),
             u8::from(self.theme_dark()),
+            u8::from(self.custom_theme.is_some()),
+            self.custom_theme_value(KEY_BASE_FOREGROUND),
+            self.custom_theme_value(KEY_BASE_BACKGROUND),
+            self.custom_theme_value(KEY_BASE_PRIMARY),
+            self.custom_theme_value(KEY_BASE_ACCENT),
         )
     }
 
@@ -757,6 +1016,9 @@ pub fn load(db_path: &Path) -> Result<GlobalSettings, SettingsError> {
         .map_err(|error| SettingsError::Storage(error.to_string()))?
         .map(|value| value != "0" && value.to_lowercase() != "false")
         .unwrap_or(true);
+    // V1.1：自定义配色读回失败**不得阻断设置加载**（否则一个配色问题会让整个
+    // 设置页打不开）—— 记 None 走内置，并在 `state_log` 里如实体现。
+    let custom_theme = reading_storage::theme::load_custom_theme(storage.conn()).unwrap_or(None);
     Ok(GlobalSettings {
         reader,
         interaction_mode,
@@ -766,6 +1028,9 @@ pub fn load(db_path: &Path) -> Result<GlobalSettings, SettingsError> {
         } else {
             SettingsOrigin::Default
         },
+        custom_theme,
+        // 背景读回失败同样**不阻断设置加载**（与配色一致）。
+        background: reading_storage::background::load(storage.conn()).unwrap_or(None),
     })
 }
 
@@ -784,7 +1049,11 @@ pub fn save(db_path: &Path, settings: &GlobalSettings, now: i64) -> Result<(), S
     meta::set(
         storage.conn(),
         IMMERSIVE_AUTOHIDE_KEY,
-        if settings.immersive_autohide { "1" } else { "0" },
+        if settings.immersive_autohide {
+            "1"
+        } else {
+            "0"
+        },
         now,
     )
     .map_err(|error| SettingsError::Storage(error.to_string()))?;
@@ -825,6 +1094,44 @@ pub fn load_shelf_sort(db_path: &Path) -> i32 {
         Ok(Some(value)) if value == "imported" => crate::app_state::SORT_IMPORTED,
         _ => crate::app_state::SORT_RECENT,
     }
+}
+
+/// 「记住导入归类选择」的持久化键（V1.1；规格 R6 / 设计稿 C7）。
+pub const IMPORT_ORGANIZE_CHOICE_KEY: &str = "import.organize_choice";
+
+/// 读取记住的导入归类选择。
+///
+/// 口径：`None` = 未记住（**每次批量导入都要问**）；`Some(true)` = 记住「按目录名归类」；
+/// `Some(false)` = 记住「不归类」。**不记住时不得给默认值**（那是用户的真实选择）。
+pub fn load_import_organize_choice(db_path: &Path) -> Option<bool> {
+    let storage = open_storage(db_path).ok()?;
+    match meta::get(storage.conn(), IMPORT_ORGANIZE_CHOICE_KEY) {
+        Ok(Some(value)) if value == "organize" => Some(true),
+        Ok(Some(value)) if value == "plain" => Some(false),
+        _ => None,
+    }
+}
+
+/// 保存记住的导入归类选择（`remember = false` 时清除该记录 = 复位）。
+pub fn save_import_organize_choice(
+    db_path: &Path,
+    choice: Option<bool>,
+    now: i64,
+) -> Result<(), SettingsError> {
+    let storage = open_storage(db_path)?;
+    let Some(organize) = choice else {
+        return meta::remove(storage.conn(), IMPORT_ORGANIZE_CHOICE_KEY)
+            .map(|_| ())
+            .map_err(|error| SettingsError::Storage(error.to_string()));
+    };
+    meta::set(
+        storage.conn(),
+        IMPORT_ORGANIZE_CHOICE_KEY,
+        if organize { "organize" } else { "plain" },
+        now,
+    )
+    .map_err(|error| SettingsError::Storage(error.to_string()))?;
+    Ok(())
 }
 
 /// 保存书架排序。
@@ -886,8 +1193,17 @@ pub fn display_rows(
         value_current: settings.control_value(key),
         options: GlobalSettings::option_labels(key),
         current_index: settings.option_index(key),
-        checked: settings.control_value(key) != 0,
+        // V1.1：开关字段（`theme.custom.enabled`）的值不在 `control_value` 里
+        // （存自己的表），故单独取；其余字段沿用控件口径。
+        checked: if key == KEY_CUSTOM_THEME {
+            settings.toggle_value(key)
+        } else {
+            settings.control_value(key) != 0
+        },
         mono: false,
+        // V1.1：基色色块。**未设置时给透明**（界面以 `effective=false` 显示空底+红框），
+        // 不擅自用内置值冒充「用户选的颜色」。
+        swatch: settings.custom_theme_swatch(key).unwrap_or((0, 0, 0, 0)),
         range_label: range_label(key),
         // 行高与 y 偏移在 `display_rows` 末尾统一计算。
         row_height: 0,
@@ -926,6 +1242,28 @@ pub fn display_rows(
     // ---- 外观 ----
     header(&mut rows, "外观", "");
     rows.push(row(KEY_THEME, 2, 2));
+    // ---- 自定义配色（V1.1；派生式：只选 4 个基色，其余令牌由 Rust 派生）----
+    header(
+        &mut rows,
+        "自定义配色",
+        "只选四个基色（正文 / 背景 / 主色 / 强调），其余语义色由程序派生；明暗两套自动跟随。",
+    );
+    rows.push(row(KEY_CUSTOM_THEME, 3, 2));
+    // 基色行用 `kind = 8`（色块 + 可编辑文本），不用 `kind = 4`（只读文本）。
+    rows.push(row(KEY_BASE_FOREGROUND, 8, 2));
+    rows.push(row(KEY_BASE_BACKGROUND, 8, 2));
+    rows.push(row(KEY_BASE_PRIMARY, 8, 2));
+    rows.push(row(KEY_BASE_ACCENT, 8, 2));
+    // ---- 全局背景图（V1.1）----
+    header(
+        &mut rows,
+        "阅读背景图",
+        "全局一张，作用于阅读正文区；图片会被复制到应用数据目录，原图不会被改动。",
+    );
+    rows.push(row(KEY_BACKGROUND_PICK, 9, 2));
+    rows.push(row(KEY_BACKGROUND_FIT, 2, 2));
+    rows.push(row(KEY_BACKGROUND_SCRIM, 1, 2));
+    rows.push(row(KEY_BACKGROUND_CLEAR, 9, 2));
     // ---- 交互 ----
     header(&mut rows, "交互", "");
     rows.push(row(KEY_INTERACTION_MODE, 2, 3));
@@ -1011,10 +1349,16 @@ fn field_range(key: &str) -> Option<NumericRange> {
 /// 故由 `SettingsPage` 用 `Text.preferred-height` 实测后回报（2026-10-04 主人要求）。
 
 /// 逐行求和；`note_heights` 为 `kind = 7` 行的实测高度（键为行序号）。
-pub fn content_height_with(rows: &[SettingsRowView], note_heights: &std::collections::HashMap<usize, u32>) -> u32 {
+pub fn content_height_with(
+    rows: &[SettingsRowView],
+    note_heights: &std::collections::HashMap<usize, u32>,
+) -> u32 {
     let mut total: u32 = 0;
     for (index, row) in rows.iter().enumerate() {
-        total += 8 + note_heights.get(&index).copied().unwrap_or_else(|| row_height(row.kind));
+        total += 8 + note_heights
+            .get(&index)
+            .copied()
+            .unwrap_or_else(|| row_height(row.kind));
     }
     total + 24
 }
@@ -1097,6 +1441,36 @@ pub fn storage_counts(db_path: &Path) -> (i64, i64) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn import_organize_choice_is_absent_until_remembered() {
+        let dir = std::env::temp_dir().join(format!(
+            "nr-organize-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("建临时目录");
+        let db = dir.join("library.db");
+
+        // 未记住时必须是 `None` —— **不得**给出默认选项
+        // （默认选项会让用户失去「每次问一次」的选择权）。
+        assert_eq!(load_import_organize_choice(&db), None);
+
+        // 记住「按目录名归类」。
+        save_import_organize_choice(&db, Some(true), 1).expect("保存");
+        assert_eq!(load_import_organize_choice(&db), Some(true));
+
+        // 记住「不归类」（两者可来回切换）。
+        save_import_organize_choice(&db, Some(false), 2).expect("保存");
+        assert_eq!(load_import_organize_choice(&db), Some(false));
+
+        // 取消记住 = 清除记录（用户可反悔）。
+        save_import_organize_choice(&db, None, 3).expect("清除");
+        assert_eq!(load_import_organize_choice(&db), None);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// 说明块高度必须**按内容自适应**（2026-10-04 主人要求）。
     ///
     /// 缺陷背景：原先`row_height(7)` 是**固定估算值**，而说明块的真实高度取决于
@@ -1130,10 +1504,7 @@ mod tests {
         let mut one_line = std::collections::HashMap::new();
         one_line.insert(note_index, 54u32);
         let h_one = content_height_with(&rows, &one_line);
-        assert_eq!(
-            h_one, baseline,
-            "实测值等于紧估算时，总高度应与基线一致"
-        );
+        assert_eq!(h_one, baseline, "实测值等于紧估算时，总高度应与基线一致");
 
         // 实测比估算矮（更紧）时应按差值收窄，而不是仍占估算高度。
         let mut tighter = std::collections::HashMap::new();
@@ -1200,7 +1571,10 @@ mod tests {
 
         // ③ 方案 A：**只有确有未生效项的分组才挂说明块** —— 「排版」等全生效分组不应有。
         //    说明块只应出现在「版式（部分暂未生效）」之后。
-        let first_block = rows.iter().position(|row| row.kind == 7).expect("已有说明块");
+        let first_block = rows
+            .iter()
+            .position(|row| row.kind == 7)
+            .expect("已有说明块");
         let headers_before: Vec<&str> = rows[..first_block]
             .iter()
             .filter(|row| row.kind == 5)
@@ -1223,7 +1597,11 @@ mod tests {
             "说明块只应归属「版式」分组（section=1），实际 section={notice_sections:?}"
         );
         //分组名不得重复（曾出现两个「版式」）
-        let mut names: Vec<&str> = rows.iter().filter(|r| r.kind == 5).map(|r| r.label.as_str()).collect();
+        let mut names: Vec<&str> = rows
+            .iter()
+            .filter(|r| r.kind == 5)
+            .map(|r| r.label.as_str())
+            .collect();
         let before = names.len();
         names.sort_unstable();
         names.dedup();
@@ -1373,13 +1751,19 @@ mod tests {
         let mut settings = load(&db).expect("首次读取");
         assert_eq!(settings.origin(), SettingsOrigin::Default);
         settings.set_text(KEY_FONT_SIZE, "26").expect("字号");
-        settings.set_text(KEY_LINE_SPACING, "1400").expect("行距倍数");
+        settings
+            .set_text(KEY_LINE_SPACING, "1400")
+            .expect("行距倍数");
         settings.set_text(KEY_THEME, "dark").expect("主题");
         settings
             .set_text(KEY_INTERACTION_MODE, MODE_GESTURE)
             .expect("手势");
-        settings.set_text(KEY_MARGIN_X, "24").expect("左右边距（仅保存）");
-        settings.set_control_value(KEY_IMMERSIVE_AUTOHIDE, 0).expect("关闭自动隐藏");
+        settings
+            .set_text(KEY_MARGIN_X, "24")
+            .expect("左右边距（仅保存）");
+        settings
+            .set_control_value(KEY_IMMERSIVE_AUTOHIDE, 0)
+            .expect("关闭自动隐藏");
         save(&db, &settings, 1_700_000_000).expect("保存");
 
         let reloaded = load(&db).expect("再次读取");
