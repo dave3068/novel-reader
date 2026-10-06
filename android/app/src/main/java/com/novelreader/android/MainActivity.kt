@@ -85,6 +85,7 @@ class MainActivity : ComponentActivity() {
                 settingsStore = settingsStore,
                 bookCatalog = safHost,
                 hiddenBooks = hiddenBooksStore,
+                backgroundDir = backgroundDirPath(this),
             ),
         )[ReaderViewModel::class.java]
     }
@@ -118,6 +119,23 @@ class MainActivity : ComponentActivity() {
             )
         }
 
+    /**
+     * 系统选图器（V1.1 背景图）。
+     *
+     * 选中的 `content://` URI **不直接交给核心** —— 核心只接受文件路径。
+     * 由 [SafHost] 把它物化成本地中转文件（复用已审计的流式复制），
+     * 再把路径交给 ViewModel 调 `nr_set_background`（核心会复制到数据目录）。
+     */
+    private val backgroundLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+            if (uri == null) return@registerForActivityResult
+            safHost.materializeBackgroundSourceAsync(
+                uri = uri.toString(),
+                onReady = readerViewModel::applyPickedBackground,
+                onFailure = { detail -> readerViewModel.reportBackgroundFailure(detail) },
+            )
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -125,6 +143,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             NovelReaderApp(
                 onImportRequest = { importLauncher.launch(IMPORT_MIME_TYPES) },
+                onPickBackgroundImage = { backgroundLauncher.launch(IMAGE_MIME_TYPES) },
                 buildMarker = BuildConfig.BUILD_MARKER,
                 viewModel = readerViewModel,
             )
@@ -154,10 +173,23 @@ class MainActivity : ComponentActivity() {
          */
         private val IMPORT_MIME_TYPES = arrayOf("text/plain", "text/*", "application/octet-stream")
 
+        /** 背景图选择器过滤（核心侧还有扩展名白名单 `png/jpg/jpeg/webp` 二次校验）。 */
+        private val IMAGE_MIME_TYPES = arrayOf("image/*")
+
         /** 引擎的 SQLite 落盘路径（应用私有目录）；不传则引擎用内存库、进度不可持久化。 */
         private fun readerDbPath(context: Context): ByteArray {
             val dir = File(context.filesDir, "state").apply { mkdirs() }
             return File(dir, "reader.db").absolutePath.toByteArray(Charsets.UTF_8)
         }
+
+        /**
+         * 背景图落盘目录（V1.1）。
+         *
+         * **由宿主决定**并传给核心 —— 核心不猜平台数据目录
+         * （`XDG_DATA_HOME` 在 Android 上不存在）。核心会把用户选的图**复制**到这里，
+         * 数据库只存相对文件名。
+         */
+        private fun backgroundDirPath(context: Context): String =
+            File(context.filesDir, "backgrounds").apply { mkdirs() }.absolutePath
     }
 }

@@ -330,3 +330,7 @@ fun ReaderScreen(
 /** 路由判定（供 [NovelReaderApp] 的返回行为复用；纯函数，便于单测）。 */
 fun backRouteFor(state: ReaderUiState): ReaderRoute =
     if (state.reader.isOpen) ReaderRoute.READER else ReaderRoute.SHELF
+
+/** 从最近阅读返回的目标（与设置页共用同一「返回」语义）。 */
+fun backRouteFromHistory(state: ReaderUiState): ReaderRoute =
+    if (state.reader.isOpen) ReaderRoute.READER else ReaderRoute.SHELF

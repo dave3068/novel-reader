@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.novelreader.android.core.NrAbiConstants
+import com.novelreader.android.core.NrScopeKind
 import com.novelreader.android.core.NrChapterCodec
 import com.novelreader.android.core.NrEngine
 import com.novelreader.android.core.NrErrorKind
@@ -82,12 +83,28 @@ class ReaderViewModel(
     private val settingsStore: ReaderSettingsStore? = null,
     /** 书架目录端口（宿主登记的来源）。`null` = 书架仅显示本次会话打开过的书籍。 */
     private val bookCatalog: HostBookCatalog? = null,
+    /**
+     * 背景图落盘目录（V1.1；app-private 绝对路径）。
+     *
+     * `null` = 宿主未提供（单测/纯文件场景）：此时背景读写全部**如实回报**「宿主未提供目录」，
+     * 不猜测、不退化到任何默认路径（猜错会把图写到别处或写失败）。
+     */
+    private val backgroundDir: String? = null,
+    
     private val hiddenBooks: HiddenBooksStore? = null,
     workScope: CoroutineScope? = null,
 ) : ViewModel() {
 
     /** 状态变更的单一串行入口（生产 = `viewModelScope`；单测注入受控 scope）。 */
     private val work: CoroutineScope = workScope ?: viewModelScope
+
+    /**
+     * 选图时暂存的「缩放口径 + 遮罩」（V1.1 背景图）。
+     *
+     * 为什么要暂存：系统选图器是**异步**返回的，而口径必须与图一起交给
+     * `nr_set_background`（核心只在这一次调用里接收 `fit_mode`/`scrim_permille`）。
+     */
+    private var pendingBackgroundChoice: Pair<Int, Int>? = null
 
     /** 阅读状态串行锁：所有会改动阅读状态的挂起入口都必须经它。 */
     private val gate = Mutex()
@@ -188,11 +205,20 @@ runCatching { hiddenBooks?.load()?.let { hiddenBooksSet.addAll(it) } }
         // 每次进入书架都从宿主目录补齐一次（重启后书架因此不再为空）。
         refreshShelfFromCatalog()
         update { it.copy(route = ReaderRoute.SHELF) }
+        // 侧栏也要读回（分类可能在别处被改过 —— 如导入时自动归类）。
+        launchSerial { refreshCategories() }
     }
 
     /** 显示设置页（三个页面互不改变阅读状态）。 */
     fun openSettings() {
         update { it.copy(route = ReaderRoute.SETTINGS) }
+        // 进设置页即读回配色（基色 + 对比度）—— 界面只显示**核心认可**的值，
+        // 不缓存、不猜测，故每次进入都重读。
+        launchSerial {
+            refreshTheme()
+            // 背景也要读回（未配置目录时它是 no-op，不产生原生调用）。
+            refreshBackgroundIfConfigured()
+        }
     }
 
     /** 回到阅读页（未打开书籍时保持真实状态并给出提示）。 */
@@ -478,6 +504,630 @@ runCatching { hiddenBooks?.load()?.let { hiddenBooksSet.addAll(it) } }
             )
         }
         persistSettings()
+    }
+
+    // ------------------------------------------------------------------ V1.1 自定义配色
+
+    /**
+     * 读回配色状态（基色 + 对比度）并投影到界面。
+     *
+     * **派生与对比度都不在这里算** —— 基色由核心存、对比度由核心给（整数 × 100）；
+     * 本方法只做「取回 → 装箱」。
+     */
+    private fun refreshTheme() {
+        val base = try {
+            engine.getThemeBase()
+        } catch (error: NrException) {
+            setStatus(NrStatusForTheme.readFailed(error))
+            return
+        }
+        val contrast = try {
+            engine.getThemeContrast()
+        } catch (_: NrException) {
+            // 对比度读不到不该挡住基色显示：保留上一次读数即可。
+            null
+        }
+        update {
+            it.copy(
+                theme = it.theme.copy(
+                    enabled = base.enabled,
+                    foreground = base.foreground,
+                    background = base.background,
+                    primary = base.primary,
+                    accent = base.accent,
+                    contrastX100 = contrast?.ratioX100?.toInt() ?: it.theme.contrastX100,
+                    contrastPasses = contrast?.passes ?: it.theme.contrastPasses,
+                ),
+            )
+        }
+    }
+
+    /**
+     * 启用 / 关闭自定义配色（`nr_set_theme_enabled`）。
+     *
+     * 关闭时**保留基色**（核心侧语义），界面只回显。
+     */
+    fun onThemeEnabledChange(enabled: Boolean) {
+        launchSerial {
+            try {
+                engine.setThemeEnabled(enabled)
+            } catch (error: NrException) {
+                setStatus(NrStatusForTheme.writeFailed(error))
+                return@launchSerial
+            }
+            refreshTheme()
+            setStatus(if (enabled) "已启用自定义配色" else "已关闭自定义配色（基色保留）")
+        }
+    }
+
+    /**
+     * 写入一个基色（`nr_set_theme_base`）。
+     *
+     * [which]：`0`=正文 `1`=背景 `2`=主色 `3`=强调；空串 = **清除该项**（回落内置值）。
+     * 非法值由核心拒绝并**保留原值** —— 被拒时把读回的真实值写回界面，避免界面显示
+     * 一个核心并未接受的色值（否则界面与核心不一致）。
+     */
+    fun onThemeBaseChange(which: Int, value: String) {
+        launchSerial {
+            try {
+                engine.setThemeBase(which, value.trim().toByteArray(Charsets.UTF_8))
+            } catch (error: NrException) {
+                setStatus(NrStatusForTheme.writeFailed(error))
+            }
+            // 无论成功与否都重新读回：界面只显示**核心认可**的值。
+            refreshTheme()
+        }
+    }
+
+    // ------------------------------------------------------------------ V1.1 阅读历史
+
+    /**
+     * 从阅读历史条目打开对应的书（V1.1）。
+     *
+     * 历史只回 `book_id`，而打开书籍需要 `sourceIdentity`；两者的映射由宿主目录提供
+     * （[HostBookCatalog.byBookId] 默认遍历 `list()`，数据来自打开成功时回填的 `bookId`）。
+     *
+     * **不猜测**：映射缺失时如实回报「来源不在本机」，不做任何试探性打开
+     * （试探性打开会打开错误的书，比明确失败更糟）。
+     */
+    fun openHistoryBook(bookId: Long) {
+        val catalog = bookCatalog
+        val entry = catalog?.byBookId(bookId)
+        if (entry == null) {
+            setStatus(
+                if (catalog == null) {
+                    ReaderStatus.HISTORY_NO_CATALOG
+                } else {
+                    ReaderStatus.HISTORY_SOURCE_MISSING
+                },
+            )
+            return
+        }
+        // 复用书架的打开路径（含平台窗口来源的重新解析），不另写一套打开逻辑。
+        openBook(
+            ShelfBook(
+                sourceIdentity = entry.sourceIdentity,
+                displayName = entry.displayName,
+                bookId = entry.bookId ?: bookId,
+                totalBytes = 0L,
+                chapterCount = 0,
+                sourceKind = entry.sourceKind,
+            ),
+        )
+    }
+
+    // ------------------------------------------------------------------ V1.1 最近阅读
+
+    /**
+     * 进入最近阅读（V1.1）：先读回流水，再切路由。
+     *
+     * **排序不在这里做** —— 核心按 `opened_at DESC` 排好；界面不得重排（规格 §3.6）。
+     */
+    fun openHistory() {
+        update { it.copy(route = ReaderRoute.HISTORY, history = it.history.copy(loading = true)) }
+        launchSerial { refreshHistory() }
+    }
+
+    /** 读回历史流水（含核心格式化的时间标签）并投影到界面。 */
+    private fun refreshHistory() {
+        val read = try {
+            engine.listHistory()
+        } catch (error: NrException) {
+            update { it.copy(history = it.history.copy(loading = false)) }
+            setStatus(ReaderStatus.historyReadFailed(error.rawCode))
+            return
+        }
+        val rows = read.rows.map { row ->
+            HistoryRow(
+                entryId = row.entry.id,
+                bookId = row.entry.bookId,
+                title = row.title,
+                fileLabel = row.fileLabel,
+                // 核心已格式化 —— **原样**呈现，不重排、不截断。
+                timeLabel = row.timeLabel,
+                entryKind = row.entry.entryKind,
+                chapterIndex = row.entry.chapterIndex,
+                byteOffset = row.entry.byteOffset,
+            )
+        }
+        read.buffer.release(releaser)
+        update {
+            it.copy(
+                history = HistoryState(
+                    rows = rows,
+                    total = read.batch.total.toInt(),
+                    loading = false,
+                ),
+            )
+        }
+    }
+
+    /**
+     * 清除一条流水（`nr_clear_history_entry`）。
+     *
+     * 核心回 `false` 表示该 id 已不存在 —— 界面**如实回显**，不谎报「已清除」。
+     */
+    fun onClearHistoryEntry(entryId: Long) {
+        launchSerial {
+            val removed = try {
+                engine.clearHistoryEntry(entryId)
+            } catch (error: NrException) {
+                setStatus(ReaderStatus.historyReadFailed(error.rawCode))
+                return@launchSerial
+            }
+            refreshHistory()
+            setStatus(ReaderStatus.historyCleared(removed))
+        }
+    }
+
+    /**
+     * 清除某本书的全部流水（`nr_clear_history_for_book`）。**只删流水**。
+     */
+    fun onClearHistoryForBook(bookId: Long) {
+        launchSerial {
+            val removed = try {
+                engine.clearHistoryForBook(bookId)
+            } catch (error: NrException) {
+                setStatus(ReaderStatus.historyReadFailed(error.rawCode))
+                return@launchSerial
+            }
+            refreshHistory()
+            setStatus("已清除该书的 $removed 条流水")
+        }
+    }
+
+    /**
+     * 清空全部流水。
+     *
+     * ABI 没有「清空全部」入口，故按**当前行里出现的书**逐本调用
+     * `nr_clear_history_for_book` —— 口径与核心一致（只删流水，不动书籍/进度/书签）。
+     * 回显报告**实际删除总数**（核心返回值之和），不按界面行数谎报。
+     */
+    fun onClearAllHistory() {
+        launchSerial {
+            val bookIds = _ui.value.history.rows.map { row -> row.bookId }.distinct()
+            var removed = 0L
+            for (bookId in bookIds) {
+                removed += try {
+                    engine.clearHistoryForBook(bookId)
+                } catch (error: NrException) {
+                    setStatus(ReaderStatus.historyReadFailed(error.rawCode))
+                    return@launchSerial
+                }
+            }
+            refreshHistory()
+            setStatus("已清除 $removed 条流水")
+        }
+    }
+
+    // ------------------------------------------------------------------ V1.1 阅读背景图
+
+    /**
+     * 读回背景设置（V1.1）。
+     *
+     * **只回相对文件名**（规格 R15）—— 绝对路径由界面用 [backgroundDir] 拼，
+     * 核心不猜平台数据目录（`XDG_DATA_HOME` 在 Android 上不存在）。
+     */
+    private fun refreshBackground() {
+        val read = try {
+            engine.getBackground()
+        } catch (error: NrException) {
+            setStatus(ReaderStatus.backgroundReadFailed(error.rawCode))
+            return
+        }
+        read.buffer.release(releaser)
+        val entry = read.entry
+        update {
+            it.copy(
+                background = BackgroundState(
+                    fileName = read.fileName,
+                    fileSize = entry?.fileSize ?: 0L,
+                    scrimPermille = entry?.scrimPermille ?: 0L,
+                    fitMode = entry?.fitMode ?: 0L,
+                    scrimAlpha = entry?.scrimAlpha ?: 0,
+                ),
+            )
+        }
+    }
+
+    /**
+     * 宿主取回选中图片后调用：用**选图时暂存**的口径应用背景。
+     *
+     * 暂存缺失（理论上不该发生）时退化为核心默认值，而不是抛异常 —— 用户已经选了图，
+     * 不该因为一个内部计时问题把整件事丢掉。
+     */
+    fun applyPickedBackground(sourcePath: String) {
+        val (fit, scrim) = pendingBackgroundChoice
+            ?: (BackgroundFit.COVER to BackgroundState.DEFAULT_SCRIM_PERMILLE.toInt())
+        applyBackground(sourcePath, fit, scrim)
+    }
+
+    /**
+     * 应用一张新背景（V1.1）。
+     *
+     * [sourcePath] 是**宿主已物化**的本地图片路径（SAF URI 由 [HostBookCatalog] 一层的
+     * 宿主桥接转成路径；核心与 ViewModel 都不触碰 `content://`）。
+     *
+     * 核心会**复制**该图到 [backgroundDir] 并只把相对名写库；原图与中转件都不动（R14）。
+     */
+    fun applyBackground(sourcePath: String, fitMode: Int, scrimPermille: Int) {
+        val dir = backgroundDir
+        if (dir == null) {
+            setStatus(ReaderStatus.BACKGROUND_NO_DIR)
+            return
+        }
+        pendingBackgroundChoice = null
+        launchSerial {
+            try {
+                engine.setBackground(
+                    srcPath = sourcePath.toByteArray(Charsets.UTF_8),
+                    destDir = dir.toByteArray(Charsets.UTF_8),
+                    fitMode = fitMode,
+                    scrimPermille = scrimPermille,
+                )
+            } catch (error: NrException) {
+                setStatus(ReaderStatus.backgroundWriteFailed(error.rawCode))
+                return@launchSerial
+            }
+            refreshBackground()
+            setStatus("背景图已设置")
+        }
+    }
+
+    /**
+     * 宿主的取图/物化失败（选图被取消之外的真实错误）。
+     *
+     * 与导入失败同样**可见**，不静默：用户点了「选择图片…」却什么都没发生时，
+     * 必须能知道原因（文件读不到 / 格式不支持 / 目录不可写）。
+     */
+    fun reportBackgroundFailure(detail: String) {
+        pendingBackgroundChoice = null
+        update {
+            it.copy(
+                failure = ReaderFailure(NrErrors.NR_ERR_IO, NrErrorKind.CALLER, detail),
+                status = "背景图设置失败：$detail",
+            )
+        }
+    }
+
+    /** 调整遮罩强度（`nr_set_background_scrim`）—— **不换图**。 */
+    fun onBackgroundScrimChange(permille: Int) {
+        if (backgroundDir == null) {
+            setStatus(ReaderStatus.BACKGROUND_NO_DIR)
+            return
+        }
+        launchSerial {
+            try {
+                engine.setBackgroundScrim(permille)
+            } catch (error: NrException) {
+                setStatus(ReaderStatus.backgroundWriteFailed(error.rawCode))
+                return@launchSerial
+            }
+            refreshBackground()
+        }
+    }
+
+    /**
+     * 请求选图（V1.1）：先把**缩放口径与遮罩**记下来，再让宿主拉起系统选图器。
+     *
+     * 为什么必须一起传：核心**没有**「只改 `fit_mode`」的导出（存储层有
+     * `set_fit_mode`，但未在 ABI 暴露），故缩放口径只能在 `nr_set_background`
+     * 这一条路径上确定 —— 即「选图时决定」。界面据此把该项做成**只读**并写明缘由，
+     * 而不是给一个按了没反应的开关。
+     *
+     * [onPickImage] 由宿主提供（拉起系统的图片选择器）。
+     */
+    fun onBackgroundPickRequest(
+        fitMode: Int,
+        scrimPermille: Int,
+        onPickImage: (() -> Unit)? = null,
+    ) {
+        if (backgroundDir == null) {
+            setStatus(ReaderStatus.BACKGROUND_NO_DIR)
+            return
+        }
+        pendingBackgroundChoice = fitMode to scrimPermille
+        if (onPickImage == null) {
+            setStatus(ReaderStatus.BACKGROUND_NO_PICKER)
+            return
+        }
+        onPickImage()
+    }
+
+    /** 移除背景（`nr_clear_background`）：**只删核心生成的文件**，不动用户原图。 */
+    fun onBackgroundClear() {
+        val dir = backgroundDir
+        if (dir == null) {
+            setStatus(ReaderStatus.BACKGROUND_NO_DIR)
+            return
+        }
+        launchSerial {
+            try {
+                engine.clearBackground(dir.toByteArray(Charsets.UTF_8))
+            } catch (error: NrException) {
+                setStatus(ReaderStatus.backgroundWriteFailed(error.rawCode))
+                return@launchSerial
+            }
+            refreshBackground()
+            setStatus("背景图已移除")
+        }
+    }
+
+    /** 供界面在进入设置页时读回背景（与 [refreshTheme] 同一时机）。 */
+    private fun refreshBackgroundIfConfigured() {
+        if (backgroundDir == null) {
+            return
+        }
+        refreshBackground()
+    }
+
+    // ------------------------------------------------------------------ V1.1 书架分类侧栏
+
+    /**
+     * 读回分类树并重新装配侧栏（V1.1）。
+     *
+     * 层级（`depth`）、直接/合计计数**全部来自核心**；本方法只把扁平行排成深度优先序。
+     */
+    private fun refreshCategories() {
+        val read = try {
+            engine.listCategories()
+        } catch (error: NrException) {
+            setStatus("读取分类失败（错误码 ${error.rawCode}）")
+            return
+        }
+        val nodes = read.named.map { (entry, name) ->
+            CategoryTreeAssembly.Node(
+                id = entry.id,
+                parentId = entry.parentId,
+                name = name,
+                depth = entry.depth.toInt(),
+                directCount = entry.directBookCount,
+                totalCount = entry.totalBookCount,
+            )
+        }
+        val collapsed = _ui.value.categories.collapsed
+        val selected = _ui.value.categories.selectedId
+        val rootTotal = countInScope(NrScopeKind.ALL)
+        val uncategorized = countInScope(NrScopeKind.UNCATEGORIZED)
+        val rows = CategoryTreeAssembly.flatten(
+            nodes = nodes,
+            collapsed = collapsed,
+            selectedId = selected,
+            rootTotalCount = rootTotal,
+        )
+        update {
+            it.copy(
+                categories = it.categories.copy(
+                    rows = rows,
+                    rootTotalCount = rootTotal,
+                    uncategorizedCount = uncategorized,
+                    loading = false,
+                ),
+            )
+        }
+    }
+
+    /** 某作用域下的书籍数（核心给，界面不自己数）。 */
+    private fun countInScope(scopeKind: Int): Long = try {
+        engine.listBooksInScope(scopeKind).size.toLong()
+    } catch (_: NrException) {
+        0L
+    }
+
+    /**
+     * 选中一个作用域（V1.1）。
+     *
+     * [categoryId]：`null` = 全部；`-1` = 未分类；`> 0` = 分类 id（**含子孙**）。
+     *
+     * 可见书籍集合由**核心**给出（子树展开在核心完成）；界面只做集合成员判断。
+     */
+    fun onSelectCategory(categoryId: Long?) {
+        val kind = when {
+            categoryId == null -> NrScopeKind.ALL
+            categoryId == CategoryTreeAssembly.UNCATEGORIZED -> NrScopeKind.UNCATEGORIZED
+            else -> NrScopeKind.CATEGORY
+        }
+        val ids = try {
+            if (kind == NrScopeKind.ALL) null else engine.listBooksInScope(kind, categoryId ?: 0L)
+        } catch (error: NrException) {
+            // 过滤集合取不到时**明确失败**，不退化成「显示全部」——那会让用户以为筛选生效了。
+            setStatus("读取分类书籍失败（错误码 ${error.rawCode}）")
+            return
+        }
+        update {
+            it.copy(
+                visibleBookIds = ids,
+                categories = it.categories.copy(selectedId = categoryId),
+            )
+        }
+        refreshCategories()
+        refreshShelfFromCatalog()
+    }
+
+    /** 选中根「全部书籍」。 */
+    fun onSelectAllBooks() = onSelectCategory(null)
+
+    /** 展开 / 折叠一个分类（纯视图状态，不触碰核心）。 */
+    fun onToggleCategory(categoryId: Long) {
+        val collapsed = _ui.value.categories.collapsed
+        val next = if (categoryId in collapsed) collapsed - categoryId else collapsed + categoryId
+        update { it.copy(categories = it.categories.copy(collapsed = next)) }
+        refreshCategories()
+    }
+
+    /**
+     * 新建分类（V1.1；`nr_create_category`）。[parentId] `-1` = 建在根层。
+     *
+     * 失败（重名 / 非法层级）由核心拒绝并**保留原状态**，界面如实回显。
+     */
+    fun onCreateCategory(name: String, parentId: Long = CategoryTreeAssembly.UNCATEGORIZED) {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) {
+            setStatus("分类名不能为空")
+            return
+        }
+        launchSerial {
+            val createdId = try {
+                engine.createCategory(parentId, trimmed.toByteArray(Charsets.UTF_8))
+            } catch (error: NrException) {
+                setStatus("新建分类被拒（错误码 ${error.rawCode}）")
+                return@launchSerial
+            }
+            refreshCategories()
+            setStatus("已新建分类「$trimmed」（id=$createdId）")
+        }
+    }
+
+    /** 重命名分类（V1.1）。 */
+    fun onRenameCategory(categoryId: Long, name: String) {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) {
+            setStatus("分类名不能为空")
+            return
+        }
+        launchSerial {
+            try {
+                engine.renameCategory(categoryId, trimmed.toByteArray(Charsets.UTF_8))
+            } catch (error: NrException) {
+                setStatus("重命名被拒（错误码 ${error.rawCode}）")
+                // 被拒后必须**重新读回**：否则界面可能停在一个核心并未接受的树上
+                // （与 `onMoveCategory` 同一条纪律）。
+                refreshCategories()
+                return@launchSerial
+            }
+            refreshCategories()
+            setStatus("已重命名为「$trimmed」")
+        }
+    }
+
+    /**
+     * 移动分类到新父分类（V1.1）；[newParentId] `-1` = 移到根层。
+     *
+     * **移入自身或子孙由核心拒绝** —— 界面不得自行判断可达性（那是核心语义），
+     * 也不得先乐观改树：被拒时如实回显并重新读回真实树。
+     */
+    fun onMoveCategory(categoryId: Long, newParentId: Long) {
+        launchSerial {
+            try {
+                engine.moveCategory(categoryId, newParentId)
+            } catch (error: NrException) {
+                setStatus("移动分类被拒（错误码 ${error.rawCode}）")
+                // 被拒后必须**重新读回**：否则界面可能停在一个核心并未接受的树上。
+                refreshCategories()
+                return@launchSerial
+            }
+            clearCategoryTargets()
+            refreshCategories()
+            setStatus("已移动分类")
+        }
+    }
+
+    /**
+     * 载入移动 / 删除的目标选项（V1.1）。
+     *
+     * 目标由**核心**给出（含自身与子孙，但标 `selectable = false`）——
+     * 界面不自行判断可达性，只据 `selectable` 置灰。
+     */
+    fun onLoadCategoryTargets(sourceId: Long) {
+        launchSerial {
+            val rows = try {
+                engine.namedCategoryMoveTargets(sourceId)
+            } catch (error: NrException) {
+                setStatus("读取目标失败（错误码 ${error.rawCode}）")
+                return@launchSerial
+            }
+            update {
+                it.copy(
+                    categoryTargets = rows.map { (entry, name) ->
+                        CategoryTargetView(
+                            id = entry.id,
+                            name = name,
+                            depth = entry.depth,
+                            selectable = entry.selectable,
+                            totalCount = entry.totalCount,
+                        )
+                    },
+                )
+            }
+        }
+    }
+
+    /** 清空目标选项（关闭对话框）。 */
+    fun clearCategoryTargets() {
+        update { it.copy(categoryTargets = emptyList()) }
+    }
+
+    /**
+     * 删除分类（V1.1；规格 R3）。
+     *
+     * [destination] 必须显式选择（[DeleteDestination]）；[DeleteDestination.NONE] 时
+     * **不得执行** —— 核心也会拒绝，但界面这一层就不该发出请求（未选去向不可执行是硬约束）。
+     *
+     * 被拒（含「移入自身子孙」「去向未选」）时**重新读回**真实树，不留乐观状态。
+     */
+    fun onDeleteCategory(categoryId: Long, destination: Int, targetId: Long = -1L) {
+        if (destination == DeleteDestination.NONE) {
+            setStatus("请先选择书籍去向（未选择时不会执行删除）")
+            return
+        }
+        launchSerial {
+            val moved = try {
+                engine.deleteCategory(categoryId, destination, targetId)
+            } catch (error: NrException) {
+                setStatus("删除分类被拒（错误码 ${error.rawCode}）")
+                refreshCategories()
+                refreshShelfFromCatalog()
+                return@launchSerial
+            }
+            // 归属可能变了 ⇒ 可见集合与侧栏都要重算。
+            clearCategoryTargets()
+            val selected = _ui.value.categories.selectedId
+            if (selected != null) {
+                onSelectCategory(selected)
+            } else {
+                refreshCategories()
+                refreshShelfFromCatalog()
+            }
+            setStatus("已删除分类（移走 $moved 本书）")
+        }
+    }
+
+    /** 把一本书移入分类（V1.1）；[categoryId] `-1` = 移回未分类。 */
+    fun onMoveBookToCategory(bookId: Long, categoryId: Long) {
+        launchSerial {
+            try {
+                engine.moveBookToCategory(bookId, categoryId)
+            } catch (error: NrException) {
+                setStatus("移动书籍被拒（错误码 ${error.rawCode}）")
+                return@launchSerial
+            }
+            refreshCategories()
+            // 归属变了 ⇒ 当前作用域的可见集合也要重算（可能这本书已不属于当前分类）。
+            val selected = _ui.value.categories.selectedId
+            if (selected != null) {
+                onSelectCategory(selected)
+            }
+        }
     }
 
     /** 显式重新排版：先失效当前排版世代的边界，再按当前设置重建。 */
@@ -1209,16 +1859,31 @@ runCatching { hiddenBooks?.load()?.let { hiddenBooksSet.addAll(it) } }
             shelf[entry.sourceIdentity] = ShelfBook(
                 sourceIdentity = entry.sourceIdentity,
                 displayName = entry.displayName,
-                bookId = 0L,
+                // 目录里**可能已有**核心 book_id（打开成功时回填）—— 回填它，
+                // 而不是一律写 0，否则历史条目无法映射回来源（V1.1）。
+                bookId = entry.bookId ?: 0L,
                 totalBytes = 0L,
                 chapterCount = 0,
                 sourceKind = entry.sourceKind,
             )
             added = true
         }
-        if (added) {
-            update { it.copy(shelf = it.shelf.copy(books = shelf.values.toList())) }
+        // 分类作用域过滤（V1.1）：可见集合由**核心**给出（`nr_list_books_in_scope`，
+        // 子树展开在核心完成）；这里只做集合成员判断。
+        //
+        // ⚠️ **必须无条件执行**（不能只在 `added` 时做）：书架已填充后再切换分类，
+        // 目录里没有任何新条目，`added` 为 false —— 若过滤挂在 `added` 下，
+        // 「选中分类却不筛选」就会复现（初版即此缺陷，被侧栏测试抓出）。
+        //
+        // 注意：**从未打开过**的书在宿主目录里没有 bookId ⇒ 无法判断归属，
+        // 因此在非「全部」作用域下**不显示**（诚实：不知道就不猜）。「全部」作用域不过滤。
+        val visible = _ui.value.visibleBookIds
+        val books = if (visible == null) {
+            shelf.values.toList()
+        } else {
+            shelf.values.filter { book -> book.bookId != 0L && book.bookId in visible }
         }
+        update { it.copy(shelf = it.shelf.copy(books = books)) }
     }
 
     /**
@@ -1853,6 +2518,7 @@ runCatching { hiddenBooks?.load()?.let { hiddenBooksSet.addAll(it) } }
             settingsStore: ReaderSettingsStore? = null,
             bookCatalog: HostBookCatalog? = null,
             hiddenBooks: HiddenBooksStore? = null,
+            backgroundDir: String? = null,
         ): ViewModelProvider.Factory = viewModelFactory {
             initializer {
                 ReaderViewModel(
@@ -1862,6 +2528,7 @@ runCatching { hiddenBooks?.load()?.let { hiddenBooksSet.addAll(it) } }
                     settingsStore = settingsStore,
                     bookCatalog = bookCatalog,
                     hiddenBooks = hiddenBooks,
+                    backgroundDir = backgroundDir,
                 )
             }
         }

@@ -140,7 +140,177 @@ object NrCore {
     /** 19. 手动指定内容编码（0 = 清除覆盖、回到自动检测）。 */
     external fun nr_set_encoding(engine: Long, bookId: Long, encodingCode: Int, outResult: ByteArray): Int
 
+    // ---- 分类树（V1.1；加性契约修订，顺序与 novel_reader.h 一致）----
 
+    /** 列出分类树（一次性返回整棵树 + 名称字节池）；返回缓冲区字节，outBuffer 回传 `(ptr,len,cap)`。 */
+    external fun nr_list_categories(engine: Long, outBatch: ByteArray, outBuffer: LongArray): ByteArray?
+
+    /** 新建分类；`parentId = -1` 表示根下。同父同名由核心拒绝。 */
+    external fun nr_create_category(engine: Long, parentId: Long, name: ByteArray, outCategoryId: LongArray): Int
+
+    /** 移动书籍到分类；`categoryId = -1` 表示未分类（根）。 */
+    external fun nr_move_book_to_category(engine: Long, bookId: Long, categoryId: Long): Int
+
+    /**
+     * 删除分类。`destination` **必须显式给出**：`1`=移入 [targetId]、`2`=移出书架、
+     * `3`=移回根；传 `0`（未选去向）核心拒绝且**零副作用**。
+     */
+    external fun nr_delete_category(engine: Long, categoryId: Long, destination: Int, targetId: Long, outMovedCount: IntArray): Int
+
+    // ---- 阅读历史（V1.1；加性契约修订，顺序与 novel_reader.h 一致）----
+
+    /**
+     * 列出阅读历史。[bookId] > 0 限定单书；[limit] > 0 限量；[grouped] != 0 走按书聚合。
+     *
+     * **排序在核心完成**，调用方不得自行排序。
+     */
+    external fun nr_list_history(
+        engine: Long,
+        bookId: Long,
+        limit: Int,
+        grouped: Int,
+        outBatch: ByteArray,
+        outBuffer: LongArray,
+    ): ByteArray?
+
+    /** 清除一条阅读流水；`outRemoved` 写回 1 = 已清除、0 = 该 id 不存在。 */
+    external fun nr_clear_history_entry(engine: Long, entryId: Long, outRemoved: IntArray): Int
+
+    /** 清除某本书的全部阅读流水；`outRemovedCount` 写回实际删除条数。**只删流水**。 */
+    external fun nr_clear_history_for_book(engine: Long, bookId: Long, outRemovedCount: IntArray): Int
+
+    // ---- 自定义配色（V1.1；加性契约修订，顺序与 novel_reader.h 一致）----
+
+    /**
+     * 读回自定义配色的基色。**只回 4 个基色与 enabled** —— 40 个语义令牌不落库。
+     *
+     * 四项各 12 字节（`#RRGGBB` + NUL）；**全 0 = 该项未设置**（沿用内置值）。
+     */
+    external fun nr_get_theme_base(engine: Long, outBase: ByteArray): Int
+
+    /**
+     * 写入一个基色。[which]：`0`=正文 `1`=背景 `2`=主色 `3`=强调。
+     *
+     * [value] 长度为 **0** = **清除该项**（回落内置值，不是写入空颜色）；
+     * 非空但不是合法 `#RRGGBB` 时核心拒绝且**保留原值**。
+     * 写基色**不会**自动打开 enabled（那是用户的显式选择）。
+     */
+    external fun nr_set_theme_base(engine: Long, which: Int, value: ByteArray): Int
+
+    /** 切换「启用自定义配色」；关闭时**保留基色**（下次开启不必重选）。 */
+    external fun nr_set_theme_enabled(engine: Long, enabled: Int): Int
+
+    /**
+     * 取一个派生令牌的 RGBA（写 4 字节）。[which] 是令牌表下标；[dark] != 0 取暗色一套。
+     *
+     * 越界索引由核心拒绝；未启用自定义配色时回**内置**值。
+     * 派生**全在核心**（桌面与 Android 同一函数，故两端显示一致）。
+     */
+    external fun nr_get_theme_token(engine: Long, which: Int, dark: Int, outRgba: ByteArray): Int
+
+    /**
+     * 取对比度读数。[ratioX100] = 比值 × 100（如 `4.54:1` ⇒ 454）。
+     *
+     * `passes = 0` 表示不足，但核心**已保留用户基色**（只提示，不强改）。
+     */
+    external fun nr_get_theme_contrast(engine: Long, outResult: ByteArray): Int
+
+    // ---- 全局背景图（V1.1；加性契约修订，顺序与 novel_reader.h 一致）----
+
+    /**
+     * 读回背景。**只回相对文件名**（R15）—— 调用方拼自己的 app-private 前缀；
+     * `fileNameLen = 0` 表示未设置。
+     */
+    external fun nr_get_background(
+        engine: Long,
+        outBatch: ByteArray,
+        outBuffer: LongArray,
+    ): ByteArray?
+
+    /**
+     * 设置背景：核心**复制** [srcPath] 到 [destDir]（原图只读，绝不移动/删除），
+     * 生成安全文件名，**只把相对名写库**（R14–R16）。
+     *
+     * [destDir] 由调用方给（Android 传 `filesDir/backgrounds`）—— 核心**不猜平台数据目录**。
+     * [fitMode] < 0 或 [scrimPermille] < 0 = 用默认值。
+     */
+    external fun nr_set_background(
+        engine: Long,
+        srcPath: ByteArray,
+        destDir: ByteArray,
+        fitMode: Int,
+        scrimPermille: Int,
+        outBatch: ByteArray,
+        outBuffer: LongArray,
+    ): ByteArray?
+
+    /**
+     * 只调遮罩强度（**不换图**）。[scrimPermille] 必须在 `0..=1000`，否则被拒。
+     *
+     * `scrimAlpha` 已由核心从千分比换算，Kotlin 侧不再换算。
+     */
+    external fun nr_set_background_scrim(
+        engine: Long,
+        scrimPermille: Int,
+        outBatch: ByteArray,
+        outBuffer: LongArray,
+    ): ByteArray?
+
+    /**
+     * 清除背景：**只删核心生成的文件**（`bg-*` 前缀）；**不动用户原图**。
+     */
+    external fun nr_clear_background(
+        engine: Long,
+        destDir: ByteArray,
+        outBatch: ByteArray,
+        outBuffer: LongArray,
+    ): ByteArray?
+
+    // ---- 书籍分类映射（V1.1；筛选前置）----
+
+    /**
+     * 合法的移动 / 删除目标（含「未分类」；自身与子孙 `selectable = 0`）。
+     *
+     * **环判定在核心完成** —— 界面不得自行遍历父子链。
+     */
+    external fun nr_category_move_targets(
+        engine: Long,
+        sourceId: Long,
+        outBatch: ByteArray,
+        outBuffer: LongArray,
+    ): ByteArray?
+
+    /** 重命名分类；空名 / 坏 UTF-8 由核心拒绝。 */
+    external fun nr_rename_category(engine: Long, categoryId: Long, name: ByteArray): Int
+
+    /** 移动分类到新父分类（`newParentId = -1` = 根层）；移入自身或子孙必须拒绝。 */
+    external fun nr_move_category(engine: Long, categoryId: Long, newParentId: Long): Int
+
+    /**
+     * 列出某作用域下的在架书籍 id。
+     *
+     * `scopeKind`：`0` = 全部、`1` = 仅未分类、`2` = 指定分类（**含子孙**）。
+     * 子树展开在**核心**完成 —— 界面只做集合成员判断。
+     */
+    external fun nr_list_books_in_scope(
+        engine: Long,
+        scopeKind: Int,
+        categoryId: Long,
+        outBatch: ByteArray,
+        outBuffer: LongArray,
+    ): ByteArray?
+
+    /**
+     * 列出书籍 → 分类映射（只含**在架**书籍）；`categoryId = -1` 表示未分类。
+     *
+     * 用途：界面把书架条目按分类过滤 —— 宿主目录给出 sourceIdentity → bookId，
+     * 本入口给出 bookId → categoryId，两者相合即可筛选。
+     */
+    external fun nr_list_book_categories(
+        engine: Long,
+        outBatch: ByteArray,
+        outBuffer: LongArray,
+    ): ByteArray?
 
     /** 16. 取消请求（协作式）。requestId 必须非 0；可从另一线程调用。 */
     external fun nr_cancel_request(engine: Long, requestId: Long): Int

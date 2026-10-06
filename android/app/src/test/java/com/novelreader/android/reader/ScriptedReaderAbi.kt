@@ -2,7 +2,17 @@ package com.novelreader.android.reader
 
 import com.novelreader.android.core.NrAbi
 import com.novelreader.android.core.NrAbiConstants
+import com.novelreader.android.core.NrBookCategoryBatch
+import com.novelreader.android.core.NrCategoryChoiceBatch
+import com.novelreader.android.core.NrCategoryChoiceEntry
+import com.novelreader.android.core.NrIdList
+import com.novelreader.android.core.NrBookCategoryEntry
 import com.novelreader.android.core.NrBoundaryResult
+import com.novelreader.android.core.NrBackgroundBatch
+import com.novelreader.android.core.NrCategoryBatch
+import com.novelreader.android.core.NrHistoryBatch
+import com.novelreader.android.core.NrThemeBase
+import com.novelreader.android.core.NrThemeContrastResult
 import com.novelreader.android.core.NrChapterBatch
 import com.novelreader.android.core.NrChapterEntry
 import com.novelreader.android.core.NrEngine
@@ -566,6 +576,366 @@ internal class ScriptedReaderAbi(
 
     override fun releaseBuffer(ptr: Long, len: Long, capacity: Long): Int =
         native("releaseBuffer") { NrErrors.NR_ERR_OK }
+
+    // ---- V1.1 四组功能（脚本化替身）----
+    //
+    // ⚠️ 与 `FakeAbi` 同一纪律：**成功路径必须返回字节池 + 写回归还槽**，
+    // 不能返回 `null`（`null` 在门面语义里表示失败）。
+
+    /** 可编排的返回值码（非 0 时读操作返回 `null` = 失败）。 */
+    var v11Code: Int = NrErrors.NR_ERR_OK
+
+    /** 分类字节池（空 = 无分类）。 */
+    var categoriesBytes: ByteArray = ByteArray(0)
+    var categoryCount: Int = 0
+    var createdCategoryId: Long = 42L
+    var deletedMovedCount: Int = 0
+    var lastDeleteDestination: Int? = null
+
+    /** 历史字节池（空 = 无流水）。 */
+    var historyBytes: ByteArray = ByteArray(0)
+    var historyCount: Int = 0
+    var historyTotal: Int = 0
+    var historyEntryRemoved: Int = 1
+    var historyClearedCount: Int = 0
+
+    /** 背景字节池（空 = 未设置）。 */
+    var backgroundBytes: ByteArray = ByteArray(0)
+    var backgroundCount: Int = 0
+
+    /** 最后一次 `setBackground` 收到的（源路径, 目标目录）—— 供断言参数透传。 */
+    var lastBackgroundSet: Pair<String, String>? = null
+
+    /** 最后一次 `setBackground` 收到的（fit_mode, scrim_permille）—— 口径必须随图一起传。 */
+    var lastBackgroundChoice: Pair<Int, Int>? = null
+
+    /** 写操作的独立返回码（默认成功）—— 用于断言「被拒时界面仍显示核心认可的值」。 */
+    var themeWriteCode: Int = NrErrors.NR_ERR_OK
+
+    /** 基色 / 对比度：直接给定结构体字节。 */
+    var themeBaseBytes: ByteArray = ByteArray(NrThemeBase.STRUCT_SIZE)
+    var themeContrastBytes: ByteArray = ByteArray(NrThemeContrastResult.STRUCT_SIZE)
+    var themeTokenRgba: ByteArray = byteArrayOf(0x22, 0x22, 0x22, 0xFF.toByte())
+    var lastThemeBaseWrite: Pair<Int, String>? = null
+    var lastThemeEnabled: Int? = null
+
+    override fun listCategories(
+        engine: Long,
+        outBatch: ByteArray,
+        outBuffer: LongArray,
+    ): ByteArray? = native("listCategories") {
+        batchResult(categoriesBytes, categoryCount, NrCategoryBatch.STRUCT_SIZE, outBatch, outBuffer)
+    }
+
+    override fun createCategory(
+        engine: Long,
+        parentId: Long,
+        name: ByteArray,
+        outCategoryId: LongArray,
+    ): Int = native("createCategory") {
+        if (v11Code == NrErrors.NR_ERR_OK && outCategoryId.isNotEmpty()) {
+            outCategoryId[0] = createdCategoryId
+        }
+        v11Code
+    }
+
+    override fun moveBookToCategory(engine: Long, bookId: Long, categoryId: Long): Int =
+        native("moveBookToCategory") { v11Code }
+
+    override fun deleteCategory(
+        engine: Long,
+        categoryId: Long,
+        destination: Int,
+        targetId: Long,
+        outMovedCount: IntArray,
+    ): Int = native("deleteCategory") {
+        lastDeleteDestination = destination
+        if (v11Code == NrErrors.NR_ERR_OK && outMovedCount.isNotEmpty()) {
+            outMovedCount[0] = deletedMovedCount
+        }
+        v11Code
+    }
+
+    override fun listHistory(
+        engine: Long,
+        bookId: Long,
+        limit: Int,
+        grouped: Int,
+        outBatch: ByteArray,
+        outBuffer: LongArray,
+    ): ByteArray? = native("listHistory") {
+        // 历史批次头是 4 字节字段：count 在前、total 紧跟其后（与分类不同）。
+        if (v11Code != NrErrors.NR_ERR_OK) {
+            return@native null
+        }
+        val slots = slotsFor(historyBytes)
+        val batch = writer(NrHistoryBatch.STRUCT_SIZE)
+        batch.putInt(0, historyCount)
+        batch.putInt(4, historyTotal)
+        batch.putLong(8, slots[0])
+        batch.putLong(16, slots[1])
+        batch.putLong(24, slots[2])
+        copyInto(batch, outBatch)
+        outBuffer[0] = slots[0]
+        outBuffer[1] = slots[1]
+        outBuffer[2] = slots[2]
+        historyBytes
+    }
+
+    override fun clearHistoryEntry(engine: Long, entryId: Long, outRemoved: IntArray): Int =
+        native("clearHistoryEntry") {
+            if (v11Code == NrErrors.NR_ERR_OK && outRemoved.isNotEmpty()) {
+                outRemoved[0] = historyEntryRemoved
+            }
+            v11Code
+        }
+
+    override fun clearHistoryForBook(engine: Long, bookId: Long, outRemovedCount: IntArray): Int =
+        native("clearHistoryForBook") {
+            if (v11Code == NrErrors.NR_ERR_OK && outRemovedCount.isNotEmpty()) {
+                outRemovedCount[0] = historyClearedCount
+            }
+            v11Code
+        }
+
+    override fun getThemeBase(engine: Long, outBase: ByteArray): Int = native("getThemeBase") {
+        if (v11Code == NrErrors.NR_ERR_OK) {
+            themeBaseBytes.copyInto(outBase, endIndex = minOf(themeBaseBytes.size, outBase.size))
+        }
+        v11Code
+    }
+
+    override fun setThemeBase(engine: Long, which: Int, value: ByteArray): Int =
+        native("setThemeBase") {
+            lastThemeBaseWrite = which to String(value, Charsets.UTF_8)
+            themeWriteCode
+        }
+
+    override fun setThemeEnabled(engine: Long, enabled: Int): Int = native("setThemeEnabled") {
+        lastThemeEnabled = enabled
+        themeWriteCode
+    }
+
+    override fun getThemeToken(engine: Long, which: Int, dark: Int, outRgba: ByteArray): Int =
+        native("getThemeToken") {
+            if (v11Code == NrErrors.NR_ERR_OK) {
+                themeTokenRgba.copyInto(outRgba, endIndex = minOf(themeTokenRgba.size, outRgba.size))
+            }
+            v11Code
+        }
+
+    override fun getThemeContrast(engine: Long, outResult: ByteArray): Int =
+        native("getThemeContrast") {
+            if (v11Code == NrErrors.NR_ERR_OK) {
+                themeContrastBytes.copyInto(
+                    outResult,
+                    endIndex = minOf(themeContrastBytes.size, outResult.size),
+                )
+            }
+            v11Code
+        }
+
+    override fun getBackground(
+        engine: Long,
+        outBatch: ByteArray,
+        outBuffer: LongArray,
+    ): ByteArray? = native("getBackground") {
+        batchResult(backgroundBytes, backgroundCount, NrBackgroundBatch.STRUCT_SIZE, outBatch, outBuffer)
+    }
+
+    override fun setBackground(
+        engine: Long,
+        srcPath: ByteArray,
+        destDir: ByteArray,
+        fitMode: Int,
+        scrimPermille: Int,
+        outBatch: ByteArray,
+        outBuffer: LongArray,
+    ): ByteArray? = native("setBackground") {
+        lastBackgroundSet = String(srcPath, Charsets.UTF_8) to String(destDir, Charsets.UTF_8)
+        lastBackgroundChoice = fitMode to scrimPermille
+        batchResult(backgroundBytes, backgroundCount, NrBackgroundBatch.STRUCT_SIZE, outBatch, outBuffer)
+    }
+
+    override fun setBackgroundScrim(
+        engine: Long,
+        scrimPermille: Int,
+        outBatch: ByteArray,
+        outBuffer: LongArray,
+    ): ByteArray? = native("setBackgroundScrim") {
+        batchResult(backgroundBytes, backgroundCount, NrBackgroundBatch.STRUCT_SIZE, outBatch, outBuffer)
+    }
+
+    override fun clearBackground(
+        engine: Long,
+        destDir: ByteArray,
+        outBatch: ByteArray,
+        outBuffer: LongArray,
+    ): ByteArray? = native("clearBackground") {
+        batchResult(backgroundBytes, backgroundCount, NrBackgroundBatch.STRUCT_SIZE, outBatch, outBuffer)
+    }
+
+    /**
+     * 「定长头 + 字节池」批次的共用写法（分类 / 背景）。
+     *
+     * 头的第 0 个 u32 是条目数，第 8/16/24 字节是归还槽；
+     * `count` 之后没有第二个 u32（历史才有 `total`，故它单独写）。
+     */
+    private fun batchResult(
+        payload: ByteArray,
+        count: Int,
+        structSize: Int,
+        outBatch: ByteArray,
+        outBuffer: LongArray,
+    ): ByteArray? {
+        if (v11Code != NrErrors.NR_ERR_OK) {
+            return null
+        }
+        val slots = slotsFor(payload)
+        val batch = writer(structSize)
+        batch.putInt(0, count)
+        batch.putInt(4, 0)
+        batch.putLong(8, slots[0])
+        batch.putLong(16, slots[1])
+        batch.putLong(24, slots[2])
+        copyInto(batch, outBatch)
+        outBuffer[0] = slots[0]
+        outBuffer[1] = slots[1]
+        outBuffer[2] = slots[2]
+        return payload
+    }
+
+    // ---- 书籍分类映射（V1.1；筛选前置）----
+
+    /** 可编排的映射载荷（`bookId → categoryId` 编码为 16 字节行）。 */
+    var bookCategoriesBytes: ByteArray = ByteArray(0)
+
+    override fun listBookCategories(
+        engine: Long,
+        outBatch: ByteArray,
+        outBuffer: LongArray,
+    ): ByteArray? = native("listBookCategories") {
+        val slots = slotsFor(bookCategoriesBytes)
+        val batch = writer(NrBookCategoryBatch.STRUCT_SIZE)
+        batch.putInt(0, bookCategoriesBytes.size / NrBookCategoryEntry.STRUCT_SIZE)
+        batch.putInt(4, 0)
+        batch.putLong(8, slots[0])
+        batch.putLong(16, slots[1])
+        batch.putLong(24, slots[2])
+        copyInto(batch, outBatch)
+        outBuffer[0] = slots[0]
+        outBuffer[1] = slots[1]
+        outBuffer[2] = slots[2]
+        bookCategoriesBytes
+    }
+
+
+
+
+    // ---- 移动 / 删除目标（V1.1）----
+
+    var moveTargets: List<Triple<Long, Int, Pair<Boolean, String>>> = emptyList()
+    var lastMoveTargetsSource: Long? = null
+
+    override fun categoryMoveTargets(
+        engine: Long,
+        sourceId: Long,
+        outBatch: ByteArray,
+        outBuffer: LongArray,
+    ): ByteArray? = native("categoryMoveTargets") {
+        lastMoveTargetsSource = sourceId
+        if (v11Code != NrErrors.NR_ERR_OK) return@native null
+        val rowSize = NrCategoryChoiceEntry.STRUCT_SIZE
+        val headerSize = rowSize * moveTargets.size
+        val names = moveTargets.map { it.third.second.toByteArray(Charsets.UTF_8) }
+        val bytes = ByteArray(headerSize + names.sumOf { it.size })
+        val buf = java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        var cursor = headerSize
+        moveTargets.forEachIndexed { index, row ->
+            val base = index * rowSize
+            buf.putLong(base, row.first)
+            buf.putInt(base + 8, row.second)
+            buf.putInt(base + 12, if (row.third.first) 1 else 0)
+            buf.putLong(base + 16, 0L)
+            buf.putInt(base + 24, cursor)
+            buf.putInt(base + 28, names[index].size)
+            cursor += names[index].size
+        }
+        var at = headerSize
+        names.forEach { it.copyInto(bytes, at); at += it.size }
+
+        val slots = slotsFor(bytes)
+        val header = writer(NrCategoryChoiceBatch.STRUCT_SIZE)
+        header.putInt(0, moveTargets.size)
+        header.putInt(4, 0)
+        header.putLong(8, slots[0])
+        header.putLong(16, slots[1])
+        header.putLong(24, slots[2])
+        copyInto(header, outBatch)
+        outBuffer[0] = slots[0]
+        outBuffer[1] = slots[1]
+        outBuffer[2] = slots[2]
+        bytes
+    }
+
+    // ---- 分类改名 / 移动（V1.1）----
+
+    var lastRename: Pair<Long, String>? = null
+    var lastCategoryMove: Pair<Long, Long>? = null
+
+    override fun renameCategory(engine: Long, categoryId: Long, name: ByteArray): Int =
+        native("renameCategory") {
+            lastRename = categoryId to String(name, Charsets.UTF_8)
+            themeWriteCode
+        }
+
+    override fun moveCategory(engine: Long, categoryId: Long, newParentId: Long): Int =
+        native("moveCategory") {
+            lastCategoryMove = categoryId to newParentId
+            themeWriteCode
+        }
+
+    // ---- 作用域书籍 id（V1.1）----
+
+    /** 可编排的 id 载荷。 */
+    var scopeIds: List<Long> = emptyList()
+    var lastScopeRequest: Pair<Int, Long>? = null
+
+    /**
+     * 全部作用域请求（按序）。
+     *
+     * 侧栏刷新会顺带统计「全部 / 未分类」的书籍数（也是作用域请求），
+     * 故只看 `lastScopeRequest` 会被后一次覆盖 —— 断言须查这个列表。
+     */
+    val scopeRequests = mutableListOf<Pair<Int, Long>>()
+
+    override fun listBooksInScope(
+        engine: Long,
+        scopeKind: Int,
+        categoryId: Long,
+        outBatch: ByteArray,
+        outBuffer: LongArray,
+    ): ByteArray? = native("listBooksInScope") {
+        lastScopeRequest = scopeKind to categoryId
+        scopeRequests.add(scopeKind to categoryId)
+        // 读失败必须返回 null（= 失败），否则测试会以为「作用域为空」而不是「读不到」。
+        if (v11Code != NrErrors.NR_ERR_OK) return@native null
+        val bytes = ByteArray(scopeIds.size * 8)
+        val buf = java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        scopeIds.forEachIndexed { index, id -> buf.putLong(index * 8, id) }
+        val slots = slotsFor(bytes)
+        val batch = writer(NrIdList.STRUCT_SIZE)
+        batch.putInt(0, scopeIds.size)
+        batch.putInt(4, 0)
+        batch.putLong(8, slots[0])
+        batch.putLong(16, slots[1])
+        batch.putLong(24, slots[2])
+        copyInto(batch, outBatch)
+        outBuffer[0] = slots[0]
+        outBuffer[1] = slots[1]
+        outBuffer[2] = slots[2]
+        bytes
+    }
 
     companion object {
         const val ENGINE_HANDLE = 5150L
