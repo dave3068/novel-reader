@@ -170,7 +170,7 @@ for abi in "${ABI_LIST[@]}"; do
   jni_syms=$("$TC/llvm-nm" --format=posix -D --defined-only "$so" | awk '$2=="T"{print $1}' | grep -c '^Java_com_novelreader_android_core_NrCore_nr_1' || true)
   plain_syms=$("$TC/llvm-nm" --format=posix -D --defined-only "$so" | awk '$2=="T"{print $1}' | grep -cE '^Java_com_novelreader_android_core_NrCore_nr_[a-z]' || true)
   total_syms=$("$TC/llvm-nm" --format=posix -D --defined-only "$so" | awk '$2=="T"{print $1}' | grep -c '^Java_' || true)
-  if [ "$jni_syms" -lt 19 ]; then
+  if [ "$jni_syms" -lt 40 ]; then
     echo "[FAIL] [$abi] JNI 导出入口只有 $jni_syms 项（要求 >= 19）" | tee -a "$LOG"; check_fail=1
   fi
   # JNI 短名规则：方法名中的下划线必须转义为 _1（HotSpot/ART 一致，实测）。
@@ -200,7 +200,7 @@ for abi in "${ABI_LIST[@]}"; do
   {
     echo "[PASS] [$abi] $so"
     echo "       符号剥离: ${size_before} B → ${size_after} B（.symtab 已移除，.dynsym 保留）"
-    echo "       JNI 导出: $jni_syms 项（契约 18 项 + nr_set_encoding = 19 项，全部按 JNI 规则转义为 nr_1xxx）；非 libc 未定义符号: 0"
+    echo "       JNI 导出: $jni_syms 项（契约 18 项 + nr_set_encoding + V1.1 分类 4 + 历史 3 + 配色 5 + 背景 4 + 作用域书籍 1 + 书籍分类映射 1 + 分类改名/移动 2 + 移动目标 1 项 = 40 项，全部按 JNI 规则转义为 nr_1xxx）；非 libc 未定义符号: 0"
     echo "       sha256:   $sha"
   } | tee -a "$LOG"
 done
@@ -208,7 +208,7 @@ done
 echo | tee -a "$LOG"
 
 if [ "$HOST_SMOKE" -eq 1 ]; then
-  echo "== 宿主 JNI 层自检（真实加载 .so 并调用 19 项入口）" | tee -a "$LOG"
+  echo "== 宿主 JNI 层自检（真实加载 .so 并调用 40 项入口）" | tee -a "$LOG"
   if bash "$ANDROID_DIR/jni/host-smoke/run-host-jni-smoke.sh" >> "$LOG" 2>&1; then
     echo "[PASS] 宿主 JNI 层自检通过" | tee -a "$LOG"
   else

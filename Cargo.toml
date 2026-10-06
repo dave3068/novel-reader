@@ -21,7 +21,7 @@ members = [
 exclude = ["experiments"]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.5.0"
 # 发行许可：GPL-3.0-only（2026-10-02 主人裁定）。
 # Slint 1.17.1 为 "GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0" 三选一，
 # 本项目走 GPLv3 开源路径，故选 GPL-3.0-only；详见 docs/release/known-limitations.md 的 L2 / L7。
@@ -31,13 +31,13 @@ edition = "2021"
 rust-version = "1.98.0"
 publish = false
 
-# 内部 crate 依赖：精确版本锁定（`=0.3.0`），不使用 `*` / `^` / `~` 等浮动区间。
+# 内部 crate 依赖：精确版本锁定（`=0.5.0`），不使用 `*` / `^` / `~` 等浮动区间。
 [workspace.dependencies]
-reading-core = { path = "crates/reading-core", version = "=0.3.0" }
-reading-ffi = { path = "crates/reading-ffi", version = "=0.3.0" }
-reading-index = { path = "crates/reading-index", version = "=0.3.0" }
-reading-source = { path = "crates/reading-source", version = "=0.3.0" }
-reading-storage = { path = "crates/reading-storage", version = "=0.3.0" }
+reading-core = { path = "crates/reading-core", version = "=0.5.0" }
+reading-ffi = { path = "crates/reading-ffi", version = "=0.5.0" }
+reading-index = { path = "crates/reading-index", version = "=0.5.0" }
+reading-source = { path = "crates/reading-source", version = "=0.5.0" }
+reading-storage = { path = "crates/reading-storage", version = "=0.5.0" }
 
 [profile.release]
 opt-level = 3

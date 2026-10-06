@@ -176,9 +176,16 @@ def cmd_gethash(args: list[str]) -> int:
 
 
 def cmd_run(args: list[str]) -> int:
-    """启动验证：用桌面端内置的 NR_* 驱动（与 Linux 侧 smoke-desktop.sh 同一套判据）。"""
+    """启动验证：用桌面端内置的 NR_* 驱动（与 Linux 侧 smoke-desktop.sh 同一套判据）。
+
+    发布目录由 `NR_WIN_RELDIR` 指定 —— 此前硬编码 `novel-reader-0.2.0-windows-x86_64`，
+    换版本后**静默指向旧目录**（实测踩中：0.5.0 的启动验证会跑到 0.2.0 的产物上）。
+    """
     exe = args[0] if args else "novel-reader.exe"
-    d = r"C:\Users\%s\nr-verify\novel-reader-0.2.0-windows-x86_64" % USER
+    d = os.environ.get("NR_WIN_RELDIR", "")
+    if not d:
+        sys.exit("缺少 NR_WIN_RELDIR（远端发布目录绝对路径），例："
+                 r"C:\Users\<user>\nr-verify\dist\novel-reader-0.5.0-windows-x86_64")
     envs = args[1:]
     sets = "".join(f"$env:{e.split('=',1)[0]}='{e.split('=',1)[1]}';" for e in envs)
     script = (
@@ -221,12 +228,33 @@ def cmd_ps(args: list[str]) -> int:
     return rc
 
 
+def cmd_push(args: list[str]) -> int:
+    """把本地文件推到远端（复用 pty 认证；口令只从环境读取，不落盘）。"""
+    if len(args) < 2:
+        sys.exit("用法：push <本地路径> <远端路径>")
+    rc, out = scp(args[0], args[1])
+    print(out or f"rc={rc}")
+    return rc
+
+
+def cmd_pull(args: list[str]) -> int:
+    """把远端文件/目录拉回本地。"""
+    if len(args) < 2:
+        sys.exit("用法：pull <远端路径> <本地路径>")
+    argv = ["scp", *BASE, *EXTRA, "-r", f"{USER}@{HOST}:{args[0]}", args[1]]
+    rc, out = _drive(argv, TIMEOUT)
+    print(out or f"rc={rc}")
+    return rc
+
+
 COMMANDS = {
     "probe": cmd_probe,
     "gethash": cmd_gethash,
     "run": cmd_run,
     "psb64": cmd_psb64,
     "ps": cmd_ps,
+    "push": cmd_push,
+    "pull": cmd_pull,
 }
 
 
