@@ -10,8 +10,9 @@
 #          docs\{README.txt,platform-requirements.md}
 #          VERSION / MANIFEST.sha256
 #   2) 目标清单的单一事实来源是 `desktop/packaging/targets.json`；本脚本只产出发布目录。
-#   3) **不伪造平台结论**：本脚本在 Windows 上运行才有意义；本次交付的开发机为 DeepLinux，
-#      没有 pwsh / MSVC，**该脚本从未在任何 Windows 主机上执行过**（targets.json 中该目标为「待验证」）。
+#   3) **不伪造平台结论**：本脚本在 Windows 上运行才有意义。开发机为 DeepLinux（无 pwsh/MSVC），
+#      故 Windows 侧的执行由主机的 Windows 环境承担。**脚本自身执行过 ≠ 该版本已实测验收** ——
+#      是否已验收只认 VERSION 的 `verification_status` 与 results/ 下的证据。
 #
 # 用法（在 Windows 10/11 + MSVC 工具链 + Rust 1.98 下）：
 #   pwsh -NoProfile -File desktop\packaging\windows\package-windows.ps1 -OutDir dist
@@ -27,6 +28,10 @@ param(
     [string]$Target = 'x86_64-pc-windows-msvc',
     [string]$Version = '',
     [string[]]$BundleFont = @(),
+    # 发布目录 VERSION 里的验证状态。默认**如实标未验证**；
+    # 有实测证据时由调用方传入（例：`verified-<日期>-msvc-4steps`）。
+    # 此前硬编码 pending —— 在真的跑过 Windows 实测后，VERSION 仍在说「无实测证据」（已成假话）。
+    [string]$VerificationStatus = 'pending-待验证（无 Windows 实测证据）',
     [switch]$NoBuild,
     [switch]$StaticCrt,
     [switch]$Zip,
@@ -238,14 +243,15 @@ novel-reader $Version — Windows $ArchSegment（$Target）
 
 验证状态
 --------
-* 本发布目录的打包脚本从未在 Windows 主机上执行过（开发机为 Linux）；
-  windows-x86_64 目标在 desktop/packaging/targets.json 中为「待验证」，未实测前不得视为已发布。
+* 本发布目录的验证状态见 VERSION 的 verification_status 字段；
+  未标注 verified 时**不得视为已发布**（打包脚本在 Windows 上执行过 ≠ 该版本已实测验收）。
 "@
+$readme = $readme + "* 本次 verification_status=$VerificationStatus`n"
 Set-Content -LiteralPath (Join-Path $ReleaseDir 'docs\README.txt') -Value $readme -Encoding utf8
 
 $rustc = Get-Command rustc -ErrorAction SilentlyContinue
 $rustcVersion = if ($null -ne $rustc) { (& rustc --version) } else { 'rustc-unavailable' }
-$statusNote = 'pending-待验证（无 Windows 实测证据）'
+$statusNote = $VerificationStatus
 $versionLines = @(
     'name=novel-reader',
     "version=$Version",
@@ -274,7 +280,11 @@ $manifestLines = foreach ($file in $files) {
     $rel = $file.FullName.Substring($ReleaseDir.Length).TrimStart('\', '/').Replace('\', '/')
     "$hash  ./$rel"
 }
-Set-Content -LiteralPath $manifestPath -Value $manifestLines -Encoding ascii
+# ⚠️ 必须显式写 **LF**：`Set-Content` 在 Windows 上落 CRLF，
+# 会让 `sha256sum -c MANIFEST.sha256` 在 Linux/macOS 上**整体失败**
+# （实测：6 项全部报「FAILED open or read」，路径尾部带 `\r`）。
+$manifestText = ($manifestLines -join "`n") + "`n"
+[System.IO.File]::WriteAllText($manifestPath, $manifestText, (New-Object System.Text.ASCIIEncoding))
 
 $bad = 0
 foreach ($line in Get-Content -LiteralPath $manifestPath) {
@@ -333,4 +343,4 @@ if ($Zip) {
 }
 
 Write-Host "RESULT: OK — $ReleaseDir（$fileCount 个文件，binary_sha256=$exeHash）"
-Write-Host 'NR-PKG 注意：本脚本未在任何 Windows 主机执行过，packaging/targets.json 中该目标为「待验证」'
+Write-Host "NR-PKG 注意：本目录 verification_status=$VerificationStatus（是否已验收只认它，不认「脚本跑过」）"

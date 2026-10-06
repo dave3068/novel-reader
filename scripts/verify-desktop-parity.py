@@ -386,6 +386,442 @@ def check_ui_reachability_static(desktop_src: dict[str, str]) -> None:
         fail("[8] 反向对照失效：历史缺陷样本竟然通过")
 
 
+def _strip_slint_comments(text: str) -> str:
+    """剥离 `.slint` 的行注释（`//`）与块注释（`/* */`）。"""
+    out = []
+    index = 0
+    length = len(text)
+    while index < length:
+        if text.startswith("//", index):
+            end = text.find("\n", index)
+            index = length if end == -1 else end
+            continue
+        if text.startswith("/*", index):
+            end = text.find("*/", index + 2)
+            index = length if end == -1 else end + 2
+            continue
+        out.append(text[index])
+        index += 1
+    return "".join(out)
+
+
+def _strip_rust_comments(text: str) -> str:
+    """剥离 Rust 的行注释（`//`）与块注释（`/* */`）。"""
+    return _strip_slint_comments(text)
+
+
+def check_category_reachability_static(desktop_src: dict[str, str]) -> None:
+    """分类界面可达性（V1.1；2026-10-05）。
+
+    背景：门禁若只跑 `NR_*` 驱动，**界面入口缺失不会被发现** —— 分类树若
+    只有程序化入口而侧栏点不动，运行时判据仍会全绿。故此处逐项核对
+    「界面入口 ↔ 等价驱动」两侧都在位，且驱动**调用同一回调**。
+
+    另核对两条语义边界：
+      - 循环可达性判定**只在 Rust**（`.slint` 不得解析文案推断）；
+      - 删除分类必须**显式选去向**（`DeleteChoice::None` 不得产生副作用）。
+    """
+    print("[10] 静态：分类界面可达性（界面入口 ↔ NR_* 驱动 对等）")
+    app_slint = desktop_src.get("app.slint", "")
+    ui = desktop_src.get("ui.rs", "")
+    category_ops = desktop_src.get("category_ops.rs", "")
+    category_tree = desktop_src.get("category_tree.rs", "")
+    settings_src = desktop_src.get("settings.rs", "")
+    history_view = desktop_src.get("history_view.rs", "")
+    theme_derive = desktop_src.get("theme_derive.rs", "")
+    background_ops = desktop_src.get("background_ops.rs", "")
+    theme_store_src = (
+        (REPO / "crates/reading-storage/src/theme.rs").read_text(encoding="utf-8")
+        if (REPO / "crates/reading-storage/src/theme.rs").is_file()
+        else ""
+    )
+
+
+    issues: list[str] = []
+
+    # (a) 侧栏树与行组件必须在位。
+    if "component CategoryRowView" not in app_slint:
+        issues.append("缺少分类行组件 CategoryRowView（侧栏画不出来）")
+    if "component CategoryActionDialog" not in app_slint:
+        issues.append("缺少分类操作浮层 CategoryActionDialog（新建/重命名/移动/删除无入口）")
+    if "component CategoryMenuStrip" not in app_slint:
+        issues.append("缺少分类行内菜单 CategoryMenuStrip（「…」点了无反应）")
+
+    # (b) 侧栏回调必须接到 Rust。
+    for callback in (
+        "ui.on_shelf_category_select",
+        "ui.on_shelf_category_toggle",
+        "ui.on_shelf_category_menu",
+        "ui.on_shelf_category_add",
+        "ui.on_category_menu_picked",
+        "ui.on_category_dialog_confirm",
+    ):
+        if callback not in ui:
+            issues.append(f"分类回调未接线：{callback}")
+
+    # (c) 每个界面入口都要有等价驱动（对等清单）。
+    for env in (
+        "NR_SHELF_OPEN_CATEGORY",
+        "NR_CATEGORY_ADD",
+        "NR_CATEGORY_RENAME",
+        "NR_CATEGORY_MOVE",
+        "NR_CATEGORY_DELETE",
+        "NR_BOOK_MOVE",
+        "NR_IMPORT_ORGANIZE",
+    ):
+        if env not in ui:
+            issues.append(f"缺少等价驱动 {env}（界面入口无程序化对等物）")
+
+    # (d) 驱动必须**调用同一回调**，不得复制一份逻辑。
+    if "ui.invoke_shelf_category_select" not in ui:
+        issues.append("NR_SHELF_OPEN_CATEGORY 未复用界面回调（对等性缺口）")
+
+    # (e) 循环可达性判定只在 Rust：`.slint` 不得解析中文文案推断可选性。
+    #     必须**剥离注释**再扫：本文件曾把这三个词写进注释解释「为何不这么做」，
+    #     结果判据把自己的说明当违规（判据自身不准 —— 实测踩中）。
+    slint_code = _strip_slint_comments(app_slint)
+    ui_code = _strip_rust_comments(ui)
+    settings_code = _strip_rust_comments(settings_src)
+    if 'contains("不可选")' in slint_code or 'contains("不可选")' in ui_code:
+        issues.append("界面用文案推断「不可选」（循环可达性语义下沉到 UI）")
+    # 该判定自 A5 起下沉到**共享存储层**（`categories::move_targets` 用 `descendant_ids`
+    # 标记 `selectable`）—— 桌面与 Android 因此同源。判据随之检查三件事：
+    #   ① 存储层确按子孙集合标记（判定仍在 Rust）；
+    #   ② 桌面**消费**共享层结果，而不是自己再遍历一遍（避免两端口径分叉）；
+    #   ③ 桌面**不得**再出现 `descendant_ids`（出现即说明又抄了一份）。
+    # ⚠️ 此前判据只看 `category_ops` 里有没有 `descendant_ids`；逻辑下沉后它**误报**了
+    # 一次（判据跟着实现位置走，而不是跟着语义走）—— 这正是重构后要同步判据的典型。
+    storage_categories = (
+        REPO / "crates/reading-storage/src/categories.rs"
+    ).read_text(encoding="utf-8")
+    if "descendant_ids" not in storage_categories:
+        issues.append("存储层未按子孙集合标记不可选（循环防护的界面依据缺失）")
+    # ⚠️ 必须**剥离注释**再扫：本文件的文档注释里正引用 `categories::move_targets`，
+    # 直接子串匹配会命中注释 ⇒ 判据空转（实测踩中：把真实调用换成别的实现仍 PASS）。
+    ops_code_for_targets = _strip_rust_comments(category_ops)
+    if "categories::move_targets" not in ops_code_for_targets:
+        issues.append("category_ops 未复用共享层的移动目标判定（两端口径可能分叉）")
+    if "descendant_ids" in ops_code_for_targets:
+        issues.append("category_ops 自行遍历父子链（应复用共享层，避免两端口径分叉）")
+    if "is_descendant_of" not in category_tree and "descendant_ids" not in category_tree:
+        issues.append("category_tree 未提供子孙判定（移动态不可选标记无依据）")
+
+    # (f) 删除分类必须显式选去向（规格 R3）。
+    # 导入归类浮层与「记住」持久化（规格 R6 / 设计稿 C7）。
+    if "component ImportOrganizeDialog" not in slint_code:
+        issues.append("缺少导入归类浮层 ImportOrganizeDialog（批量导入无处询问）")
+    for callback in ("ui.on_shelf_import_batch", "ui.on_organize_import_organized"):
+        if callback not in ui:
+            issues.append(f"批量导入回调未接线：{callback}")
+    if "open_organize_dialog" not in ui or "execute_organize_import" not in ui:
+        issues.append("批量导入未复用 open/execute_organize_import（驱动与界面各走一套）")
+    if "NR_IMPORT_ORGANIZE" not in ui or "open_organize_dialog" not in ui:
+        issues.append("NR_IMPORT_ORGANIZE 驱动未复用界面函数（对等性缺口）")
+    # 必须查**函数**而非仅常量：只把常量改名（值不变）时，
+    # 查常量的判据会空转（实测踩中）。
+    for symbol in (
+        "IMPORT_ORGANIZE_CHOICE_KEY",
+        "load_import_organize_choice",
+        "save_import_organize_choice",
+    ):
+        if symbol not in settings_code:
+            issues.append(f"settings 缺 {symbol}（「记住导入归类选择」未持久化）")
+
+    # 阅读历史（V1.1；规格 R8/R9；设计稿 H1–H3）。
+    for symbol in (
+        "component HistoryRowView",
+        "component HistoryGroupHeadView",
+    ):
+        if symbol not in slint_code:
+            issues.append(f"缺少历史组件 {symbol}（历史视图画不出来）")
+    for callback in (
+        "ui.on_shelf_history_toggle",
+        "ui.on_shelf_history_clear",
+        "ui.on_shelf_history_open",
+        "ui.on_shelf_history_row_menu",
+    ):
+        if callback not in ui:
+            issues.append(f"历史回调未接线：{callback}")
+    for env in ("NR_HISTORY_VIEW", "NR_HISTORY_CLEAR"):
+        if env not in ui:
+            issues.append(f"缺少等价驱动 {env}（历史界面入口无程序化对等物）")
+    # 「最近阅读」必须在**独立菜单项**，不得进分类侧栏（Q5 已裁定）。
+    # 入口按钮的 caption 是三元（进入时「最近阅读」/ 返回时「返回书架」，与
+    # `history-mode` 联动），故检查**两个分支字面量 + 回调**，而非整串 caption。
+    if not (
+        '"最近阅读"' in slint_code
+        and '"返回书架"' in slint_code
+        and "history-toggle" in slint_code
+    ):
+        issues.append("缺少「最近阅读」入口按钮（Q5：独立菜单项）")
+    if "history-clear" not in ui:
+        issues.append("清空历史未走确认弹窗（confirm_action=history-clear 缺失）")
+    if "clear_confirm_text" not in history_view:
+        issues.append("history_view 未提供清空确认文案（条数须由 Rust 读回）")
+    # 排序 / 时间格式化必须在 Rust（界面不得自行排序或拼时间）。
+    # 排序在**存储层** `reading-storage/src/history.rs`（`history_view` 只消费已排序结果）。
+    history_store_path = REPO / "crates/reading-storage/src/history.rs"
+    history_store = (
+        history_store_path.read_text(encoding="utf-8") if history_store_path.is_file() else ""
+    )
+    if "ORDER BY opened_at DESC" not in history_store:
+        issues.append("存储层未做时间倒序（排序不得下沉到 UI）")
+    if "history::list(" not in history_view:
+        issues.append("history_view 未消费存储层已排序的 list（自行排序会掩盖口径）")
+
+    # ---- 自定义配色（V1.1；规格 R10–R13；设计稿 T1–T4）----
+    if "NR_THEME_SET" not in ui:
+        issues.append("缺少等价驱动 NR_THEME_SET（配色界面入口无程序化对等物）")
+    for symbol in ("write_theme_base", "write_theme_enabled", "apply_custom_theme"):
+        if symbol not in ui:
+            issues.append(f"配色写入/注入入口缺失：{symbol}")
+    # 驱动必须**复用同一写入路径**，不得复制逻辑。
+    if "write_theme_base(&db_path" not in ui or "NR_THEME_SET" not in ui:
+        issues.append("NR_THEME_SET 驱动未复用 write_theme_base（对等性缺口）")
+    # 基色行 UI：色块 + 可编辑文本（kind 8）。
+    if "row.kind == 8" not in slint_code:
+        issues.append("设置页缺少 kind 8 基色输入行（4 个取色器画不出来）")
+    if "swatch: color" not in slint_code:
+        issues.append("SettingsRow 缺少 swatch 字段（色块色值无处可来）")
+    # 对比度必须在 Rust，且不足时**保留用户基色**。
+    #
+    # ⚠️ 派生算法已下沉到 `reading-storage/src/theme_derive.rs`（V1.1 B3），
+    # 桌面侧只剩 re-export —— 故判据要**桌面与共享层都查**，
+    # 否则下沉后会被误判成「口径丢失」（实测踩中）。
+    storage_derive_path = REPO / "crates/reading-storage/src/theme_derive.rs"
+    storage_derive = (
+        storage_derive_path.read_text(encoding="utf-8")
+        if storage_derive_path.is_file()
+        else ""
+    )
+    derive_all = theme_derive + storage_derive
+    if "MIN_CONTRAST" not in derive_all or "contrast_ratio" not in derive_all:
+        issues.append("theme_derive 缺少对比度判定（对比度不得下沉到 UI）")
+    if "已保留你的选择" not in derive_all:
+        issues.append("对比度不足时缺少「保留用户选择」口径（R12）")
+    # 40 令牌不得落库：存储层只存 4 基色。
+    if "base_foreground" not in theme_store_src or "base_accent" not in theme_store_src:
+        issues.append("存储层未按 4 基色持久化")
+    for forbidden in ("token_light", "token_dark", "palette_json"):
+        if forbidden in theme_store_src:
+            issues.append(f"存储层出现派生令牌字段 {forbidden}（40 令牌不落库，R11）")
+    # 派生必须覆盖全部 Skin 令牌。
+    if "PALETTE_FIELDS" not in theme_derive:
+        issues.append("theme_derive 未按 PALETTE_FIELDS 全量派生")
+
+    # ---- 全局阅读背景图（V1.1；规格 R14–R17；设计稿 B1–B3）----
+    for env in ("NR_BACKGROUND_SET", "NR_BACKGROUND_CLEAR"):
+        if env not in ui:
+            issues.append(f"缺少等价驱动 {env}（背景图界面入口无程序化对等物）")
+    for symbol in ("background_ops::install", "background_ops::clear"):
+        if symbol not in ui:
+            issues.append(f"背景图写入路径缺失：{symbol}")
+    if "NR_BACKGROUND_SET" not in ui or "background_ops::install" not in ui:
+        issues.append("NR_BACKGROUND_SET 驱动未复用 background_ops::install（对等性缺口）")
+    if "reader-background-set" not in slint_code:
+        issues.append("阅读页缺少背景图层（背景图无处显示）")
+    if "row.kind == 9" not in slint_code:
+        issues.append("设置页缺少 kind 9 动作行（选图/清除按钮画不出来）")
+    # 原图只读 + 路径安全（都在 Rust）。
+    for must in ("std::fs::copy", "validate_file_name", "starts_with(\"bg-\")"):
+        if must not in background_ops:
+            issues.append(f"background_ops 缺安全/只读保障：{must}")
+    # 只查**真实调用** `fs::rename(` —— 不能用裸 `rename` 子串匹配：
+    # 变量名 `file_name` 里就含 "rename"，会误报（实测踩中）。
+    if "fs::rename(" in background_ops or "fs::remove_file(source" in background_ops:
+        issues.append("background_ops 对源图做了改名/删除（原图必须只读复制）")
+    # 背景不得参与分页（规格 R17）：分页逻辑里不得读背景。
+    if "background" in (REPO / "crates/desktop-app/src/pagination.rs").read_text(encoding="utf-8"):
+        issues.append("pagination.rs 出现 background（背景不得参与分页计算）")
+
+    if "DeleteChoice::None" not in category_ops:
+        issues.append("category_ops 缺少 DeleteChoice::None（未选去向可能被当成默认值）")
+    if "请先选择书籍去向" not in category_ops:
+        issues.append("未选去向时缺少可理解拒绝文案")
+    # 关键：**守卫必须真的存在**。仅检查枚举与文案不够 ——
+    # 实测把 `let Some(destination) = ... else { return Err(...) }`
+    # 改成「None ⇒ 缺省 MoveToRoot」时，上面两条判据全部照过（判据空转），
+    # 只有下面这条「必须短路返回错误」抓得住。
+    ops_code = _strip_rust_comments(category_ops)
+    if "else {" not in ops_code or "请先选择书籍去向" not in ops_code:
+        issues.append("delete_category 缺少「未选去向即拒绝」的短路守卫")
+    if re.search(
+        r"let\s+Some\(\s*destination\s*\)\s*=\s*choice\.to_destination\(\)\s*else",
+        ops_code,
+    ) is None:
+        issues.append(
+            "delete_category 未把 DeleteChoice::None 短路为错误"
+            "（未选去向会被当成默认去向执行删除）"
+        )
+
+    if issues:
+        fail("[10] 分类界面可达性缺陷：" + "; ".join(issues))
+    else:
+        ok("[10] 分类侧栏 / 行内菜单 / 操作浮层 / 六个 NR_* 驱动齐备，且语义判定全在 Rust")
+
+    # 反向对照：判据必须**有牙**。
+    #   `find_faults` 返回「样本中发现的缺陷数」；真实源码应为 0（无缺陷），
+    #   而删掉组件/回调/驱动或引入语义下沉的样本必须 > 0。
+    def find_faults(
+        sample_slint: str,
+        sample_ui: str,
+        sample_ops: str,
+        sample_derive: str = theme_derive,
+        sample_bg: str = background_ops,
+    ) -> int:
+        found = []
+        code = _strip_slint_comments(sample_slint)
+        ui_only = _strip_rust_comments(sample_ui)
+        if "component CategoryRowView" not in code:
+            found.append("row")
+        if "component CategoryActionDialog" not in code:
+            found.append("dialog")
+        if "component CategoryMenuStrip" not in code:
+            found.append("strip")
+        if "component HistoryRowView" not in code:
+            found.append("history-row")
+        if "component HistoryGroupHeadView" not in code:
+            found.append("history-group")
+        if not ('"最近阅读"' in code and '"返回书架"' in code and "history-toggle" in code):
+            found.append("history-entry")
+        for callback in (
+            "ui.on_shelf_category_select",
+            "ui.on_shelf_category_menu",
+            "ui.on_category_dialog_confirm",
+            "ui.on_shelf_history_toggle",
+            "ui.on_shelf_history_clear",
+        ):
+            if callback not in sample_ui:
+                found.append(callback)
+        for env in (
+            "NR_CATEGORY_ADD",
+            "NR_CATEGORY_MOVE",
+            "NR_BOOK_MOVE",
+            "NR_IMPORT_ORGANIZE",
+            "NR_HISTORY_VIEW",
+            "NR_HISTORY_CLEAR",
+        ):
+            if env not in sample_ui:
+                found.append(env)
+        if "ui.invoke_shelf_category_select" not in sample_ui:
+            found.append("invoke")
+        if 'contains("不可选")' in code or 'contains("不可选")' in ui_only:
+            found.append("ui-infer")
+        if "DeleteChoice::None" not in sample_ops:
+            found.append("none-choice")
+        if "NR_THEME_SET" not in sample_ui:
+            found.append("theme-env")
+        if "row.kind == 8" not in code:
+            found.append("theme-kind8")
+        if "swatch: color" not in code:
+            found.append("theme-swatch")
+        derive_src = _strip_rust_comments(sample_derive)
+        if "MIN_CONTRAST" not in derive_src:
+            found.append("theme-contrast")
+        for env in ("NR_BACKGROUND_SET", "NR_BACKGROUND_CLEAR"):
+            if env not in sample_ui:
+                found.append(env)
+        if "reader-background-set" not in code:
+            found.append("bg-layer")
+        if "row.kind == 9" not in code:
+            found.append("bg-action")
+        bg_src = _strip_rust_comments(sample_bg)
+        for must in ("std::fs::copy", "validate_file_name"):
+            if must not in bg_src:
+                found.append(must)
+        ops_only = _strip_rust_comments(sample_ops)
+        if re.search(
+            r"let\s+Some\(\s*destination\s*\)\s*=\s*choice\.to_destination\(\)\s*else",
+            ops_only,
+        ) is None:
+            found.append("no-guard")
+        return len(found)
+
+    baseline = find_faults(app_slint, ui, category_ops)
+    if baseline != 0:
+        fail(
+            f"[10] 反向对照失效：真实源码被判出 {baseline} 处缺陷"
+            f"（判据与真实实现不一致，判据空转）"
+        )
+        return
+
+    # 逐类坏样本：每类都必须被抓出。
+    bad_cases = {
+        "删掉 CategoryRowView 组件": (
+            app_slint.replace("component CategoryRowView", "component _RemovedRowView"),
+            ui,
+            category_ops,
+        ),
+        "删掉操作浮层": (
+            app_slint.replace("component CategoryActionDialog", "component _GoneDialog"),
+            ui,
+            category_ops,
+        ),
+        "删掉行内菜单": (
+            app_slint.replace("component CategoryMenuStrip", "component _GoneStrip"),
+            ui,
+            category_ops,
+        ),
+        "删掉三个驱动": (
+            app_slint,
+            ui.replace("NR_CATEGORY_ADD", "_X1")
+            .replace("NR_CATEGORY_MOVE", "_X2")
+            .replace("NR_BOOK_MOVE", "_X3"),
+            category_ops,
+        ),
+        "删掉一个回调": (
+            app_slint,
+            ui.replace("ui.on_shelf_category_select", "_gone"),
+            category_ops,
+        ),
+        "驱动不再复用界面回调": (
+            app_slint,
+            ui.replace("ui.invoke_shelf_category_select", "let _ = 0;"),
+            category_ops,
+        ),
+        "界面用文案推断不可选": (
+            app_slint.replace(
+                "enabled: row.enabled;",
+                'enabled: !row.name.contains("不可选");',
+            ),
+            ui,
+            category_ops,
+        ),
+        "删掉 DeleteChoice::None": (
+            app_slint,
+            ui,
+            category_ops.replace("DeleteChoice::None", "_NoChoice"),
+        ),
+    }
+    missed = [
+        name for name, (sl, u, ops) in bad_cases.items() if find_faults(sl, u, ops) == 0
+    ]
+    if missed:
+        fail("[10] 反向对照失效：以下坏样本竟然通过 —— " + "; ".join(missed))
+    else:
+        ok(
+            f"[10] 反向对照：{len(bad_cases)} 类坏样本（缺组件/缺回调/缺驱动/"
+            "驱动不复用回调/语义下沉/缺 None 去向）均被判失败"
+        )
+
+
+def slice_component(source: str, name: str) -> str | None:
+    """截取 `.slint` 里某个组件的**函数体**（从声明行到下一个顶层 `component`）。
+
+    用途：把「不得出现某模式」的判据限定在**目标组件**内，避免被其它组件的
+    同形写法误伤（V1.1 的历史组头与阅读页都用 `text: root.book-title;`）。
+
+    返回 `None` 表示找不到该组件 —— 调用方应**如实报错**，不得静默跳过。
+    """
+    marker = f"component {name} "
+    start = source.find(marker)
+    if start == -1:
+        return None
+    # 组件体结束于下一个「行首 component」或 EOF。
+    nxt = source.find("\ncomponent ", start + len(marker))
+    return source[start : nxt if nxt != -1 else len(source)]
+
+
 def check_layout_and_immersive_exit_static(desktop_src: dict[str, str]) -> None:
     """布局不溢出 + 沉浸退出路径（2026-09-29 真实缺陷回归）。"""
     print("[9] 静态：条带不溢出（按钮永不被文字挤出）+ 沉浸退出路径")
@@ -400,10 +836,18 @@ def check_layout_and_immersive_exit_static(desktop_src: dict[str, str]) -> None:
     if app_slint.count("horizontal-stretch: 1") < 3:
         issues.append("条带文字未占「剩余宽度」（horizontal-stretch < 3 处）")
     # (b) 正文区顶部不得再有与正文同位的浮动小标题。
-    if "text: root.book-title;" in app_slint:
-        issues.append("正文区顶部仍有浮动书名（与正文重叠）")
-    if "text: root.chapter-title;" in app_slint:
-        issues.append("正文区顶部仍有浮动章节名（与正文重叠）")
+    #
+    # ⚠️ **必须限定在阅读页组件内**，不能全文件子串匹配 —— V1.1 的
+    # `HistoryGroupHeadView`（阅读历史组头）合法地用了同一个 `text: root.book-title;`
+    # 模式来显示书名，全文件匹配会把它误判成「正文区浮动书名」（实测踩中）。
+    reader_page = slice_component(app_slint, "ReaderPage")
+    if reader_page is None:
+        issues.append("找不到 ReaderPage 组件（判据无从生效，不得静默通过）")
+    else:
+        if "text: root.book-title;" in reader_page:
+            issues.append("正文区顶部仍有浮动书名（与正文重叠）")
+        if "text: root.chapter-title;" in reader_page:
+            issues.append("正文区顶部仍有浮动章节名（与正文重叠）")
     # (c) 沉浸退出：Esc / 正文点击 / 右上角按钮三条路径。
     if "escape_key_text" not in input_src or "if key_text == input::escape_key_text()" not in ui:
         issues.append("缺少 Esc 退出沉浸的按键路径")
@@ -418,11 +862,21 @@ def check_layout_and_immersive_exit_static(desktop_src: dict[str, str]) -> None:
 
     # 反向对照：三类历史缺陷样本必须判失败。
     bad_title = 'Text { text: root.page-title; font-size: 20px; }'
-    bad_caption = 'Text { y: pad; text: root.book-title; }'
+    # 坏样本必须在**阅读页体内**才该被判失败（与正式判据同一口径）。
+    bad_caption = "component ReaderPage inherits Rectangle {\n    Text { y: pad; text: root.book-title; }\n}\n"
+    # 同一字符串放在**别的组件**里**不该**被判失败 —— 否则判据过宽（会误报历史组头）。
+    ok_elsewhere = "component HistoryGroupHeadView inherits Rectangle {\n    Text { text: root.book-title; }\n}\n"
     bad_click = "clicked => { root.toggle-menu(); }"
+
+    def reader_has_book_title(source: str) -> bool:
+        """与正式判据同一口径：找不到 ReaderPage 时视为「无该模式」。"""
+        body = slice_component(source, "ReaderPage")
+        return body is not None and "text: root.book-title;" in body
+
     verdicts = [
         "overflow: elide" not in bad_title,
-        "text: root.book-title;" in bad_caption,
+        reader_has_book_title(bad_caption),
+        not reader_has_book_title(ok_elsewhere),
         "root.immersive-toggle();" not in bad_click,
     ]
     if all(verdicts):
@@ -678,6 +1132,13 @@ def main() -> int:
         "import.rs",
         "main.rs",
         "input.rs",
+        "category_ops.rs",
+        "category_tree.rs",
+        "batch_import.rs",
+        "settings.rs",
+        "history_view.rs",
+        "theme_derive.rs",
+        "background_ops.rs",
     ):
         path = REPO / "crates/desktop-app/src" / name
         if path.is_file():
@@ -693,6 +1154,7 @@ def main() -> int:
     check_immersive_static(desktop_src)
     check_prev_page_static(desktop_src)
     check_ui_reachability_static(desktop_src)
+    check_category_reachability_static(desktop_src)
     check_layout_and_immersive_exit_static(desktop_src)
     check_window_and_toc_static(desktop_src)
     check_encoding_runtime(binary)
