@@ -113,8 +113,14 @@ fn index_clear_keeps_user_metadata_and_original_txt_intact() {
     assert_eq!(progress::count_progress(conn).expect("进度行数"), 1);
     assert_eq!(bookmarks::count_all_bookmarks(conn).expect("书签行数"), 3);
     assert_eq!(settings::settings_row_count(conn).expect("设置行数"), 1);
-    assert_eq!(meta::schema_version(conn).expect("schema 版本"), 1);
-    assert_eq!(connection::table_names(conn).expect("表清单").len(), 8);
+    assert_eq!(
+        meta::schema_version(conn).expect("schema 版本"),
+        reading_storage::migrate::TARGET_SCHEMA_VERSION
+    );
+    assert_eq!(
+        connection::table_names(conn).expect("表清单").len(),
+        reading_storage::expected_tables().len()
+    );
 
     // 用户元数据逐字段一致（书籍、进度、书签、设置）。
     let after = snapshot(&storage);
@@ -278,7 +284,10 @@ fn shelf_removal_and_purge_never_touch_original_txt() {
     assert_eq!(progress::count_progress(conn).expect("进度行数"), 0);
     assert_eq!(bookmarks::count_all_bookmarks(conn).expect("书签行数"), 0);
     assert_eq!(settings::settings_row_count(conn).expect("设置行数"), 1);
-    assert_eq!(meta::schema_version(conn).expect("schema 版本"), 1);
+    assert_eq!(
+        meta::schema_version(conn).expect("schema 版本"),
+        reading_storage::migrate::TARGET_SCHEMA_VERSION
+    );
     assert_eq!(
         books::purge_book_record(conn, book_id)
             .expect_err("重复硬删除必须报错")

@@ -20,14 +20,24 @@ use crate::{connection, meta, validate};
 /// 由集成测试 `embedded_migration_matches_on_disk_file` 守住）。
 pub const INITIAL_MIGRATION_SQL: &str = include_str!("../../../migrations/0001_init.sql");
 
+/// V1.1 迁移脚本（分类树 / 阅读历史 / 派生配色 / 阅读背景）。
+pub const V11_MIGRATION_SQL: &str =
+    include_str!("../../../migrations/0002_categories_history_theme.sql");
+
 /// 初始迁移文件名。
 pub const INITIAL_MIGRATION_NAME: &str = "0001_init";
+
+/// V1.1 迁移文件名。
+pub const V11_MIGRATION_NAME: &str = "0002_categories_history_theme";
 
 /// 仓库内初始迁移路径（相对仓库根）。
 pub const INITIAL_MIGRATION_RELATIVE_PATH: &str = "migrations/0001_init.sql";
 
-/// V1 目标 schema 版本。
-pub const TARGET_SCHEMA_VERSION: i64 = 1;
+/// 仓库内 V1.1 迁移路径（相对仓库根）。
+pub const V11_MIGRATION_RELATIVE_PATH: &str = "migrations/0002_categories_history_theme.sql";
+
+/// V1.1 目标 schema 版本（0002 迁移后）。
+pub const TARGET_SCHEMA_VERSION: i64 = 2;
 
 /// 备份文件后缀。
 pub const BACKUP_SUFFIX: &str = "backup";
@@ -40,12 +50,22 @@ pub struct Migration {
     pub sql: &'static str,
 }
 
-/// V1 冻结迁移序列。
-pub const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: INITIAL_MIGRATION_NAME,
-    sql: INITIAL_MIGRATION_SQL,
-}];
+/// 冻结迁移序列（0001 初始 + 0002 V1.1）。
+///
+/// 每条只**新增** schema，不改写既有列语义；执行器保证单条迁移在一个事务内完成，
+/// 失败整体回滚并保留迁移前备份。
+pub const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: INITIAL_MIGRATION_NAME,
+        sql: INITIAL_MIGRATION_SQL,
+    },
+    Migration {
+        version: 2,
+        name: V11_MIGRATION_NAME,
+        sql: V11_MIGRATION_SQL,
+    },
+];
 
 /// 待执行的迁移计划。
 #[derive(Debug, Clone, PartialEq, Eq)]
