@@ -36,10 +36,14 @@ import com.novelreader.android.reader.ReaderViewModel
  *
  * [buildMarker] 只在**书架页**以右下角小字显示（真机核对「装的是哪一次构建」，子规格 A-T7）。
  * 采用覆盖式角标而非插入布局流：不改变任何页面的既有测量与分页前提。
+ *
+ * `onPickBackgroundImage`：拉起系统选图器（V1.1 背景图），由宿主注入。
+ * 为 `null` 时点「选择图片…」会**如实回报**「宿主未提供选图入口」，不给无反应的按钮。
  */
 @Composable
 fun NovelReaderApp(
     onImportRequest: () -> Unit,
+    onPickBackgroundImage: (() -> Unit)? = null,
     buildMarker: String = "",
     viewModel: ReaderViewModel = viewModel(factory = ReaderViewModel.productionFactory()),
 ) {
@@ -52,6 +56,7 @@ fun NovelReaderApp(
                 when (state.route) {
                     ReaderRoute.SHELF -> ShelfScreen(
                         shelf = state.shelf,
+                        categories = state.categories,
                         reader = state.reader,
                         abiVersion = state.abiVersion,
                         status = state.status,
@@ -60,6 +65,31 @@ fun NovelReaderApp(
                         onImportRequest = onImportRequest,
                         onOpenReader = viewModel::openReader,
                         onOpenSettings = viewModel::openSettings,
+                        onOpenHistory = viewModel::openHistory,
+                        onSelectCategory = viewModel::onSelectCategory,
+                        onToggleCategory = viewModel::onToggleCategory,
+                        onCreateCategory = { name -> viewModel.onCreateCategory(name) },
+                        onRenameCategory = viewModel::onRenameCategory,
+                        categoryTargets = state.categoryTargets,
+                        onLoadCategoryTargets = viewModel::onLoadCategoryTargets,
+                        onClearCategoryTargets = viewModel::clearCategoryTargets,
+                        onMoveCategory = viewModel::onMoveCategory,
+                        onDeleteCategory = viewModel::onDeleteCategory,
+                    )
+
+                    ReaderRoute.HISTORY -> HistoryScreen(
+                        state = state,
+                        onBack = {
+                            when (backRouteFromHistory(state)) {
+                                ReaderRoute.READER -> viewModel.openReader()
+                                ReaderRoute.SHELF -> viewModel.openShelf()
+                                ReaderRoute.SETTINGS -> viewModel.openSettings()
+                                ReaderRoute.HISTORY -> viewModel.openShelf()
+                            }
+                        },
+                        onOpenBook = viewModel::openHistoryBook,
+                        onClearEntry = viewModel::onClearHistoryEntry,
+                        onClearAll = viewModel::onClearAllHistory,
                     )
 
                     ReaderRoute.READER -> ReaderScreen(
@@ -83,6 +113,7 @@ fun NovelReaderApp(
                                 ReaderRoute.READER -> viewModel.openReader()
                                 ReaderRoute.SHELF -> viewModel.openShelf()
                                 ReaderRoute.SETTINGS -> viewModel.openSettings()
+                                ReaderRoute.HISTORY -> viewModel.openShelf()
                             }
                         },
                         onFontSizeChange = viewModel::onFontSizeChange,
@@ -90,6 +121,13 @@ fun NovelReaderApp(
                         onHorizontalMarginChange = viewModel::onHorizontalMarginChange,
                         onVerticalMarginChange = viewModel::onVerticalMarginChange,
                         onDarkThemeChange = viewModel::onDarkThemeChange,
+                        onThemeEnabledChange = viewModel::onThemeEnabledChange,
+                        onThemeBaseChange = viewModel::onThemeBaseChange,
+                        onBackgroundScrimChange = viewModel::onBackgroundScrimChange,
+                        onBackgroundPick = { fit, scrim ->
+                            viewModel.onBackgroundPickRequest(fit, scrim, onPickBackgroundImage)
+                        },
+                        onBackgroundClear = viewModel::onBackgroundClear,
                         onRelayout = viewModel::requestRelayout,
                         onSavePosition = viewModel::savePositionNow,
                         onRebuildIndex = viewModel::rebuildIndex,

@@ -3,6 +3,20 @@ package com.novelreader.android.core
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
+/** `nr_history_batch` 结构大小（与 `abi_layout` 的 EXPECTED_SIZES 一致）。 */
+private const val NR_HISTORY_BATCH_SIZE = 32
+/** `nr_background` 结构大小（与 `abi_layout` 的 EXPECTED_SIZES 一致）。 */
+private const val NR_BACKGROUND_SIZE = 48
+/** `nr_background_batch` 结构大小（与 `abi_layout` 的 EXPECTED_SIZES 一致）。 */
+private const val NR_BACKGROUND_BATCH_SIZE = 32
+/** `nr_theme_base` 结构大小（与 `abi_layout` 的 EXPECTED_SIZES 一致）。 */
+private const val NR_THEME_BASE_SIZE = 56
+/** `nr_theme_contrast_result` 结构大小（与 `abi_layout` 的 EXPECTED_SIZES 一致）。 */
+private const val NR_THEME_CONTRAST_SIZE = 24
+
+/** `nr_category_batch` 结构大小（与 `abi_layout` 的 EXPECTED_SIZES 一致）。 */
+private const val NR_CATEGORY_BATCH_SIZE = 32
+
 /**
  * 单测用的假 JNI 绑定：默认行为**模仿** `android/jni/nr_jni.c` 的真实语义
  * （结构体字节布局、`(ptr,len,capacity)` 槽位、空结果 = `(0,0,0)`、取消写回出参……），
@@ -357,9 +371,379 @@ internal class FakeAbi : NrAbi {
         calls.add("releaseBuffer")
         return NrErrors.NR_ERR_OK
     }
+
+    // ---- V1.1 四组功能（替身实现：记录调用、可编排载荷）----
+    //
+    // ⚠️ **成功路径必须返回字节池 + 写回归还槽**，不能返回 `null` ——
+    // `null` 在门面语义里表示**失败**（`abi.listX(...) ?: throw`）。
+    // 早期版本的替身在成功时返回 `null`，导致每次门面调用都抛异常；
+    // 因当时没有端口级 JVM 测试而未被发现（本轮补测时实测踩中）。
+
+    /** 可编排的返回值码（四组功能共用；非 0 时**读**操作返回 `null` = 失败）。 */
+    var v11Code: Int = NrErrors.NR_ERR_OK
+
+    // ---------------- 分类 ----------------
+
+    /** 可编排的分类字节池（`null` = 读失败）。 */
+    var categoriesBytes: ByteArray? = ByteArray(0)
+
+    /** 可编排的分类条目数。 */
+    var categoryCount: Int = 0
+
+    /** 删除时记录收到的去向（供测试断言「未选去向」传的是 0）。 */
+    var lastDeleteDestination: Int? = null
+
+    /** 新建分类时写回的分类 id。 */
+    var createdCategoryId: Long = 42L
+
+    /** 删除分类时写回的「被移动书籍数」。 */
+    var deletedMovedCount: Int = 0
+
+    override fun listCategories(engine: Long, outBatch: ByteArray, outBuffer: LongArray): ByteArray? {
+        calls.add("listCategories")
+        if (v11Code != NrErrors.NR_ERR_OK) return null
+        val bytes = categoriesBytes ?: return null
+        val slots = slotsFor(bytes)
+        val struct = structSlots(slots)
+        val buf = writer(NR_CATEGORY_BATCH_SIZE)
+        buf.putInt(0, categoryCount)
+        buf.putInt(4, 0)
+        buf.putLong(8, struct[0])
+        buf.putLong(16, struct[1])
+        buf.putLong(24, struct[2])
+        copyInto(buf, outBatch)
+        writeSlots(outBuffer, slots)
+        return bytes
+    }
+
+    override fun createCategory(
+        engine: Long,
+        parentId: Long,
+        name: ByteArray,
+        outCategoryId: LongArray,
+    ): Int {
+        calls.add("createCategory")
+        if (v11Code == NrErrors.NR_ERR_OK && outCategoryId.isNotEmpty()) {
+            outCategoryId[0] = createdCategoryId
+        }
+        return v11Code
+    }
+
+    override fun moveBookToCategory(engine: Long, bookId: Long, categoryId: Long): Int {
+        calls.add("moveBookToCategory")
+        return v11Code
+    }
+
+    override fun deleteCategory(
+        engine: Long,
+        categoryId: Long,
+        destination: Int,
+        targetId: Long,
+        outMovedCount: IntArray,
+    ): Int {
+        calls.add("deleteCategory")
+        lastDeleteDestination = destination
+        if (v11Code == NrErrors.NR_ERR_OK && outMovedCount.isNotEmpty()) {
+            outMovedCount[0] = deletedMovedCount
+        }
+        return v11Code
+    }
+
+    // ---------------- 阅读历史 ----------------
+
+    /** 可编排的历史字节池（`null` = 读失败）。 */
+    var historyBytes: ByteArray? = ByteArray(0)
+
+    /** 可编排的流水条数。 */
+    var historyCount: Int = 0
+
+    /** 可编排的「全部流水条数」（不受 limit 影响）。 */
+    var historyTotal: Int = 0
+
+    /** 清除一条流水时写回的「是否已存在」。 */
+    var historyEntryRemoved: Int = 1
+
+    /** 清除单书流水时写回的条数。 */
+    var historyClearedCount: Int = 0
+
+    override fun listHistory(
+        engine: Long,
+        bookId: Long,
+        limit: Int,
+        grouped: Int,
+        outBatch: ByteArray,
+        outBuffer: LongArray,
+    ): ByteArray? {
+        calls.add("listHistory")
+        if (v11Code != NrErrors.NR_ERR_OK) return null
+        val bytes = historyBytes ?: return null
+        val slots = slotsFor(bytes)
+        val struct = structSlots(slots)
+        val buf = writer(NR_HISTORY_BATCH_SIZE)
+        buf.putInt(0, historyCount)
+        buf.putInt(4, historyTotal)
+        buf.putLong(8, struct[0])
+        buf.putLong(16, struct[1])
+        buf.putLong(24, struct[2])
+        copyInto(buf, outBatch)
+        writeSlots(outBuffer, slots)
+        return bytes
+    }
+
+    override fun clearHistoryEntry(engine: Long, entryId: Long, outRemoved: IntArray): Int {
+        calls.add("clearHistoryEntry")
+        if (v11Code == NrErrors.NR_ERR_OK && outRemoved.isNotEmpty()) {
+            outRemoved[0] = historyEntryRemoved
+        }
+        return v11Code
+    }
+
+    override fun clearHistoryForBook(engine: Long, bookId: Long, outRemovedCount: IntArray): Int {
+        calls.add("clearHistoryForBook")
+        if (v11Code == NrErrors.NR_ERR_OK && outRemovedCount.isNotEmpty()) {
+            outRemovedCount[0] = historyClearedCount
+        }
+        return v11Code
+    }
+
+    // ---------------- 配色 ----------------
+
+    // ---- 书籍分类映射（V1.1；筛选前置）----
+
+    /** 可编排的映射载荷（`bookId → categoryId` 编码为 16 字节行）。 */
+    var bookCategoriesBytes: ByteArray? = ByteArray(0)
+
+    override fun listBookCategories(
+        engine: Long,
+        outBatch: ByteArray,
+        outBuffer: LongArray,
+    ): ByteArray? {
+        calls.add("listBookCategories")
+        if (v11Code != NrErrors.NR_ERR_OK) return null
+        val bytes = bookCategoriesBytes ?: return null
+        val slots = slotsFor(bytes)
+        val struct = structSlots(slots)
+        val buf = writer(NrBookCategoryBatch.STRUCT_SIZE)
+        buf.putInt(0, bytes.size / NrBookCategoryEntry.STRUCT_SIZE)
+        buf.putInt(4, 0)
+        buf.putLong(8, struct[0])
+        buf.putLong(16, struct[1])
+        buf.putLong(24, struct[2])
+        copyInto(buf, outBatch)
+        writeSlots(outBuffer, slots)
+        return bytes
+    }
+
+
+
+
+    // ---- 移动 / 删除目标（V1.1）----
+
+    /** 可编排的目标（id, 深度, 可选, 计数, 名称）。 */
+    var moveTargets: List<Triple<Long, Int, Pair<Boolean, String>>> = emptyList()
+    var lastMoveTargetsSource: Long? = null
+
+    override fun categoryMoveTargets(
+        engine: Long,
+        sourceId: Long,
+        outBatch: ByteArray,
+        outBuffer: LongArray,
+    ): ByteArray? {
+        calls.add("categoryMoveTargets")
+        lastMoveTargetsSource = sourceId
+        if (v11Code != NrErrors.NR_ERR_OK) return null
+        val rowSize = NrCategoryChoiceEntry.STRUCT_SIZE
+        val headerSize = rowSize * moveTargets.size
+        val names = moveTargets.map { it.third.second.toByteArray(Charsets.UTF_8) }
+        val bytes = ByteArray(headerSize + names.sumOf { it.size })
+        val buf = java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        var cursor = headerSize
+        moveTargets.forEachIndexed { index, row ->
+            val base = index * rowSize
+            buf.putLong(base, row.first)
+            buf.putInt(base + 8, row.second)
+            buf.putInt(base + 12, if (row.third.first) 1 else 0)
+            buf.putLong(base + 16, 0L)
+            buf.putInt(base + 24, cursor)
+            buf.putInt(base + 28, names[index].size)
+            cursor += names[index].size
+        }
+        var at = headerSize
+        names.forEach { it.copyInto(bytes, at); at += it.size }
+
+        val slots = slotsFor(bytes)
+        val struct = structSlots(slots)
+        val header = writer(NrCategoryChoiceBatch.STRUCT_SIZE)
+        header.putInt(0, moveTargets.size)
+        header.putInt(4, 0)
+        header.putLong(8, struct[0])
+        header.putLong(16, struct[1])
+        header.putLong(24, struct[2])
+        copyInto(header, outBatch)
+        writeSlots(outBuffer, slots)
+        return bytes
+    }
+
+    // ---- 分类改名 / 移动（V1.1）----
+
+    var lastRename: Pair<Long, String>? = null
+    var lastCategoryMove: Pair<Long, Long>? = null
+
+    override fun renameCategory(engine: Long, categoryId: Long, name: ByteArray): Int {
+        calls.add("renameCategory")
+        lastRename = categoryId to String(name, Charsets.UTF_8)
+        return themeWriteCode
+    }
+
+    override fun moveCategory(engine: Long, categoryId: Long, newParentId: Long): Int {
+        calls.add("moveCategory")
+        lastCategoryMove = categoryId to newParentId
+        return themeWriteCode
+    }
+
+    // ---- 作用域书籍 id（V1.1）----
+
+    /** 可编排的 id 载荷（小端 i64）。 */
+    var scopeIds: List<Long> = emptyList()
+    var lastScopeRequest: Pair<Int, Long>? = null
+
+    override fun listBooksInScope(
+        engine: Long,
+        scopeKind: Int,
+        categoryId: Long,
+        outBatch: ByteArray,
+        outBuffer: LongArray,
+    ): ByteArray? {
+        calls.add("listBooksInScope")
+        lastScopeRequest = scopeKind to categoryId
+        if (v11Code != NrErrors.NR_ERR_OK) return null
+        val bytes = ByteArray(scopeIds.size * 8)
+        val buf = java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        scopeIds.forEachIndexed { index, id -> buf.putLong(index * 8, id) }
+        val slots = slotsFor(bytes)
+        val struct = structSlots(slots)
+        val header = writer(NrIdList.STRUCT_SIZE)
+        header.putInt(0, scopeIds.size)
+        header.putInt(4, 0)
+        header.putLong(8, struct[0])
+        header.putLong(16, struct[1])
+        header.putLong(24, struct[2])
+        copyInto(header, outBatch)
+        writeSlots(outBuffer, slots)
+        return bytes
+    }
+    /** 写操作的独立返回码（默认成功）—— 用于断言「被拒时界面仍显示核心认可的值」。 */
+    var themeWriteCode: Int = NrErrors.NR_ERR_OK
+
+    /** 可编排的基色结构体（56 字节，直接给定）。 */
+    var themeBaseBytes: ByteArray? = ByteArray(NR_THEME_BASE_SIZE)
+
+    /** 取令牌时写回的 RGBA（4 字节）。 */
+    var themeTokenRgba: ByteArray = byteArrayOf(0x22, 0x22, 0x22, 0xFF.toByte())
+
+    /** 可编排的对比度读数（24 字节，直接给定）。 */
+    var themeContrastBytes: ByteArray? = ByteArray(NR_THEME_CONTRAST_SIZE)
+
+    /** 记录写入的基色（供断言 which / 值）。 */
+    var lastThemeBaseWrite: Pair<Int, String>? = null
+
+    /** 记录启用开关（供断言）。 */
+    var lastThemeEnabled: Int? = null
+
+    override fun getThemeBase(engine: Long, outBase: ByteArray): Int {
+        calls.add("getThemeBase")
+        if (v11Code != NrErrors.NR_ERR_OK) return v11Code
+        themeBaseBytes?.let { it.copyInto(outBase, endIndex = minOf(it.size, outBase.size)) }
+        return NrErrors.NR_ERR_OK
+    }
+
+    override fun setThemeBase(engine: Long, which: Int, value: ByteArray): Int {
+        calls.add("setThemeBase")
+        lastThemeBaseWrite = which to String(value, Charsets.UTF_8)
+        return themeWriteCode
+    }
+
+    override fun setThemeEnabled(engine: Long, enabled: Int): Int {
+        calls.add("setThemeEnabled")
+        lastThemeEnabled = enabled
+        return themeWriteCode
+    }
+
+    override fun getThemeToken(engine: Long, which: Int, dark: Int, outRgba: ByteArray): Int {
+        calls.add("getThemeToken")
+        if (v11Code != NrErrors.NR_ERR_OK) return v11Code
+        themeTokenRgba.copyInto(outRgba, endIndex = minOf(themeTokenRgba.size, outRgba.size))
+        return NrErrors.NR_ERR_OK
+    }
+
+    override fun getThemeContrast(engine: Long, outResult: ByteArray): Int {
+        calls.add("getThemeContrast")
+        if (v11Code != NrErrors.NR_ERR_OK) return v11Code
+        themeContrastBytes?.let { it.copyInto(outResult, endIndex = minOf(it.size, outResult.size)) }
+        return NrErrors.NR_ERR_OK
+    }
+
+    // ---------------- 背景 ----------------
+
+    /** 可编排的背景字节池（`null` = 读失败）。 */
+    var backgroundBytes: ByteArray? = ByteArray(0)
+
+    /** 可编排的背景条目数（0 = 未设置）。 */
+    var backgroundCount: Int = 0
+
+    /** 记录最后一次设置的源路径 / 目标目录（供断言参数透传）。 */
+    var lastBackgroundSet: Pair<String, String>? = null
+
+    override fun getBackground(engine: Long, outBatch: ByteArray, outBuffer: LongArray): ByteArray? =
+        backgroundResult("getBackground", outBatch, outBuffer)
+
+    override fun setBackground(
+        engine: Long,
+        srcPath: ByteArray,
+        destDir: ByteArray,
+        fitMode: Int,
+        scrimPermille: Int,
+        outBatch: ByteArray,
+        outBuffer: LongArray,
+    ): ByteArray? {
+        lastBackgroundSet = String(srcPath, Charsets.UTF_8) to String(destDir, Charsets.UTF_8)
+        return backgroundResult("setBackground", outBatch, outBuffer)
+    }
+
+    override fun setBackgroundScrim(
+        engine: Long,
+        scrimPermille: Int,
+        outBatch: ByteArray,
+        outBuffer: LongArray,
+    ): ByteArray? = backgroundResult("setBackgroundScrim", outBatch, outBuffer)
+
+    override fun clearBackground(
+        engine: Long,
+        destDir: ByteArray,
+        outBatch: ByteArray,
+        outBuffer: LongArray,
+    ): ByteArray? = backgroundResult("clearBackground", outBatch, outBuffer)
+
+    /** 背景四个入口共用：写批次头 + 归还槽 + 返回字节池。 */
+    private fun backgroundResult(call: String, outBatch: ByteArray, outBuffer: LongArray): ByteArray? {
+        calls.add(call)
+        if (v11Code != NrErrors.NR_ERR_OK) return null
+        val bytes = backgroundBytes ?: return null
+        val slots = slotsFor(bytes)
+        val struct = structSlots(slots)
+        val buf = writer(NR_BACKGROUND_BATCH_SIZE)
+        buf.putInt(0, backgroundCount)
+        buf.putInt(4, 0)
+        buf.putLong(8, struct[0])
+        buf.putLong(16, struct[1])
+        buf.putLong(24, struct[2])
+        copyInto(buf, outBatch)
+        writeSlots(outBuffer, slots)
+        return bytes
+    }
+
 }
 
-/** 记录归还调用的假归还器（单测专用）。 */
 internal class FakeReleaser(
     var code: Int = NrErrors.NR_ERR_OK,
 ) : NrReleaser {

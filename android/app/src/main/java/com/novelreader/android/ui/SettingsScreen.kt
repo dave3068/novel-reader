@@ -12,11 +12,16 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -24,8 +29,10 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.novelreader.android.reader.BackgroundFit
 import com.novelreader.android.reader.ReaderUiState
 import com.novelreader.android.reader.ReaderStatus
+import com.novelreader.android.reader.ThemeBase
 import com.novelreader.android.reader.TypographySettings
 import com.novelreader.android.reader.milliPx
 
@@ -47,6 +54,11 @@ fun SettingsScreen(
     onHorizontalMarginChange: (Float) -> Unit,
     onVerticalMarginChange: (Float) -> Unit,
     onDarkThemeChange: (Boolean) -> Unit,
+    onThemeEnabledChange: (Boolean) -> Unit,
+    onThemeBaseChange: (Int, String) -> Unit,
+    onBackgroundScrimChange: (Int) -> Unit,
+    onBackgroundPick: (Int, Int) -> Unit,
+    onBackgroundClear: () -> Unit,
     onRelayout: () -> Unit,
     onSavePosition: () -> Unit,
     onRebuildIndex: () -> Unit,
@@ -136,6 +148,144 @@ fun SettingsScreen(
                         .testTag(ReaderTestTags.SETTINGS_DARK_THEME_SWITCH)
                         .semantics { contentDescription = "夜间模式" },
                 )
+            }
+            HorizontalDivider()
+            Text("自定义配色", style = MaterialTheme.typography.titleSmall)
+            Text(
+                text = "只选四个基色，其余语义色由核心派生；明暗两套自动跟随。" +
+                    "写入被拒时原值保留。",
+                style = MaterialTheme.typography.labelSmall,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "启用自定义配色",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f),
+                )
+                Switch(
+                    checked = state.theme.enabled,
+                    onCheckedChange = onThemeEnabledChange,
+                    modifier = Modifier
+                        .testTag(ReaderTestTags.SETTINGS_THEME_ENABLED)
+                        .semantics { contentDescription = "启用自定义配色" },
+                )
+            }
+            if (!state.theme.hasAnyBase) {
+                Text(
+                    text = "尚未设置基色：可在此填入 #RRGGBB。",
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.testTag(ReaderTestTags.SETTINGS_THEME_EMPTY_HINT),
+                )
+            }
+            ThemeBase.LABELS.forEachIndexed { which, label ->
+                OutlinedTextField(
+                    value = state.theme.baseOf(which),
+                    onValueChange = { onThemeBaseChange(which, it) },
+                    label = { Text(label) },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag(ReaderTestTags.settingsThemeBase(which))
+                        .semantics { contentDescription = "$label（#RRGGBB）" },
+                )
+            }
+            Text(
+                text = "对比度 " + state.theme.contrastLabel +
+                    if (state.theme.contrastPasses) "" else " · 低于可读性建议（已保留你的选择）",
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.testTag(ReaderTestTags.SETTINGS_THEME_CONTRAST),
+            )
+            HorizontalDivider()
+            Text("阅读背景", style = MaterialTheme.typography.titleSmall)
+            Text(
+                text = "全局一张，作用于阅读正文区；图片会被复制到应用数据目录，" +
+                    "原图不会被改动，也不参与分页。",
+                style = MaterialTheme.typography.labelSmall,
+            )
+            Text(
+                text = if (state.background.hasImage) {
+                    "背景图：${state.background.fileName} · ${state.background.sizeLabel}"
+                } else {
+                    "背景图：未设置"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.testTag(ReaderTestTags.SETTINGS_BACKGROUND_INFO),
+            )
+            if (!state.background.hasImage) {
+                Text(
+                    text = "尚未设置背景：点下方「选择图片…」从系统中选一张图。",
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.testTag(ReaderTestTags.SETTINGS_BACKGROUND_EMPTY_HINT),
+                )
+            }
+            // 缩放口径：**选图时确定**。核心没有「只改 fit」的导出，故这里给的是
+            // 「下次选图使用的口径」而不是一个按了就改存储的开关 —— 不给无反应的控件。
+            Text(
+                text = "缩放口径（选图时生效）：当前存储值 ${state.background.fitLabel}",
+                style = MaterialTheme.typography.labelSmall,
+            )
+            var chosenFit by remember(state.background.fitMode) {
+                mutableStateOf(state.background.fitMode.toInt())
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                BackgroundFit.LABELS.forEachIndexed { mode, label ->
+                    OutlinedButton(
+                        onClick = { chosenFit = mode },
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag(ReaderTestTags.settingsBackgroundFit(mode))
+                            .semantics {
+                                contentDescription = "缩放口径：$label" +
+                                    if (chosenFit == mode) "（已选）" else ""
+                            },
+                    ) {
+                        Text(if (chosenFit == mode) "● $label" else "○ $label")
+                    }
+                }
+            }
+            Text(
+                text = "遮罩强度 ${state.background.scrimLabel}（已设图后可随时调整）",
+                style = MaterialTheme.typography.labelSmall,
+            )
+            Slider(
+                value = state.background.scrimPermille.toFloat(),
+                onValueChange = { onBackgroundScrimChange(it.toInt()) },
+                valueRange = 0f..1000f,
+                enabled = state.background.hasImage,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag(ReaderTestTags.SETTINGS_BACKGROUND_SCRIM)
+                    .semantics { contentDescription = "背景遮罩强度" },
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Button(
+                    onClick = { onBackgroundPick(chosenFit, state.background.scrimPermille.toInt()) },
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag(ReaderTestTags.SETTINGS_BACKGROUND_PICK)
+                        .semantics { contentDescription = "选择背景图片" },
+                ) {
+                    Text("选择图片…")
+                }
+                OutlinedButton(
+                    onClick = onBackgroundClear,
+                    enabled = state.background.hasImage,
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag(ReaderTestTags.SETTINGS_BACKGROUND_CLEAR)
+                        .semantics { contentDescription = "移除背景图（不删原图）" },
+                ) {
+                    Text("移除背景")
+                }
             }
             HorizontalDivider()
             Text("阅读命令", style = MaterialTheme.typography.titleSmall)

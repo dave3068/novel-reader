@@ -1,5 +1,6 @@
 package com.novelreader.android.reader
 
+import com.novelreader.android.core.NrException
 import com.novelreader.android.core.NrErrorKind
 import com.novelreader.android.core.NrAbiConstants
 
@@ -17,6 +18,9 @@ enum class ReaderRoute {
 
     /** 设置页。 */
     SETTINGS,
+
+    /** 最近阅读（历史，V1.1）。 */
+    HISTORY,
 }
 
 /**
@@ -217,11 +221,356 @@ data class ReaderFailure(
 )
 
 /** 应用状态（Compose 只显示它，不保存第二份阅读业务）。 */
+
+/**
+ * 缩放口径（与头文件 `nr_background.fit_mode` 一致）。
+ *
+ * ⚠️ 核心**没有**「只改 `fit_mode`」的导出（存储层有 `set_fit_mode`，未在 ABI 暴露），
+ * 故该项只能在**选图时**确定；界面把它做成只读并写明缘由。
+ */
+object BackgroundFit {
+    const val COVER = 0
+    const val TILE = 1
+    const val CENTER = 2
+
+    /** 三项显示名（顺序与取值一致）。 */
+    val LABELS = listOf("覆盖铺满", "原始尺寸平铺", "原始尺寸居中")
+
+    /** 取值 → 显示名（越界回「未知」）。 */
+    fun labelOf(value: Long): String = LABELS.getOrNull(value.toInt()) ?: "未知"
+}
+
+/**
+ * 阅读背景状态（V1.1）。
+ *
+ * **只存相对文件名**（规格 R15）—— 绝对路径由界面用 app-private 目录拼，
+ * 核心不猜平台数据目录。`fileName` 为空 = 未设置。
+ */
+data class BackgroundState(
+    val fileName: String = "",
+    val fileSize: Long = 0L,
+    val scrimPermille: Long = DEFAULT_SCRIM_PERMILLE,
+    val fitMode: Long = BackgroundFit.COVER.toLong(),
+    /** 遮罩 alpha（0–255）—— **核心已从千分比换算**，界面不再换算。 */
+    val scrimAlpha: Int = 0,
+) {
+    companion object {
+        /** 与核心 `background::DEFAULT_SCRIM_PERMILLE` 同值。 */
+        const val DEFAULT_SCRIM_PERMILLE = 400L
+    }
+
+    val hasImage: Boolean
+        get() = fileName.isNotEmpty()
+
+    /** 缩放口径显示名。 */
+    val fitLabel: String
+        get() = BackgroundFit.labelOf(fitMode)
+
+    /** 遮罩强度显示（千分比 → 百分比）。 */
+    val scrimLabel: String
+        get() = "${(scrimPermille / 10)}%"
+
+    /** 文件大小显示（字节 → KB/MB；仅在已设置时有意义）。 */
+    val sizeLabel: String
+        get() = when {
+            !hasImage -> "—"
+            fileSize < 1024 -> "$fileSize B"
+            fileSize < 1024 * 1024 -> "${fileSize / 1024} KB"
+            else -> "${fileSize / (1024 * 1024)} MB"
+        }
+}
+
+
+/**
+ * 移动 / 删除目标的一行（V1.1）。
+ *
+ * [selectable] 由**核心**给出（自身与子孙为 false）—— 界面据此置灰并解释原因，
+ * **不自行遍历父子链**判断可达性。
+ */
+data class CategoryTargetView(
+    val id: Long,
+    val name: String,
+    val depth: Int,
+    val selectable: Boolean,
+    val totalCount: Long,
+) {
+    /** 缩进（层级由核心给）。 */
+    val indentLevel: Int
+        get() = depth
+
+    /** 显示文本（不可选时明确标注原因，而不是让用户猜）。 */
+    val label: String
+        get() = if (selectable) "$name（$totalCount 本）" else "$name（不可选：自身或子孙）"
+}
+
+/** 删除去向（与核心 `nr_delete_category` 的 `destination` 一致）。 */
+object DeleteDestination {
+    /** 未选 —— **不得执行删除**（核心会拒绝）。 */
+    const val NONE = 0
+    /** 移入另一分类（需 [CategoryState] 的目标 id）。 */
+    const val MOVE_TO = 1
+    /** 一并移出书架。 */
+    const val REMOVE_FROM_SHELF = 2
+    /** 移回根下未分类。 */
+    const val TO_UNCATEGORIZED = 3
+}
+
+/**
+ * 侧栏树的一行（V1.1）。
+ *
+ * 除 [expanded] / [selected] 是纯视图状态外，其余字段**全部来自核心**
+ * （`depth` 由核心给 —— 界面不自己算层级）。
+ */
+data class CategoryRowView(
+    val id: Long,
+    val name: String,
+    /** 层级（核心给）：`0` = 根层分类。 */
+    val depth: Int,
+    /** 直接归属本分类的在架书籍数（核心给）。 */
+    val directCount: Long,
+    /** 含子孙的在架书籍数（核心给）—— 选中本行时可见的书籍口径与它一致。 */
+    val totalCount: Long,
+    val hasChildren: Boolean,
+    val expanded: Boolean,
+    val selected: Boolean,
+) {
+    /** 侧栏缩进（每层 1 级）。 */
+    val indentLevel: Int
+        get() = depth
+
+    /** 「科幻 · 3/12」这类显示文本（直接/合计）。 */
+    val countLabel: String
+        get() = if (totalCount == directCount) "$directCount" else "$directCount/$totalCount"
+}
+
+/**
+ * 书架分类侧栏（V1.1）。
+ *
+ * [selectedId]：`null` = 根「全部书籍」；`-1` = 仅未分类；`> 0` = 某个分类
+ * （可见书籍**含子孙**，与核心 [`NrScopeKind`] 的口径一致）。
+ */
+data class CategoryState(
+    val rows: List<CategoryRowView> = emptyList(),
+    val selectedId: Long? = null,
+    /** 已折叠的分类 id（只影响**下发哪些行**，不影响核心的任何计算）。 */
+    val collapsed: Set<Long> = emptySet(),
+    val rootTotalCount: Long = 0,
+    val uncategorizedCount: Long = 0,
+    val loading: Boolean = false,
+) {
+    val hasCategories: Boolean
+        get() = rows.isNotEmpty()
+}
+
+/**
+ * 侧栏树的纯装配（V1.1）。
+ *
+ * # 为什么在客户端
+ *
+ * 核心 `nr_list_categories` 返回的是**扁平列表**（带 `parentId` 与 `depth`，DTO 注释即写明
+ * 「树形由界面按 parentId 组装」）。本对象只做**视图装配**：按父子链把扁平行排成深度优先序，
+ * 并剔除祖先被折叠的行 —— 不派生任何核心语义（层级、计数、归属判断全部来自核心）。
+ *
+ * ⚠️ 桌面侧在同一件事上选择了「核心投影」（`category_tree::project` 接收折叠集合）。
+ * 两者**分层不同、语义必须相同**：折叠规则（祖先折叠 ⇒ 子孙不显示；根行恒显示）在此以
+ * 单测钉住，任何一侧改动都要同步。
+ */
+object CategoryTreeAssembly {
+
+    /** 未分类哨兵（与核心 `nr_list_categories` / `nr_list_books_in_scope` 一致）。 */
+    const val UNCATEGORIZED = -1L
+
+    /**
+     * 一条核心条目中装配所必需的部分。
+     *
+     * 用独立类型而不是直接吃核心 DTO：界面模型不依赖 ABI 结构体，
+     * 核心换布局时这层不用动。
+     */
+    data class Node(
+        val id: Long,
+        val parentId: Long,
+        val name: String,
+        val depth: Int,
+        val directCount: Long,
+        val totalCount: Long,
+    )
+
+    /**
+     * 深度优先展开成可下发的行。
+     *
+     * - 兄弟之间**保持核心给的顺序**（不在客户端重排，避免与桌面分叉）；
+     * - 某行只要**任一祖先被折叠**就不下发（自身折叠只影响其子孙，不影响自己）；
+     * - 父链缺失的孤儿节点视为根层（不让一个脏数据把整棵树吞掉）。
+     */
+    fun flatten(
+        nodes: List<Node>,
+        collapsed: Set<Long>,
+        selectedId: Long?,
+        rootTotalCount: Long = 0,
+        uncategorizedCount: Long = 0,
+    ): List<CategoryRowView> {
+        val byParent = nodes.groupBy { node ->
+            if (nodes.any { it.id == node.parentId }) node.parentId else ROOT
+        }
+        val out = mutableListOf<CategoryRowView>()
+        // 显式栈（避免深树递归栈溢出）；children 逆序入栈以保持原顺序。
+        val stack = ArrayDeque<Pair<Node, Boolean>>()
+        (byParent[ROOT] ?: emptyList()).asReversed().forEach { stack.addLast(it to false) }
+        while (stack.isNotEmpty()) {
+            val (node, hidden) = stack.removeLast()
+            val children = byParent[node.id] ?: emptyList()
+            if (!hidden) {
+                out += CategoryRowView(
+                    id = node.id,
+                    name = node.name,
+                    depth = node.depth,
+                    directCount = node.directCount,
+                    totalCount = node.totalCount,
+                    hasChildren = children.isNotEmpty(),
+                    expanded = node.id !in collapsed,
+                    selected = selectedId == node.id,
+                )
+            }
+            val childHidden = hidden || node.id in collapsed
+            children.asReversed().forEach { child -> stack.addLast(child to childHidden) }
+        }
+        return out
+    }
+
+    /** 父链起点（`parentId` 无处可挂时归到这里）。 */
+    private const val ROOT = Long.MIN_VALUE
+}
+/**
+ * 阅读历史的一行（V1.1）。
+ *
+ * [timeLabel] **由核心格式化**（今天 `HH:MM` / 本年 `MM-DD HH:MM` / 跨年 `yyyy-MM-dd HH:MM`）
+ * —— 界面原样显示，**不得**再格式化或截断（规格 §3.6）。
+ *
+ * [bookId] 用于「点条目回到那本书」；来源映射由宿主目录提供（见 `openHistoryBook`）。
+ */
+data class HistoryRow(
+    val entryId: Long,
+    val bookId: Long,
+    val title: String,
+    /** 来源**末段文件名**（核心已取末段，不含路径分隔符）。 */
+    val fileLabel: String,
+    /** 核心格式化的时间标签。 */
+    val timeLabel: String,
+    /** 进入方式码（`0`=书架打开 `1`=阅读页打开 `2`=进度恢复 `3`=书签跳转 `4`=章节跳转）。 */
+    val entryKind: Long,
+    val chapterIndex: Long,
+    val byteOffset: Long,
+) {
+    /** 位置描述（章序号从 1 起；与桌面 `position_label` 同口径）。 */
+    val positionLabel: String
+        get() = "第 ${chapterIndex + 1} 章 · 偏移 $byteOffset 字节"
+}
+
+/**
+ * 历史状态（V1.1）。
+ *
+ * [total] 是核心给的**全部流水条数**（不受 `limit` 影响），界面据此显示「共 N 条」。
+ */
+data class HistoryState(
+    val rows: List<HistoryRow> = emptyList(),
+    val total: Int = 0,
+    val loading: Boolean = false,
+) {
+    val isEmpty: Boolean
+        get() = rows.isEmpty() && !loading
+
+    /** 空态标题（与核心侧固定文案一致）。 */
+    val emptyTitle: String
+        get() = "还没有阅读记录"
+
+    /** 空态说明。 */
+    val emptyDesc: String
+        get() = "打开一本书后会在这里留下一条流水。"
+}
+
+/**
+ * 自定义配色状态（V1.1）。
+ *
+ * **只存 4 个基色 + 启用位** —— 40 个语义令牌不落库（规格 R11），由核心派生；
+ * 界面若要显示某个令牌的颜色，走 `NrEngine.getThemeToken(下标, dark)`。
+ *
+ * 对比度由核心以**整数 × 100** 回传（`454` ⇒ `4.54 : 1`），界面只做显示换算。
+ */
+data class ThemeState(
+    val enabled: Boolean = false,
+    val foreground: String = "",
+    val background: String = "",
+    val primary: String = "",
+    val accent: String = "",
+    /** 对比度读数（整数 × 100）；`0` = 尚未读取。 */
+    val contrastX100: Int = 0,
+    /** 是否达到可读性建议（不足时核心**已保留用户基色**，这里只提示）。 */
+    val contrastPasses: Boolean = true,
+) {
+    /** 按 `which` 取基色（`0`=正文 `1`=背景 `2`=主色 `3`=强调）。 */
+    fun baseOf(which: Int): String = when (which) {
+        0 -> foreground
+        1 -> background
+        2 -> primary
+        3 -> accent
+        else -> ""
+    }
+
+    /** 对比度显示文本（如 `4.54 : 1`）；未读取时为占位。 */
+    val contrastLabel: String
+        get() = if (contrastX100 <= 0) {
+            "尚未读取"
+        } else {
+            "${contrastX100 / 100}.${(contrastX100 % 100).toString().padStart(2, '0')} : 1"
+        }
+
+    /** 未设置任何基色（界面据此显示「未设置」）。 */
+    val hasAnyBase: Boolean
+        get() = foreground.isNotEmpty() || background.isNotEmpty() ||
+            primary.isNotEmpty() || accent.isNotEmpty()
+}
+
+
+/** 配色读写失败的文案（界面只回显核心给的错误码，不复述业务判断）。 */
+object NrStatusForTheme {
+    fun readFailed(error: NrException): String = "读取配色失败（错误码 ${error.rawCode}）"
+
+    fun writeFailed(error: NrException): String = "配色写入被拒（错误码 ${error.rawCode}），已保留原值"
+}
+
+/** 基色索引（与头文件 `nr_set_theme_base` 的 `which` 一致）。 */
+object ThemeBase {
+    const val FOREGROUND = 0
+    const val BACKGROUND = 1
+    const val PRIMARY = 2
+    const val ACCENT = 3
+
+    /** 四行的显示名（顺序与索引一致）。 */
+    val LABELS = listOf("正文色", "背景色", "主色", "强调色")
+}
+
 data class ReaderUiState(
     val route: ReaderRoute = ReaderRoute.SHELF,
     val shelf: ShelfState = ShelfState(),
     val reader: ReaderState = ReaderState(),
     val settings: TypographySettings = TypographySettings(),
+    /** 自定义配色（V1.1；只存基色，令牌由核心派生）。 */
+    val theme: ThemeState = ThemeState(),
+    /** 最近阅读（V1.1；时间标签由核心格式化）。 */
+    val history: HistoryState = HistoryState(),
+    /** 阅读背景图（V1.1；只存相对文件名）。 */
+    val background: BackgroundState = BackgroundState(),
+    /** 书架分类侧栏（V1.1；层级与计数全部来自核心）。 */
+    val categories: CategoryState = CategoryState(),
+    /** 当前的移动 / 删除目标选项（核心给；空 = 未在选目标）。 */
+    val categoryTargets: List<CategoryTargetView> = emptyList(),
+    /**
+     * 当前作用域下**可见的核心 bookId 集合**（V1.1）。
+     *
+     * `null` = 不过滤（根「全部书籍」）。非空集合 = 只显示这些书；
+     * 由核心 `nr_list_books_in_scope` 给出（子树展开在核心完成）。
+     */
+    val visibleBookIds: Set<Long>? = null,
     /** 正文区域尺寸（像素，不含状态栏/导航栏内边距，含边距设置）。 */
     val viewportWidthPx: Int = 0,
     val viewportHeightPx: Int = 0,
@@ -250,6 +599,31 @@ object ReaderStatus {
     const val SAVED = "阅读位置已保存"
     const val INDEX_REBUILDING = "正在重建章节索引…"
     const val INDEX_CANCELLED = "索引重建已取消（部分结果不落库）"
+
+    /** 历史条目无法打开：宿主目录未接线（单测/纯文件场景）。 */
+    const val HISTORY_NO_CATALOG = "无法从历史打开：宿主未提供书籍目录"
+
+    /** 历史条目无法打开：该书来源不在本机（bookId ↔ 来源映射缺失）。 */
+    const val HISTORY_SOURCE_MISSING = "无法从历史打开：该书的来源不在本机"
+
+    /** 历史读取失败。 */
+    fun historyReadFailed(code: Int): String = "读取阅读历史失败（错误码 $code）"
+
+    /** 清除流水的结果回显（`false` = 该条已不存在）。 */
+    fun historyCleared(removed: Boolean): String =
+        if (removed) "已清除该条流水" else "该条流水已不存在"
+
+    /** 宿主未提供背景图目录（单测 / 纯文件场景）。 */
+    const val BACKGROUND_NO_DIR = "背景功能不可用：宿主未提供背景图目录"
+
+    /** 宿主未提供选图入口。 */
+    const val BACKGROUND_NO_PICKER = "背景功能不可用：宿主未提供选图入口"
+
+    /** 读取背景失败。 */
+    fun backgroundReadFailed(code: Int): String = "读取背景设置失败（错误码 $code）"
+
+    /** 背景写入被拒（如格式不支持、遮罩越界）—— 原设置保持不变。 */
+    fun backgroundWriteFailed(code: Int): String = "背景设置被拒（错误码 $code），原设置未改动"
 
     /**
      * 宿主生命周期取消（旋转 / 退到后台）的回显：取消的是在途任务，**不是**引擎句柄。

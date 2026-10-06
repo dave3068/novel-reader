@@ -157,12 +157,152 @@ internal interface NrAbi {
 
     /** 19. 手动指定内容编码（0 = 清除覆盖）。 */
     fun setEncoding(engine: Long, bookId: Long, encodingCode: Int, outResult: ByteArray): Int
+
+    // ---- 分类树（V1.1；加性契约修订）----
+
+    /** 列出分类树（一次性返回整棵树 + 名称字节池）。 */
+    fun listCategories(engine: Long, outBatch: ByteArray, outBuffer: LongArray): ByteArray?
+
+    /** 新建分类；`parentId = -1` 表示根下。同父同名由核心拒绝。 */
+    fun createCategory(engine: Long, parentId: Long, name: ByteArray, outCategoryId: LongArray): Int
+
+    /** 移动书籍到分类；`categoryId = -1` 表示未分类（根）。 */
+    fun moveBookToCategory(engine: Long, bookId: Long, categoryId: Long): Int
+
+    /**
+     * 删除分类。`destination` **必须显式给出**：`1`=移入 [targetId]、`2`=移出书架、
+     * `3`=移回根；传 `0`（未选去向）核心拒绝且**零副作用**（与桌面同语义）。
+     */
+    fun deleteCategory(engine: Long, categoryId: Long, destination: Int, targetId: Long, outMovedCount: IntArray): Int
+
+    // ---- 阅读历史（V1.1；加性契约修订）----
+
+    /**
+     * 列出阅读历史。[bookId] > 0 限定单书；[limit] > 0 限量；[grouped] != 0 走按书聚合。
+     *
+     * **排序在核心完成**，调用方不得自行排序。
+     */
+    fun listHistory(
+        engine: Long,
+        bookId: Long,
+        limit: Int,
+        grouped: Int,
+        outBatch: ByteArray,
+        outBuffer: LongArray,
+    ): ByteArray?
+
+    /** 清除一条阅读流水；`outRemoved` 写回 1 = 已清除、0 = 该 id 不存在。 */
+    fun clearHistoryEntry(engine: Long, entryId: Long, outRemoved: IntArray): Int
+
+    /** 清除某本书的全部阅读流水；**只删流水**（不动书籍 / 进度 / 书签）。 */
+    fun clearHistoryForBook(engine: Long, bookId: Long, outRemovedCount: IntArray): Int
+
+    // ---- 自定义配色（V1.1；加性契约修订）----
+
+    /** 读回基色；四项各 12 字节，**全 0 = 该项未设置**。 */
+    fun getThemeBase(engine: Long, outBase: ByteArray): Int
+
+    /**
+     * 写入一个基色。[which]：`0`=正文 `1`=背景 `2`=主色 `3`=强调；
+     * [value] 长度 0 = **清除该项**；非法值被拒且**保留原值**。
+     */
+    fun setThemeBase(engine: Long, which: Int, value: ByteArray): Int
+
+    /** 切换启用；关闭时**保留基色**。 */
+    fun setThemeEnabled(engine: Long, enabled: Int): Int
+
+    /** 取一个派生令牌的 RGBA（4 字节）；派生**全在核心**（两端一致）。 */
+    fun getThemeToken(engine: Long, which: Int, dark: Int, outRgba: ByteArray): Int
+
+    /** 取对比度读数（比值 × 100）；`passes = 0` 时核心**已保留用户基色**。 */
+    fun getThemeContrast(engine: Long, outResult: ByteArray): Int
+
+    // ---- 全局背景图（V1.1；加性契约修订）----
+
+    /**
+     * 读回背景。**只回相对文件名**（R15）—— 调用方拼自己的 app-private 前缀。
+     *
+     * `outBuffer` 承载核心分配的字节缓冲，用完必须走 `releaseBuffer` 归还。
+     */
+    fun getBackground(engine: Long, outBatch: ByteArray, outBuffer: LongArray): ByteArray?
+
+    /**
+     * 设置背景：核心**复制** [srcPath] 到 [destDir]（原图只读），只把相对名写库。
+     *
+     * [destDir] 由调用方给；[fitMode] < 0 或 [scrimPermille] < 0 = 用默认值。
+     */
+    fun setBackground(
+        engine: Long,
+        srcPath: ByteArray,
+        destDir: ByteArray,
+        fitMode: Int,
+        scrimPermille: Int,
+        outBatch: ByteArray,
+        outBuffer: LongArray,
+    ): ByteArray?
+
+    /** 只调遮罩强度（**不换图**）；[scrimPermille] 必须在 `0..=1000`。 */
+    fun setBackgroundScrim(
+        engine: Long,
+        scrimPermille: Int,
+        outBatch: ByteArray,
+        outBuffer: LongArray,
+    ): ByteArray?
+
+    /** 清除背景：**只删核心生成的文件**；**不动用户原图**。 */
+    fun clearBackground(
+        engine: Long,
+        destDir: ByteArray,
+        outBatch: ByteArray,
+        outBuffer: LongArray,
+    ): ByteArray?
+
+    /**
+     * 合法的移动 / 删除目标（`sourceId` 自身与全部子孙 `selectable = false`）。
+     *
+     * 环判定在**核心**完成 —— 界面不得自行遍历父子链。
+     */
+    fun categoryMoveTargets(
+        engine: Long,
+        sourceId: Long,
+        outBatch: ByteArray,
+        outBuffer: LongArray,
+    ): ByteArray?
+
+    /** 重命名分类；空名 / 坏 UTF-8 由核心拒绝并保留原值。 */
+    fun renameCategory(engine: Long, categoryId: Long, name: ByteArray): Int
+
+    /** 移动分类到新父分类（`-1` = 根层）；移入自身或子孙必须拒绝（规格 R5）。 */
+    fun moveCategory(engine: Long, categoryId: Long, newParentId: Long): Int
+
+    /**
+     * 列出某作用域下的在架书籍 id（`scopeKind`：0 全部 / 1 未分类 / 2 分类含子孙）。
+     *
+     * 子树展开在**核心**完成 —— 界面只做集合成员判断，不遍历父子链。
+     */
+    fun listBooksInScope(
+        engine: Long,
+        scopeKind: Int,
+        categoryId: Long,
+        outBatch: ByteArray,
+        outBuffer: LongArray,
+    ): ByteArray?
+
+    /**
+     * 列出书籍 → 分类映射（只含在架书籍）；`-1` 表示未分类。
+     *
+     * 界面筛选用：宿主目录给 `sourceIdentity → bookId`，本入口给
+     * `bookId → categoryId`，两者相合即可按分类过滤书架。
+     */
+    fun listBookCategories(engine: Long, outBatch: ByteArray, outBuffer: LongArray): ByteArray?
+
+
     fun cancelRequest(engine: Long, requestId: Long): Int
     fun getLastError(engine: Long, outInfo: ByteArray, outBuffer: LongArray): ByteArray?
     fun releaseBuffer(ptr: Long, len: Long, capacity: Long): Int
 }
 
-/** 生产实现：一比一透传到 [NrCore] 的 18 项 `external fun`（零逻辑）。 */
+/** 生产实现：一比一透传到 [NrCore] 的 40 项 `external fun`（零逻辑）。 */
 internal object NrJniAbi : NrAbi {
 
     override fun abiVersion(): Int = NrCore.nr_abi_version()
@@ -274,6 +414,116 @@ internal object NrJniAbi : NrAbi {
 
     override fun setEncoding(engine: Long, bookId: Long, encodingCode: Int, outResult: ByteArray): Int =
         NrCore.nr_set_encoding(engine, bookId, encodingCode, outResult)
+
+    override fun listCategories(engine: Long, outBatch: ByteArray, outBuffer: LongArray): ByteArray? =
+        NrCore.nr_list_categories(engine, outBatch, outBuffer)
+
+    override fun createCategory(engine: Long, parentId: Long, name: ByteArray, outCategoryId: LongArray): Int =
+        NrCore.nr_create_category(engine, parentId, name, outCategoryId)
+
+    override fun moveBookToCategory(engine: Long, bookId: Long, categoryId: Long): Int =
+        NrCore.nr_move_book_to_category(engine, bookId, categoryId)
+
+    override fun deleteCategory(
+        engine: Long,
+        categoryId: Long,
+        destination: Int,
+        targetId: Long,
+        outMovedCount: IntArray,
+    ): Int = NrCore.nr_delete_category(engine, categoryId, destination, targetId, outMovedCount)
+
+    override fun listHistory(
+        engine: Long,
+        bookId: Long,
+        limit: Int,
+        grouped: Int,
+        outBatch: ByteArray,
+        outBuffer: LongArray,
+    ): ByteArray? = NrCore.nr_list_history(engine, bookId, limit, grouped, outBatch, outBuffer)
+
+    override fun clearHistoryEntry(engine: Long, entryId: Long, outRemoved: IntArray): Int =
+        NrCore.nr_clear_history_entry(engine, entryId, outRemoved)
+
+    override fun clearHistoryForBook(engine: Long, bookId: Long, outRemovedCount: IntArray): Int =
+        NrCore.nr_clear_history_for_book(engine, bookId, outRemovedCount)
+
+    override fun getThemeBase(engine: Long, outBase: ByteArray): Int =
+        NrCore.nr_get_theme_base(engine, outBase)
+
+    override fun setThemeBase(engine: Long, which: Int, value: ByteArray): Int =
+        NrCore.nr_set_theme_base(engine, which, value)
+
+    override fun setThemeEnabled(engine: Long, enabled: Int): Int =
+        NrCore.nr_set_theme_enabled(engine, enabled)
+
+    override fun getThemeToken(engine: Long, which: Int, dark: Int, outRgba: ByteArray): Int =
+        NrCore.nr_get_theme_token(engine, which, dark, outRgba)
+
+    override fun getThemeContrast(engine: Long, outResult: ByteArray): Int =
+        NrCore.nr_get_theme_contrast(engine, outResult)
+
+    override fun getBackground(engine: Long, outBatch: ByteArray, outBuffer: LongArray): ByteArray? =
+        NrCore.nr_get_background(engine, outBatch, outBuffer)
+
+    override fun setBackground(
+        engine: Long,
+        srcPath: ByteArray,
+        destDir: ByteArray,
+        fitMode: Int,
+        scrimPermille: Int,
+        outBatch: ByteArray,
+        outBuffer: LongArray,
+    ): ByteArray? = NrCore.nr_set_background(
+        engine,
+        srcPath,
+        destDir,
+        fitMode,
+        scrimPermille,
+        outBatch,
+        outBuffer,
+    )
+
+    override fun setBackgroundScrim(
+        engine: Long,
+        scrimPermille: Int,
+        outBatch: ByteArray,
+        outBuffer: LongArray,
+    ): ByteArray? = NrCore.nr_set_background_scrim(engine, scrimPermille, outBatch, outBuffer)
+
+    override fun clearBackground(
+        engine: Long,
+        destDir: ByteArray,
+        outBatch: ByteArray,
+        outBuffer: LongArray,
+    ): ByteArray? = NrCore.nr_clear_background(engine, destDir, outBatch, outBuffer)
+
+    override fun listBookCategories(
+        engine: Long,
+        outBatch: ByteArray,
+        outBuffer: LongArray,
+    ): ByteArray? = NrCore.nr_list_book_categories(engine, outBatch, outBuffer)
+
+    override fun categoryMoveTargets(
+        engine: Long,
+        sourceId: Long,
+        outBatch: ByteArray,
+        outBuffer: LongArray,
+    ): ByteArray? = NrCore.nr_category_move_targets(engine, sourceId, outBatch, outBuffer)
+
+    override fun renameCategory(engine: Long, categoryId: Long, name: ByteArray): Int =
+        NrCore.nr_rename_category(engine, categoryId, name)
+
+    override fun moveCategory(engine: Long, categoryId: Long, newParentId: Long): Int =
+        NrCore.nr_move_category(engine, categoryId, newParentId)
+
+    override fun listBooksInScope(
+        engine: Long,
+        scopeKind: Int,
+        categoryId: Long,
+        outBatch: ByteArray,
+        outBuffer: LongArray,
+    ): ByteArray? =
+        NrCore.nr_list_books_in_scope(engine, scopeKind, categoryId, outBatch, outBuffer)
 
     override fun rebuildIndex(engine: Long, bookId: Long, requestId: Long, outResult: ByteArray): Int =
         NrCore.nr_rebuild_index(engine, bookId, requestId, outResult)

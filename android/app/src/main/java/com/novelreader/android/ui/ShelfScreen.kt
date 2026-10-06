@@ -31,6 +31,8 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.novelreader.android.reader.ReaderState
+import com.novelreader.android.reader.CategoryState
+import com.novelreader.android.reader.CategoryTargetView
 import com.novelreader.android.reader.ReaderStatus
 import com.novelreader.android.reader.ShelfBook
 import com.novelreader.android.reader.ShelfState
@@ -48,6 +50,7 @@ import com.novelreader.android.reader.ShelfState
 @Composable
 fun ShelfScreen(
     shelf: ShelfState,
+    categories: CategoryState,
     reader: ReaderState,
     abiVersion: Int?,
     status: String,
@@ -56,6 +59,16 @@ fun ShelfScreen(
     onImportRequest: () -> Unit,
     onOpenReader: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenHistory: () -> Unit,
+    onSelectCategory: (Long?) -> Unit,
+    onToggleCategory: (Long) -> Unit,
+    onCreateCategory: (String) -> Unit,
+    onRenameCategory: (Long, String) -> Unit,
+    categoryTargets: List<CategoryTargetView>,
+    onLoadCategoryTargets: (Long) -> Unit,
+    onClearCategoryTargets: () -> Unit,
+    onMoveCategory: (Long, Long) -> Unit,
+    onDeleteCategory: (Long, Int, Long) -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxSize().nrScreenInsets().testTag(ReaderTestTags.SHELF_SCREEN)) {
         NrTopBar(
@@ -70,6 +83,14 @@ fun ShelfScreen(
                     .semantics { contentDescription = "继续阅读当前书籍" },
             ) {
                 Text("继续阅读")
+            }
+            TextButton(
+                onClick = onOpenHistory,
+                modifier = Modifier
+                    .testTag(ReaderTestTags.SHELF_OPEN_HISTORY_BUTTON)
+                    .semantics { contentDescription = "查看最近阅读" },
+            ) {
+                Text("最近阅读")
             }
             TextButton(
                 onClick = onOpenSettings,
@@ -119,6 +140,21 @@ fun ShelfScreen(
                 },
             )
         }
+        Row(modifier = Modifier.fillMaxWidth().weight(1f)) {
+            CategorySidebar(
+                state = categories,
+                onSelectAll = { onSelectCategory(null) },
+                onSelectCategory = { id -> onSelectCategory(id) },
+                onToggle = onToggleCategory,
+                onCreate = onCreateCategory,
+                onRename = onRenameCategory,
+                targets = categoryTargets,
+                onLoadTargets = onLoadCategoryTargets,
+                onClearTargets = onClearCategoryTargets,
+                onMoveCategory = onMoveCategory,
+                onDeleteCategory = onDeleteCategory,
+            )
+            Column(modifier = Modifier.weight(1f)) {
         when {
             shelf.loading -> {
                 Column(
@@ -165,6 +201,8 @@ fun ShelfScreen(
                         HorizontalDivider()
                     }
                 }
+            }
+        }
             }
         }
         HorizontalDivider()

@@ -40,6 +40,31 @@ class NrJniBoundaryTest {
         "nr_invalidate_layout",
         "nr_rebuild_index",
         "nr_set_encoding",
+        // ---- V1.1 分类（加性契约修订）----
+        "nr_list_categories",
+        "nr_create_category",
+        "nr_move_book_to_category",
+        "nr_delete_category",
+        // ---- V1.1 阅读历史（加性契约修订）----
+        "nr_list_history",
+        "nr_clear_history_entry",
+        "nr_clear_history_for_book",
+        // ---- V1.1 自定义配色（加性契约修订）----
+        "nr_get_theme_base",
+        "nr_set_theme_base",
+        "nr_set_theme_enabled",
+        "nr_get_theme_token",
+        "nr_get_theme_contrast",
+        // ---- V1.1 全局背景图（加性契约修订）----
+        "nr_get_background",
+        "nr_set_background",
+        "nr_set_background_scrim",
+        "nr_clear_background",
+        "nr_category_move_targets",
+        "nr_rename_category",
+        "nr_move_category",
+        "nr_list_books_in_scope",
+        "nr_list_book_categories",
         "nr_cancel_request",
         "nr_get_last_error",
         "nr_release_buffer",
@@ -62,6 +87,31 @@ class NrJniBoundaryTest {
         "invalidateLayout",
         "rebuildIndex",
         "setEncoding",
+        // ---- V1.1 分类（加性契约修订）----
+        "listCategories",
+        "createCategory",
+        "moveBookToCategory",
+        "deleteCategory",
+        // ---- V1.1 阅读历史（加性契约修订）----
+        "listHistory",
+        "clearHistoryEntry",
+        "clearHistoryForBook",
+        // ---- V1.1 自定义配色（加性契约修订）----
+        "getThemeBase",
+        "setThemeBase",
+        "setThemeEnabled",
+        "getThemeToken",
+        "getThemeContrast",
+        // ---- V1.1 全局背景图（加性契约修订）----
+        "getBackground",
+        "setBackground",
+        "setBackgroundScrim",
+        "clearBackground",
+        "categoryMoveTargets",
+        "renameCategory",
+        "moveCategory",
+        "listBooksInScope",
+        "listBookCategories",
         "cancelRequest",
         "getLastError",
         "releaseBuffer",
@@ -77,7 +127,11 @@ class NrJniBoundaryTest {
     @Test
     fun nrCoreDeclaresExactlyTheFrozenEntrySet() {
         val natives = nativeMethods()
-        assertEquals("external fun 声明数必须为 19（18 项冻结 + nr_set_encoding）", 19, natives.size)
+        assertEquals(
+            "external fun 声明数必须为 40（18 项冻结 + nr_set_encoding + V1.1 分类 4 + 历史 3 + 配色 5 + 背景 4 + 作用域书籍 1 + 书籍分类映射 1 + 分类改名/移动 2 + 移动目标 1 项）",
+            40,
+            natives.size,
+        )
         assertEquals(entryNames.toSet(), natives.map { it.name }.toSet())
     }
 
@@ -139,7 +193,11 @@ class NrJniBoundaryTest {
         val declared = NrAbi::class.java.declaredMethods
             .map { it.name.substringBefore('$') }
             .toSet()
-        assertEquals(19, declared.size)
+        assertEquals(
+            "NrAbi 接口方法数必须为 40（与 external fun 一一对应）",
+            40,
+            declared.size,
+        )
         assertEquals(seamNames.toSet(), declared)
     }
 }

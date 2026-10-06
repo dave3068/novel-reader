@@ -1,5 +1,6 @@
 package com.novelreader.android.source
 
+import java.io.File
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
@@ -40,6 +41,11 @@ import java.util.concurrent.Executors
  */
 class SafHost(context: Context) : AutoCloseable, HostBookCatalog {
 
+    companion object {
+        /** 背景图临时目录名（与书籍缓存 `saf-cache` 分开）。 */
+        private const val BACKGROUND_SRC_DIR = "background-src"
+    }
+
     /** 一次可打开的数据源描述（宿主据此调用 ViewModel 的打开入口）。 */
     data class OpenTarget(
         /** [NrAbiConstants.NR_SOURCE_KIND_PLATFORM] 或 [NrAbiConstants.NR_SOURCE_KIND_FILE]。 */
@@ -52,6 +58,8 @@ class SafHost(context: Context) : AutoCloseable, HostBookCatalog {
     )
 
     private val source: SafBookSource
+    /** 平台桥接句柄（V1.1 背景图物化需要它开流；与 [source] 共用同一实例）。 */
+    private val platform: AndroidSafPlatform
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private val executor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
@@ -60,10 +68,43 @@ class SafHost(context: Context) : AutoCloseable, HostBookCatalog {
 
     init {
         val application = context.applicationContext
+        val bridge = AndroidSafPlatform(application)
+        platform = bridge
         source = SafBookSource.create(
-            platform = AndroidSafPlatform(application),
+            platform = bridge,
             keyValueStore = AndroidSafKeyValue(application),
         )
+    }
+
+    /**
+     * 把用户选中的图片**物化**成本地文件，返回可交给核心的路径（V1.1 背景图）。
+     *
+     * 复用既有 SAF 回退复制的机制（定长块流式复制 + 原子转正 + 半成品不可见），
+     * 但目标是**独立的图片缓存目录** —— 不与书籍缓存混放，避免书籍缓存的清理策略误删背景图。
+     *
+     * 核心随后会把这个文件**复制**到应用数据目录并只存相对文件名（规格 R14），
+     * 故本文件只是一次性的中转件：调用方用完可删，删了也不影响已设置的背景。
+     *
+     * @throws IllegalStateException 失败时抛出（`message` 可直接展示给用户）。
+     */
+    fun materializeBackgroundSource(uri: String): String {
+        val store = SafCacheStore(File(platform.privateCacheRoot(), BACKGROUND_SRC_DIR))
+        if (!store.ensureRoot()) {
+            throw IllegalStateException("无法创建背景图临时目录")
+        }
+        // 平台返回 null = 无法为该 URI 开流（提供者拒绝 / 权限失效）—— 如实失败。
+        val stream = platform.openSequentialStream(uri)
+            ?: throw IllegalStateException("无法打开所选图片（提供者拒绝或权限失效）")
+        val outcome = SafCacheCopyTask(
+            stream = stream,
+            sink = store.sinkFor(uri),
+            expectedBytes = SafPolicy.UNKNOWN_SIZE,
+        ).run()
+        return when (outcome) {
+            is SafCopyOutcome.Completed -> outcome.cachePath
+            is SafCopyOutcome.Cancelled -> throw IllegalStateException("背景图复制已取消")
+            is SafCopyOutcome.Failed -> throw IllegalStateException(outcome.detail)
+        }
     }
 
     /** 已登记的来源记录（诊断用途；不参与阅读业务）。 */
@@ -79,10 +120,20 @@ class SafHost(context: Context) : AutoCloseable, HostBookCatalog {
     override fun list(): List<HostBookEntry> = source.records().mapNotNull { record ->
         when {
             record.accessMode == SafAccessMode.WINDOW ->
-                HostBookEntry(record.uri, record.displayName, NrAbiConstants.NR_SOURCE_KIND_PLATFORM)
+                HostBookEntry(
+                    record.uri,
+                    record.displayName,
+                    NrAbiConstants.NR_SOURCE_KIND_PLATFORM,
+                    record.bookId,
+                )
 
             record.hasCacheCopy && !record.cachePath.isNullOrBlank() ->
-                HostBookEntry(record.cachePath, record.displayName, NrAbiConstants.NR_SOURCE_KIND_FILE)
+                HostBookEntry(
+                    record.cachePath,
+                    record.displayName,
+                    NrAbiConstants.NR_SOURCE_KIND_FILE,
+                    record.bookId,
+                )
 
             else -> null
         }
@@ -92,6 +143,27 @@ class SafHost(context: Context) : AutoCloseable, HostBookCatalog {
     override fun rememberBookId(sourceIdentity: String, bookId: Long) {
         if (source.recordOf(sourceIdentity) == null) return
         source.attachBookId(sourceIdentity, bookId)
+    }
+
+    /**
+     * 异步物化背景图（在自己的线程上复制，回调回主线程）—— 与 [open] 同一套线程模型。
+     *
+     * 复制大图可能耗时，故**不得**在 UI 线程直接调 [materializeBackgroundSource]。
+     */
+    fun materializeBackgroundSourceAsync(
+        uri: String,
+        onReady: (String) -> Unit,
+        onFailure: (String) -> Unit,
+    ) {
+        executor.execute {
+            val result = runCatching { materializeBackgroundSource(uri) }
+            mainHandler.post {
+                result.fold(
+                    onSuccess = onReady,
+                    onFailure = { error -> onFailure(error.message ?: "背景图读取失败") },
+                )
+            }
+        }
     }
 
     /**

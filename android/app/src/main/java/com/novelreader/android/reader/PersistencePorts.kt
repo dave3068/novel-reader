@@ -38,6 +38,13 @@ data class HostBookEntry(
     val sourceIdentity: String,
     val displayName: String,
     val sourceKind: Int,
+    /**
+     * 核心 `book_id`（打开成功时由 [HostBookCatalog.rememberBookId] 回填）。
+     *
+     * `null` = 本次安装尚未打开过该书 —— 此时**无法**把核心侧的历史条目
+     * （只带 `book_id`）映射回可打开的来源。
+     */
+    val bookId: Long? = null,
 )
 
 /**
@@ -55,4 +62,13 @@ interface HostBookCatalog {
 
     /** 打开成功后回填核心 book_id（幂等；未知来源应被忽略）。 */
     fun rememberBookId(sourceIdentity: String, bookId: Long)
+
+    /**
+     * 按核心 `book_id` 反查可打开来源（V1.1：阅读历史条目只带 `book_id`）。
+     *
+     * 默认实现遍历 [list]；只需覆盖 `rememberBookId` 的实现无需额外改动。
+     * 找不到返回 `null` —— 调用方应**如实回报**，不得猜测性打开别的书。
+     */
+    fun byBookId(bookId: Long): HostBookEntry? =
+        list().firstOrNull { entry -> entry.bookId == bookId }
 }

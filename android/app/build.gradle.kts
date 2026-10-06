@@ -29,12 +29,12 @@ android {
         applicationId = "com.novelreader.android"
         minSdk = 31
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "0.5.0"
         // 构建标记：真机/APK 上一眼确认装的是哪一次构建（子规格 A-T7 / 检查项 C8）。
         // AN6 起由 `scripts/build-android-apk.sh` 产出 dist/ 分发包，标记值同步换代，
         // 使 `scripts/verify-android-apk.py` 能证明「本次构建的代码确实进了 APK」。
-        buildConfigField("String", "BUILD_MARKER", "\"v1-gbk-resume-2026-09-30\"")
+        buildConfigField("String", "BUILD_MARKER", "\"v1-v11-all-b1-b4-2026-10-06\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
             abiFilters += listOf(nrAbi)

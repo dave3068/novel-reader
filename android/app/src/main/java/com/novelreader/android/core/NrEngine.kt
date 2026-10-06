@@ -68,6 +68,66 @@ class NrChaptersRead(
         get() = NrChapterCodec.entries(bytes, batch.count)
 }
 
+/** 分类列表读取结果：批次元数据 + 扁平条目 + 归还凭据。 */
+class NrCategoriesRead(
+    val batch: NrCategoryBatch,
+    val bytes: ByteArray,
+    val buffer: NrBufferHandle,
+) {
+    /** 扁平条目（**不在这里拼树** —— 树形由界面按 `parentId` 组装）。 */
+    val entries: List<NrCategoryEntry>
+        get() = NrCategoryCodec.entries(bytes, batch.count)
+
+    /** 条目 + 已解码名称（最常见用法，避免调用方逐个再解一遍）。 */
+    val named: List<Pair<NrCategoryEntry, String>>
+        get() = entries.map { it to NrCategoryCodec.name(bytes, it) }
+}
+
+/** 阅读历史读取结果：批次元数据 + 条目 + 归还凭据。 */
+class NrHistoryRead(
+    val batch: NrHistoryBatch,
+    val bytes: ByteArray,
+    val buffer: NrBufferHandle,
+) {
+    val entries: List<NrHistoryEntry>
+        get() = NrHistoryCodec.entries(bytes, batch.count)
+
+    /** 条目 + 已解码三段文本（书名 · 文件名 · **核心格式化的时间标签**）。 */
+    val rows: List<NrHistoryRow>
+        get() = entries.map { entry ->
+            NrHistoryRow(
+                entry = entry,
+                title = NrHistoryCodec.title(bytes, entry),
+                fileLabel = NrHistoryCodec.fileLabel(bytes, entry),
+                timeLabel = NrHistoryCodec.timeLabel(bytes, entry),
+            )
+        }
+}
+
+/** 一条历史流水的展示用组合。 */
+class NrHistoryRow(
+    val entry: NrHistoryEntry,
+    val title: String,
+    val fileLabel: String,
+    /** **已由核心格式化**，界面不得再格式化或截断（规格 §3.6）。 */
+    val timeLabel: String,
+)
+
+/** 背景读取结果：批次元数据 + 单条条目 + 归还凭据。 */
+class NrBackgroundRead(
+    val batch: NrBackgroundBatch,
+    val bytes: ByteArray,
+    val buffer: NrBufferHandle,
+) {
+    /** 未设置时为 `null`（批次 `count = 0`）。 */
+    val entry: NrBackgroundEntry?
+        get() = NrBackgroundCodec.entry(bytes, batch.count)
+
+    /** **相对文件名**（未设置为空串）；绝对路径由调用方用 app-private 目录拼（R15）。 */
+    val fileName: String
+        get() = NrBackgroundCodec.fileName(bytes, entry)
+}
+
 /** 最近错误：错误码结构体 + 已复制出的消息字节（消息缓冲区已立即归还，[releaseCode] 回报归还结果）。 */
 class NrLastError(
     val info: NrErrorInfo,
@@ -390,6 +450,369 @@ class NrEngine internal constructor(
             error.rawCode
         }
         return if (code == NrErrors.NR_ERR_OK) NrErrors.NR_ERR_INTERNAL else code
+    }
+
+    // ------------------------------------------------------------------ V1.1 分类
+
+    /**
+     * 列出全部分类（`nr_list_categories`）。
+     *
+     * 回的是**扁平列表**（含 `parentId` / `depth`）—— 树形由界面按 `parentId` 组装，
+     * 层级语义（深度、计数）已由核心算好。
+     */
+    fun listCategories(): NrCategoriesRead {
+        requireAlive()
+        val out = ByteArray(NrCategoryBatch.STRUCT_SIZE)
+        val outBuffer = LongArray(NrAbiConstants.NR_BUFFER_SLOTS)
+        val bytes = abi.listCategories(handle, out, outBuffer) ?: throw NrException(lastErrorRawCode())
+        val batch = NrCategoryBatch.decode(out)
+        val buffer = NrBufferHandle.fromSlots(outBuffer)
+        NrBufferHandle.requireSameSlots(buffer, batch.bytesPtr, batch.bytesLen, batch.bytesCapacity)
+        NrBufferHandle.requireLenMatches(buffer, bytes.size.toLong())
+        return NrCategoriesRead(batch, bytes, buffer)
+    }
+
+    /**
+     * 新建分类（`nr_create_category`）。同父同名由**核心拒绝**（不在这里判重）。
+     *
+     * [name] 是 UTF-8 字节；`parentId = -1` 表示建在根下。
+     */
+    fun createCategory(parentId: Long, name: ByteArray): Long {
+        requireAlive()
+        val outId = LongArray(1)
+        val code = abi.createCategory(handle, parentId, name, outId)
+        if (code != NrErrors.NR_ERR_OK) {
+            throw NrException(code)
+        }
+        return outId[0]
+    }
+
+    /** 把书移入分类（`nr_move_book_to_category`）；`categoryId = -1` 表示移回未分类。 */
+    fun moveBookToCategory(bookId: Long, categoryId: Long) {
+        requireAlive()
+        val code = abi.moveBookToCategory(handle, bookId, categoryId)
+        if (code != NrErrors.NR_ERR_OK) {
+            throw NrException(code)
+        }
+    }
+
+    /**
+     * 删除分类（`nr_delete_category`），并处理其书籍去向。
+     *
+     * [destination]：`1` = 移入 [targetId]；`2` = 移出书架；`3` = 移回根下未分类。
+     * **未选（`0`）由核心拒绝且零副作用** —— 界面必须显式给出选择。
+     *
+     * @return 实际被移动的书籍数。
+     */
+    fun deleteCategory(categoryId: Long, destination: Int, targetId: Long = -1L): Long {
+        requireAlive()
+        val outMoved = IntArray(1)
+        val code = abi.deleteCategory(handle, categoryId, destination, targetId, outMoved)
+        if (code != NrErrors.NR_ERR_OK) {
+            throw NrException(code)
+        }
+        return outMoved[0].toLong() and 0xFFFFFFFFL
+    }
+
+    // ------------------------------------------------------------------ V1.1 历史
+
+    /**
+     * 列出阅读历史（`nr_list_history`）。
+     *
+     * [bookId] > 0 限定单书；[limit] > 0 限量；[grouped] = true 走按书聚合。
+     * **排序在核心完成**（时间倒序），界面不得重排。
+     */
+    fun listHistory(bookId: Long = 0L, limit: Int = 0, grouped: Boolean = false): NrHistoryRead {
+        requireAlive()
+        val out = ByteArray(NrHistoryBatch.STRUCT_SIZE)
+        val outBuffer = LongArray(NrAbiConstants.NR_BUFFER_SLOTS)
+        val bytes = abi.listHistory(handle, bookId, limit, if (grouped) 1 else 0, out, outBuffer)
+            ?: throw NrException(lastErrorRawCode())
+        val batch = NrHistoryBatch.decode(out)
+        val buffer = NrBufferHandle.fromSlots(outBuffer)
+        NrBufferHandle.requireSameSlots(buffer, batch.bytesPtr, batch.bytesLen, batch.bytesCapacity)
+        NrBufferHandle.requireLenMatches(buffer, bytes.size.toLong())
+        return NrHistoryRead(batch, bytes, buffer)
+    }
+
+    /**
+     * 清除一条阅读流水（`nr_clear_history_entry`）。
+     *
+     * @return `true` = 已清除；`false` = 该 id 不存在（**如实回报**，不谎报成功）。
+     */
+    fun clearHistoryEntry(entryId: Long): Boolean {
+        requireAlive()
+        val outRemoved = IntArray(1)
+        val code = abi.clearHistoryEntry(handle, entryId, outRemoved)
+        if (code != NrErrors.NR_ERR_OK) {
+            throw NrException(code)
+        }
+        return outRemoved[0] != 0
+    }
+
+    /** 清除某本书的全部阅读流水（`nr_clear_history_for_book`）。**只删流水**。 */
+    fun clearHistoryForBook(bookId: Long): Long {
+        requireAlive()
+        val outRemoved = IntArray(1)
+        val code = abi.clearHistoryForBook(handle, bookId, outRemoved)
+        if (code != NrErrors.NR_ERR_OK) {
+            throw NrException(code)
+        }
+        return outRemoved[0].toLong() and 0xFFFFFFFFL
+    }
+
+    // ------------------------------------------------------------------ V1.1 配色
+
+    /**
+     * 读回四个基色与启用位（`nr_get_theme_base`）。
+     *
+     * **只回基色** —— 40 个语义令牌不落库（规格 R11）；令牌值走 [getThemeToken]。
+     */
+    fun getThemeBase(): NrThemeBase {
+        requireAlive()
+        val out = ByteArray(NrThemeBase.STRUCT_SIZE)
+        val code = abi.getThemeBase(handle, out)
+        if (code != NrErrors.NR_ERR_OK) {
+            throw NrException(code)
+        }
+        return NrThemeBase.decode(out)
+    }
+
+    /**
+     * 写入一个基色（`nr_set_theme_base`）。
+     *
+     * [which]：`0`=正文 `1`=背景 `2`=主色 `3`=强调；[value] 空 = **清除该项**（回落内置值）。
+     * 非法色值由核心拒绝并**保留原值**；写基色**不会**自动启用（那是用户的显式选择）。
+     */
+    fun setThemeBase(which: Int, value: ByteArray) {
+        requireAlive()
+        val code = abi.setThemeBase(handle, which, value)
+        if (code != NrErrors.NR_ERR_OK) {
+            throw NrException(code)
+        }
+    }
+
+    /** 切换「启用自定义配色」（`nr_set_theme_enabled`）；关闭时**保留基色**。 */
+    fun setThemeEnabled(enabled: Boolean) {
+        requireAlive()
+        val code = abi.setThemeEnabled(handle, if (enabled) 1 else 0)
+        if (code != NrErrors.NR_ERR_OK) {
+            throw NrException(code)
+        }
+    }
+
+    /**
+     * 取一个派生令牌的 RGBA（`nr_get_theme_token`）。
+     *
+     * [tokenIndex] 是令牌表下标（越界由核心拒绝）；[dark] 取暗色一套。
+     * **派生全在核心** —— 同一基色在桌面与 Android 必然显示一致。
+     *
+     * @return 4 字节 RGBA（R、G、B、A 各 0..255）。
+     */
+    fun getThemeToken(tokenIndex: Int, dark: Boolean): ByteArray {
+        requireAlive()
+        // 核心写**4 字节** RGBA（不是打包整数），故用 ByteArray 而非 IntArray。
+        val out = ByteArray(4)
+        val code = abi.getThemeToken(handle, tokenIndex, if (dark) 1 else 0, out)
+        if (code != NrErrors.NR_ERR_OK) {
+            throw NrException(code)
+        }
+        return out
+    }
+
+    /**
+     * 取对比度读数（`nr_get_theme_contrast`）。
+     *
+     * 比值是**整数 × 100**（`454` ⇒ `4.54 : 1`）；`passes = false` 时核心**已保留用户基色**。
+     */
+    fun getThemeContrast(): NrThemeContrastResult {
+        requireAlive()
+        val out = ByteArray(NrThemeContrastResult.STRUCT_SIZE)
+        val code = abi.getThemeContrast(handle, out)
+        if (code != NrErrors.NR_ERR_OK) {
+            throw NrException(code)
+        }
+        return NrThemeContrastResult.decode(out)
+    }
+
+    // ------------------------------------------------------------------ V1.1 背景
+
+    /**
+     * 读回全局背景（`nr_get_background`）。**只回相对文件名**（规格 R15）。
+     *
+     * 未设置时 [NrBackgroundRead.fileName] 为空串、[NrBackgroundRead.entry] 为 `null`。
+     */
+    fun getBackground(): NrBackgroundRead {
+        requireAlive()
+        val out = ByteArray(NrBackgroundBatch.STRUCT_SIZE)
+        val outBuffer = LongArray(NrAbiConstants.NR_BUFFER_SLOTS)
+        val bytes = abi.getBackground(handle, out, outBuffer) ?: throw NrException(lastErrorRawCode())
+        return decodeBackground(out, bytes, outBuffer)
+    }
+
+    /**
+     * 设置全局背景（`nr_set_background`）。
+     *
+     * 核心**复制** [srcPath] 到 [destDir]（原图只读，绝不移动/删除），只把**相对名**写库。
+     * [destDir] 由调用方给（Android 传 app-private 目录）—— 核心不猜平台数据目录。
+     * [fitMode] / [scrimPermille] 传负数 = 用默认值。
+     */
+    fun setBackground(
+        srcPath: ByteArray,
+        destDir: ByteArray,
+        fitMode: Int = -1,
+        scrimPermille: Int = -1,
+    ): NrBackgroundRead {
+        requireAlive()
+        val out = ByteArray(NrBackgroundBatch.STRUCT_SIZE)
+        val outBuffer = LongArray(NrAbiConstants.NR_BUFFER_SLOTS)
+        val bytes = abi.setBackground(handle, srcPath, destDir, fitMode, scrimPermille, out, outBuffer)
+            ?: throw NrException(lastErrorRawCode())
+        return decodeBackground(out, bytes, outBuffer)
+    }
+
+    /**
+     * 只调遮罩强度（`nr_set_background_scrim`）—— **不换图**。
+     *
+     * `scrimPermille` 必须在 `0..=1000`，否则由核心拒绝。
+     */
+    fun setBackgroundScrim(scrimPermille: Int): NrBackgroundRead {
+        requireAlive()
+        val out = ByteArray(NrBackgroundBatch.STRUCT_SIZE)
+        val outBuffer = LongArray(NrAbiConstants.NR_BUFFER_SLOTS)
+        val bytes = abi.setBackgroundScrim(handle, scrimPermille, out, outBuffer)
+            ?: throw NrException(lastErrorRawCode())
+        return decodeBackground(out, bytes, outBuffer)
+    }
+
+    /**
+     * 清除背景（`nr_clear_background`）。
+     *
+     * **只删核心生成的文件**（`bg-*` 前缀）；**不动用户原图**。
+     */
+    fun clearBackground(destDir: ByteArray): NrBackgroundRead {
+        requireAlive()
+        val out = ByteArray(NrBackgroundBatch.STRUCT_SIZE)
+        val outBuffer = LongArray(NrAbiConstants.NR_BUFFER_SLOTS)
+        val bytes = abi.clearBackground(handle, destDir, out, outBuffer)
+            ?: throw NrException(lastErrorRawCode())
+        return decodeBackground(out, bytes, outBuffer)
+    }
+
+    /** 背景批次共用的解码 + 归还凭据核对（三个入口同一口径）。 */
+    private fun decodeBackground(out: ByteArray, bytes: ByteArray, outBuffer: LongArray): NrBackgroundRead {
+        val batch = NrBackgroundBatch.decode(out)
+        val buffer = NrBufferHandle.fromSlots(outBuffer)
+        NrBufferHandle.requireSameSlots(buffer, batch.bytesPtr, batch.bytesLen, batch.bytesCapacity)
+        NrBufferHandle.requireLenMatches(buffer, bytes.size.toLong())
+        return NrBackgroundRead(batch, bytes, buffer)
+    }
+
+    /**
+     * 书籍 → 分类映射（`nr_list_book_categories`）。
+     *
+     * 只含在架书籍；`-1` 表示未分类。界面把书架条目按分类过滤时用它：
+     * 宿主目录给 `sourceIdentity → bookId`，本方法给 `bookId → categoryId`。
+     */
+    fun listBookCategories(): Map<Long, Long> {
+        requireAlive()
+        val out = ByteArray(NrBookCategoryBatch.STRUCT_SIZE)
+        val outBuffer = LongArray(NrAbiConstants.NR_BUFFER_SLOTS)
+        val bytes = abi.listBookCategories(handle, out, outBuffer)
+            ?: throw NrException(lastErrorRawCode())
+        val batch = NrBookCategoryBatch.decode(out)
+        val buffer = NrBufferHandle.fromSlots(outBuffer)
+        NrBufferHandle.requireSameSlots(buffer, batch.bytesPtr, batch.bytesLen, batch.bytesCapacity)
+        NrBufferHandle.requireLenMatches(buffer, bytes.size.toLong())
+        val mapped = NrBookCategoryCodec.byBookId(bytes, batch.count)
+        buffer.release(releaser)
+        return mapped
+    }
+
+    /**
+     * 移动 / 删除的目标选项（`nr_category_move_targets`）。
+     *
+     * 含「未分类」（`id = -1`）；[sourceId] 自身与全部子孙 `selectable = false`
+     * —— **环判定在核心完成**，界面只据 `selectable` 置灰。
+     */
+    fun categoryMoveTargets(sourceId: Long): List<NrCategoryChoiceEntry> {
+        requireAlive()
+        val out = ByteArray(NrCategoryChoiceBatch.STRUCT_SIZE)
+        val outBuffer = LongArray(NrAbiConstants.NR_BUFFER_SLOTS)
+        val bytes = abi.categoryMoveTargets(handle, sourceId, out, outBuffer)
+            ?: throw NrException(lastErrorRawCode())
+        val batch = NrCategoryChoiceBatch.decode(out)
+        val buffer = NrBufferHandle.fromSlots(outBuffer)
+        NrBufferHandle.requireSameSlots(buffer, batch.bytesPtr, batch.bytesLen, batch.bytesCapacity)
+        NrBufferHandle.requireLenMatches(buffer, bytes.size.toLong())
+        val entries = NrCategoryChoiceCodec.entries(bytes, batch.count)
+        buffer.release(releaser)
+        return entries
+    }
+
+    /** 目标选项 + 名称（最常见的用法）。 */
+    fun namedCategoryMoveTargets(sourceId: Long): List<Pair<NrCategoryChoiceEntry, String>> {
+        // 名称与行在同一块字节池里，故这里重取一次载荷（不缓存，避免持有已归还的缓冲）。
+        requireAlive()
+        val out = ByteArray(NrCategoryChoiceBatch.STRUCT_SIZE)
+        val outBuffer = LongArray(NrAbiConstants.NR_BUFFER_SLOTS)
+        val bytes = abi.categoryMoveTargets(handle, sourceId, out, outBuffer)
+            ?: throw NrException(lastErrorRawCode())
+        val batch = NrCategoryChoiceBatch.decode(out)
+        val buffer = NrBufferHandle.fromSlots(outBuffer)
+        NrBufferHandle.requireSameSlots(buffer, batch.bytesPtr, batch.bytesLen, batch.bytesCapacity)
+        NrBufferHandle.requireLenMatches(buffer, bytes.size.toLong())
+        val rows = NrCategoryChoiceCodec.entries(bytes, batch.count)
+            .map { entry -> entry to NrCategoryChoiceCodec.named(entry, bytes) }
+        buffer.release(releaser)
+        return rows
+    }
+
+    /**
+     * 重命名分类（`nr_rename_category`）。
+     *
+     * 空名 / 重名 / 不存在的 id 由核心拒绝并**保留原值**。
+     */
+    fun renameCategory(categoryId: Long, name: ByteArray) {
+        requireAlive()
+        val code = abi.renameCategory(handle, categoryId, name)
+        if (code != NrErrors.NR_ERR_OK) {
+            throw NrException(lastErrorRawCode())
+        }
+    }
+
+    /**
+     * 移动分类到新父分类（`nr_move_category`；`-1` = 根层）。
+     *
+     * **移入自身或子孙必须被核心拒绝**（否则产生环 ⇒ 树投影死循环，规格 R5）——
+     * 界面不得自行判断可达性（那是核心语义）。
+     */
+    fun moveCategory(categoryId: Long, newParentId: Long) {
+        requireAlive()
+        val code = abi.moveCategory(handle, categoryId, newParentId)
+        if (code != NrErrors.NR_ERR_OK) {
+            throw NrException(lastErrorRawCode())
+        }
+    }
+
+    /**
+     * 某作用域下的在架书籍 id（`nr_list_books_in_scope`）。
+     *
+     * 子树展开在**核心**完成 —— 界面只做集合成员判断。
+     */
+    fun listBooksInScope(scopeKind: Int, categoryId: Long = 0L): Set<Long> {
+        requireAlive()
+        val out = ByteArray(NrIdList.STRUCT_SIZE)
+        val outBuffer = LongArray(NrAbiConstants.NR_BUFFER_SLOTS)
+        val bytes = abi.listBooksInScope(handle, scopeKind, categoryId, out, outBuffer)
+            ?: throw NrException(lastErrorRawCode())
+        val batch = NrIdList.decode(out)
+        val buffer = NrBufferHandle.fromSlots(outBuffer)
+        NrBufferHandle.requireSameSlots(buffer, batch.bytesPtr, batch.bytesLen, batch.bytesCapacity)
+        NrBufferHandle.requireLenMatches(buffer, bytes.size.toLong())
+        val ids = NrIdListCodec.ids(bytes, batch.count).toSet()
+        buffer.release(releaser)
+        return ids
     }
 
     companion object {
