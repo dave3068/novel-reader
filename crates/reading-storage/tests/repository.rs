@@ -643,7 +643,10 @@ fn repository_rejects_full_text_and_out_of_range_values() {
     );
     assert!(fresh.migrate().expect("空库迁移").changed);
     assert!(meta::table_exists(fresh.conn()).expect("迁移后 app_meta 存在"));
-    assert_eq!(fresh.schema_version().expect("迁移后版本"), 1);
+    assert_eq!(
+        fresh.schema_version().expect("迁移后版本"),
+        reading_storage::migrate::TARGET_SCHEMA_VERSION
+    );
 
     // 状态枚举受控。
     assert_eq!(

@@ -19,13 +19,18 @@ use reading_storage::{validate, FROZEN_TABLES};
 
 /// 故意失败的 v2 迁移：先建表并插入一行，再执行一条必然失败的语句。
 /// 用于证明「整条迁移是一个事务：失败后 schema 与数据都回到迁移前状态」。
-const BROKEN_V2_SQL: &str = "CREATE TABLE IF NOT EXISTS v2_probe (id INTEGER PRIMARY KEY);\n\
-INSERT INTO v2_probe (id) VALUES (1);\n\
+// 故意失败的迁移（用于验证失败回滚与备份恢复）。
+//
+// 版本号取 **3**：V1.1 的真实 0002 已占用 version 2，若这里也用 2，
+// 迁移计划会把它当成「已应用的 0002」而跳过，测试就变成假通过
+// （早前版本正是如此，实测被 4 项失败暴露）。
+const BROKEN_V2_SQL: &str = "CREATE TABLE IF NOT EXISTS v3_probe (id INTEGER PRIMARY KEY);\n\
+INSERT INTO v3_probe (id) VALUES (1);\n\
 INSERT INTO table_that_does_not_exist_rc6 (id) VALUES (1);\n";
 
 const BROKEN_V2: migrate::Migration = migrate::Migration {
-    version: 2,
-    name: "0002_broken",
+    version: 3,
+    name: "0003_broken",
     sql: BROKEN_V2_SQL,
 };
 
@@ -206,7 +211,11 @@ fn initial_migration_is_repeatable_and_idempotent() {
     assert_eq!(first.to_version, migrate::TARGET_SCHEMA_VERSION);
     assert_eq!(
         first.applied,
-        vec![(1, migrate::INITIAL_MIGRATION_NAME.to_string())]
+        vec![
+            (1, migrate::INITIAL_MIGRATION_NAME.to_string()),
+            (2, migrate::V11_MIGRATION_NAME.to_string()),
+        ],
+        "首次迁移应依次执行 0001 与 0002"
     );
     let first_backup = first.backup.clone().expect("首次迁移应留下备份");
     assert!(first_backup.is_file(), "备份文件必须真实存在");
@@ -223,18 +232,25 @@ fn initial_migration_is_repeatable_and_idempotent() {
     let third = storage.migrate().expect("第三次迁移");
     assert!(third.is_noop(), "初始迁移必须可重复执行");
 
-    assert_eq!(storage.schema_version().expect("schema 版本"), 1);
-    assert_eq!(storage.user_version().expect("user_version"), 1);
+    assert_eq!(storage.schema_version().expect("schema 版本"), 2);
+    assert_eq!(storage.user_version().expect("user_version"), 2);
     assert!(storage.version_is_consistent().expect("版本一致性"));
     assert_eq!(
         migrate::applied_migration_keys(storage.conn()).expect("迁移历史"),
-        vec![meta::migration_history_key(migrate::INITIAL_MIGRATION_NAME)],
+        vec![
+            meta::migration_history_key(migrate::INITIAL_MIGRATION_NAME),
+            meta::migration_history_key(migrate::V11_MIGRATION_NAME),
+        ],
         "迁移历史不得重复写入"
     );
 
     let mut tables = storage.table_names().expect("表清单");
     tables.sort_unstable();
-    assert_eq!(tables, FROZEN_TABLES.to_vec());
+    assert_eq!(
+        tables,
+        reading_storage::expected_tables(),
+        "当前 schema 应为 V1 冻结 8 张 + V1.1 新增 4 张"
+    );
 
     let after = snapshot(&storage);
     after.assert_all_eq(&before, "重复迁移后");
@@ -247,14 +263,22 @@ fn initial_migration_is_repeatable_and_idempotent() {
 fn initial_migration_creates_frozen_schema_without_full_text_columns() {
     let dir = TempDir::new("migration-schema");
     let mut storage = Storage::open(dir.join("library.db")).expect("打开数据库");
-    storage.migrate().expect("初始迁移");
+
+    // **只跑 0001** 来验证 V1 冻结 schema：V1.1 的 0002 会新增 4 张表，
+    // 若在此断言「恰好 8 张」，那条断言就不再守 V1 的原始冻结集。
+    storage
+        .migrate_with(
+            &[migrate::MIGRATIONS[0]],
+            &migrate::MigrateOptions::with_backup(),
+        )
+        .expect("仅 0001 迁移");
 
     let mut tables = storage.table_names().expect("表清单");
     tables.sort_unstable();
     assert_eq!(
         tables,
         FROZEN_TABLES.to_vec(),
-        "初始迁移必须恰好建立 8 张冻结表（不得多出第 9 张表）"
+        "0001 初始迁移必须恰好建立 8 张冻结表（不得多出第 9 张表）"
     );
     assert!(
         !tables.iter().any(|name| name == "sqlite_sequence"),
@@ -309,8 +333,30 @@ fn embedded_migration_matches_on_disk_file() {
         migrate::INITIAL_MIGRATION_RELATIVE_PATH,
         "migrations/0001_init.sql"
     );
-    assert_eq!(migrate::TARGET_SCHEMA_VERSION, 1);
-    assert_eq!(migrate::MIGRATIONS.len(), 1);
+    assert_eq!(migrate::TARGET_SCHEMA_VERSION, 2);
+    assert_eq!(
+        migrate::MIGRATIONS.len(),
+        2,
+        "冻结序列应为 0001 + 0002 两条"
+    );
+
+    // V1.1 迁移脚本同样必须与磁盘文件逐字节一致。
+    let v11_on_disk = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../migrations/0002_categories_history_theme.sql"),
+    )
+    .expect("读取 migrations/0002_categories_history_theme.sql");
+    assert_eq!(
+        v11_on_disk,
+        migrate::V11_MIGRATION_SQL,
+        "内嵌 V1.1 迁移脚本与 migrations/0002_categories_history_theme.sql 必须逐字节一致"
+    );
+    assert_eq!(
+        migrate::V11_MIGRATION_RELATIVE_PATH,
+        "migrations/0002_categories_history_theme.sql"
+    );
+    assert_eq!(migrate::MIGRATIONS[1].version, 2);
+    assert_eq!(migrate::MIGRATIONS[1].name, migrate::V11_MIGRATION_NAME);
 }
 
 #[test]
@@ -322,40 +368,43 @@ fn migration_recovery_restores_previous_state_after_failed_migration() {
     let book_id = seed_user_data(&storage, &dir);
     let before = snapshot(&storage);
 
-    let sequence = [migrate::MIGRATIONS[0], BROKEN_V2];
+    let sequence = [migrate::MIGRATIONS[0], migrate::MIGRATIONS[1], BROKEN_V2];
     let error = storage
         .migrate_with(&sequence, &migrate::MigrateOptions::with_backup())
-        .expect_err("失败的 v2 迁移必须返回错误");
+        .expect_err("失败的 v3 迁移必须返回错误");
     let (version, backup) = match &error {
         StorageError::MigrationFailed {
             version, backup, ..
         } => (*version, backup.clone()),
         other => panic!("错误类型必须是 MigrationFailed，实际 {other:?}"),
     };
-    assert_eq!(version, 2);
+    assert_eq!(version, 3, "失败迁移应报告它自己的版本号");
     assert_eq!(error.code(), reading_storage::error::ERR_INTERNAL);
     assert!(error.is_recoverable(), "带备份的迁移失败必须是可恢复错误");
     let backup = backup.expect("必须留下迁移前备份");
     assert!(backup.is_file(), "备份文件必须真实存在");
 
     // 断言 1：失败迁移整体回滚，schema 与数据停在迁移前状态。
-    assert_eq!(storage.schema_version().expect("schema 版本"), 1);
-    assert_eq!(storage.user_version().expect("user_version"), 1);
+    assert_eq!(storage.schema_version().expect("schema 版本"), 2);
+    assert_eq!(storage.user_version().expect("user_version"), 2);
     assert!(
-        migrate::table_absent(storage.conn(), "v2_probe").expect("半成品表检查"),
+        migrate::table_absent(storage.conn(), "v3_probe").expect("半成品表检查"),
         "失败迁移中的 DDL 必须被回滚，不得留下半成品表"
     );
     assert_eq!(
         migrate::applied_migration_keys(storage.conn()).expect("迁移历史"),
-        vec![meta::migration_history_key(migrate::INITIAL_MIGRATION_NAME)],
+        vec![
+            meta::migration_history_key(migrate::INITIAL_MIGRATION_NAME),
+            meta::migration_history_key(migrate::V11_MIGRATION_NAME),
+        ],
         "失败迁移不得写入迁移历史"
     );
     let after_failure = snapshot(&storage);
     after_failure.assert_all_eq(&before, "迁移失败后");
 
-    // 断言 2：备份是一个完整可用的 v1 数据库，用户数据齐备。
+    // 断言 2：备份是一个完整可用的数据库，用户数据齐备。
     let backup_storage = Storage::open(&backup).expect("打开备份数据库");
-    assert_eq!(backup_storage.schema_version().expect("备份版本"), 1);
+    assert_eq!(backup_storage.schema_version().expect("备份版本"), 2);
     assert!(backup_storage
         .version_is_consistent()
         .expect("备份版本一致性"));
@@ -378,7 +427,7 @@ fn migration_recovery_restores_previous_state_after_failed_migration() {
     storage
         .restore_from_backup(&backup)
         .expect("从备份恢复数据库");
-    assert_eq!(storage.schema_version().expect("恢复后版本"), 1);
+    assert_eq!(storage.schema_version().expect("恢复后版本"), 2);
     let after_restore = snapshot(&storage);
     after_restore.assert_all_eq(&before, "从备份恢复后");
     let restored = load_settings(storage.conn()).expect("恢复后设置");

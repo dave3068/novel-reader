@@ -266,6 +266,28 @@ pub fn list_all_books(conn: &Connection) -> Result<Vec<BookRecord>> {
     Ok(books)
 }
 
+/// 书籍 → 分类 的映射（V1.1；`None` = 未分类）。
+///
+/// 口径与书架一致：**只列在架书籍**（`status <> 'removed'`），
+/// 因为界面用它把书架条目按分类过滤；已移出书架的书不该出现在任何分类里。
+///
+/// 之所以单列一个查询而不给 [`BookRecord`] 加字段：分类归属是 V1.1 的附加维度，
+/// 塞进主记录会让所有既有 SELECT 与构造点都要跟着改，而多数调用方并不需要它。
+///
+/// 顺序按 `id`：调用方（界面）自行按 `book_id` 建集合，不依赖本顺序。
+pub fn list_book_categories(conn: &Connection) -> Result<Vec<(i64, Option<i64>)>> {
+    let mut stmt =
+        conn.prepare("SELECT id, category_id FROM books WHERE status <> ?1 ORDER BY id")?;
+    let rows = stmt.query_map([STATUS_REMOVED], |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?))
+    })?;
+    let mut pairs = Vec::new();
+    for row in rows {
+        pairs.push(row?);
+    }
+    Ok(pairs)
+}
+
 /// 书籍条目总数。
 pub fn count_books(conn: &Connection) -> Result<i64> {
     crate::connection::count_rows(conn, "books")

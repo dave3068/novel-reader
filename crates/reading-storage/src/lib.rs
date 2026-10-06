@@ -16,15 +16,21 @@
 //!   本地 [`StorageError`] 暴露 [`StorageError::code`]，数值与 gate-0 §2.2 冻结表一致；
 //! - 不依赖 UI / Android / 网络；只使用本地 SQLite 文件（`rusqlite` bundled）。
 
+pub mod background;
 pub mod bookmarks;
 pub mod books;
+pub mod categories;
 pub mod connection;
 pub mod error;
+pub mod history;
+pub mod history_view;
 pub mod index;
 pub mod meta;
 pub mod migrate;
 pub mod progress;
 pub mod settings;
+pub mod theme;
+pub mod theme_derive;
 pub mod validate;
 
 use std::path::{Path, PathBuf};
@@ -33,7 +39,10 @@ use rusqlite::Connection;
 
 pub use error::{Result, StorageError};
 
-/// gate-0 §2.6 冻结的 8 张表（按字典序，便于逐项比对）。
+/// V1 冻结的 8 张表（gate-0 §2.6；按字典序，便于逐项比对）。
+///
+/// **只含 0001 初始迁移建立的表**；V1.1（0002）新增的 4 张表见 [`V11_TABLES`]。
+/// 两者分开登记，是为了让「V1 冻结集」与「当前 schema」能被分别核对。
 pub const FROZEN_TABLES: &[&str] = &[
     "app_meta",
     "book_sources",
@@ -44,6 +53,25 @@ pub const FROZEN_TABLES: &[&str] = &[
     "reader_settings",
     "reading_progress",
 ];
+
+/// V1.1（0002 迁移）新增的表（按字典序）。
+pub const V11_TABLES: &[&str] = &[
+    "book_categories",
+    "reader_background",
+    "reader_theme_custom",
+    "reading_history",
+];
+
+/// 当前 schema 版本应含的全部表（V1 冻结 8 张 + V1.1 新增 4 张；按字典序）。
+pub fn expected_tables() -> Vec<String> {
+    let mut tables: Vec<String> = FROZEN_TABLES
+        .iter()
+        .chain(V11_TABLES.iter())
+        .map(|name| (*name).to_string())
+        .collect();
+    tables.sort_unstable();
+    tables
+}
 
 /// 本地存储句柄：连接 + 数据库文件路径（路径用于迁移前备份与恢复）。
 pub struct Storage {
@@ -219,7 +247,7 @@ mod tests {
     #[test]
     fn frozen_table_list_is_exactly_eight_unique_sorted_tables() {
         let mut tables = FROZEN_TABLES.to_vec();
-        assert_eq!(tables.len(), 8, "冻结表清单必须恰为 8 张（gate-0 §2.6）");
+        assert_eq!(tables.len(), 8, "V1 冻结表清单必须恰为 8 张（gate-0 §2.6）");
         tables.sort_unstable();
         tables.dedup();
         assert_eq!(tables, FROZEN_TABLES, "冻结表清单必须无重复且按字典序排列");
@@ -241,17 +269,178 @@ mod tests {
     }
 
     #[test]
+    fn v11_table_list_is_four_unique_sorted_tables() {
+        let mut tables = V11_TABLES.to_vec();
+        assert_eq!(tables.len(), 4, "V1.1 新增表必须恰为 4 张");
+        tables.sort_unstable();
+        tables.dedup();
+        assert_eq!(tables, V11_TABLES, "V1.1 表清单必须无重复且按字典序排列");
+        for required in [
+            "book_categories",
+            "reading_history",
+            "reader_theme_custom",
+            "reader_background",
+        ] {
+            assert!(V11_TABLES.contains(&required), "V1.1 表清单缺少 {required}");
+        }
+        // 与 V1 冻结集不得重叠（V1.1 只新增，不改写既有表名）。
+        for name in V11_TABLES {
+            assert!(
+                !FROZEN_TABLES.contains(name),
+                "{name} 同时出现在 V1 冻结集与 V1.1 新增集"
+            );
+        }
+    }
+
+    #[test]
+    fn expected_tables_merges_both_sets_without_duplicates() {
+        let tables = expected_tables();
+        assert_eq!(tables.len(), FROZEN_TABLES.len() + V11_TABLES.len());
+        let mut sorted = tables.clone();
+        sorted.sort_unstable();
+        assert_eq!(tables, sorted, "expected_tables 必须按字典序返回");
+    }
+
+    #[test]
     fn in_memory_storage_migrates_and_keeps_version_consistent() {
         let mut storage = Storage::open_in_memory().expect("打开内存库");
         let outcome = storage.migrate().expect("初始迁移");
         assert!(outcome.changed);
         assert_eq!(outcome.from_version, 0);
         assert_eq!(outcome.to_version, migrate::TARGET_SCHEMA_VERSION);
-        assert_eq!(storage.schema_version().expect("schema 版本"), 1);
-        assert_eq!(storage.user_version().expect("user_version"), 1);
+        assert_eq!(storage.schema_version().expect("schema 版本"), 2);
+        assert_eq!(storage.user_version().expect("user_version"), 2);
         assert!(storage.version_is_consistent().expect("版本一致性"));
-        let mut tables = storage.table_names().expect("表清单");
-        tables.sort_unstable();
-        assert_eq!(tables, FROZEN_TABLES.to_vec());
+        assert_eq!(storage.table_names().expect("表清单"), expected_tables());
+    }
+
+    #[test]
+    fn migrating_an_existing_v1_database_upgrades_to_v11_without_losing_books() {
+        use rusqlite::Connection;
+
+        // 先只跑 0001，模拟既有 V1 库（含一本书）。
+        let mut conn = Connection::open_in_memory().expect("内存库");
+        migrate::migrate_with(
+            &mut conn,
+            None,
+            &[migrate::Migration {
+                version: 1,
+                name: migrate::INITIAL_MIGRATION_NAME,
+                sql: migrate::INITIAL_MIGRATION_SQL,
+            }],
+            &migrate::MigrateOptions::without_backup(),
+        )
+        .expect("V1 迁移");
+        assert_eq!(meta::schema_version(&conn).expect("版本"), 1);
+        conn.execute(
+            "INSERT INTO books (id, display_name, original_name, format, source_kind,
+                                source_locator, created_at, updated_at)
+             VALUES (1, '甲', 'a.txt', 'txt', 'desktop_path', '/tmp/a.txt', 1, 1)",
+            [],
+        )
+        .expect("插入书籍");
+        let v1_tables = connection::table_names(&conn).expect("V1 表清单");
+        assert_eq!(
+            v1_tables,
+            FROZEN_TABLES
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+        );
+
+        // 用完整序列升级。
+        let mut storage = Storage::from_connection(conn, None);
+        let outcome = storage.migrate().expect("升级到 V1.1");
+        assert_eq!(outcome.from_version, 1);
+        assert_eq!(outcome.to_version, 2);
+        assert_eq!(
+            outcome.applied,
+            vec![(2, migrate::V11_MIGRATION_NAME.to_string())],
+            "只应执行 0002 一条"
+        );
+
+        // 既有书籍仍在，且 category_id 为空（未分类）。
+        let (name, category): (String, Option<i64>) = storage
+            .conn()
+            .query_row(
+                "SELECT display_name, category_id FROM books WHERE id = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("读回书籍");
+        assert_eq!(name, "甲", "升级不得丢用户数据");
+        assert_eq!(category, None, "存量书籍应落在未分类");
+        assert_eq!(storage.table_names().expect("表清单"), expected_tables());
+
+        // 幂等：再次迁移为空转。
+        let again = storage.migrate().expect("重复迁移");
+        assert!(again.is_noop(), "重复迁移必须为空转");
+    }
+
+    #[test]
+    fn background_filename_constraint_rejects_paths_and_traversal() {
+        let mut storage = Storage::open_in_memory().expect("内存库");
+        storage.migrate().expect("迁移");
+        let conn = storage.conn();
+        for bad in ["../secret.png", "sub/dir/a.png", "sub\\dir\\a.png", ""] {
+            let result = conn.execute(
+                "INSERT INTO reader_background (id, file_name, file_size, updated_at)
+                 VALUES (1, ?1, 1, 1)",
+                [bad],
+            );
+            assert!(result.is_err(), "非法背景文件名 {bad:?} 应被数据库约束拒绝");
+        }
+        assert!(conn
+            .execute(
+                "INSERT INTO reader_background (id, file_name, file_size, updated_at)
+                 VALUES (1, 'bg-1.png', 1, 1)",
+                [],
+            )
+            .is_ok());
+    }
+
+    #[test]
+    fn theme_custom_table_stores_only_base_colors_not_token_values() {
+        let mut storage = Storage::open_in_memory().expect("内存库");
+        storage.migrate().expect("迁移");
+        let conn = storage.conn();
+        assert!(conn
+            .execute(
+                "INSERT INTO reader_theme_custom
+                    (id, enabled, base_foreground, base_background, base_primary, base_accent, updated_at)
+                 VALUES (1, 1, '#222222', '#ffffff', '#1890ff', '#d4380d', 1)",
+                [],
+            )
+            .is_ok());
+        // 非 #RRGGBB 的基色被拒。
+        assert!(conn
+            .execute(
+                "INSERT INTO reader_theme_custom
+                    (id, enabled, base_foreground, updated_at)
+                 VALUES (2, 1, 'red', 1)",
+                [],
+            )
+            .is_err());
+        // 列清单里不允许出现任何语义令牌列（40 令牌不落库，规格 R11）。
+        let mut statement = conn
+            .prepare("SELECT name FROM pragma_table_info('reader_theme_custom')")
+            .expect("列清单");
+        let columns: Vec<String> = statement
+            .query_map([], |row| row.get(0))
+            .expect("查询")
+            .map(|row| row.expect("行"))
+            .collect();
+        assert_eq!(
+            columns,
+            vec![
+                "id",
+                "enabled",
+                "base_foreground",
+                "base_background",
+                "base_primary",
+                "base_accent",
+                "updated_at"
+            ]
+        );
     }
 }
