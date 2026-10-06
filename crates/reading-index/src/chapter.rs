@@ -310,7 +310,7 @@ impl ChapterScanner {
             line_index: 0,
             scanned_bytes: 0,
             undecodable_lines: 0,
-        encoding: TextEncoding::Utf8,
+            encoding: TextEncoding::Utf8,
             truncated_lines: 0,
             cancelled: false,
         }

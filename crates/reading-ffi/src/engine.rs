@@ -11,7 +11,7 @@
 //! - **不保存正文**：只在 SQLite 中写元数据、索引、位置与短摘要（书签名称、章节标题、
 //!   附近文本指纹），长度上限由 `reading-storage` 强制。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use reading_core::{
     chapter_index_for_offset, generate_anchor, map_source_error, restore_position, AnchorSearch,
@@ -115,7 +115,8 @@ impl TextSource for SourceHandle {
         len: usize,
         encoding: TextEncoding,
     ) -> Result<TextWindow, SourceError> {
-        self.as_source().read_at_with_encoding(offset, len, encoding)
+        self.as_source()
+            .read_at_with_encoding(offset, len, encoding)
     }
 
     fn fingerprint(&self) -> Result<Fingerprint, SourceError> {
@@ -275,6 +276,115 @@ pub struct PositionOutcome {
     pub fallback_to_chapter_start: bool,
 }
 
+/// 分类树一行（V1.1；`nr_list_categories` 的定长条目）。
+///
+/// `parent_id` 用哨兵 `-1` 表示根（SQL 里是 `NULL`）——
+/// ABI 不传 `Option`，故用哨兵；Kotlin 侧按 `-1` 还原为「无父」。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CategoryRowData {
+    pub id: i64,
+    pub parent_id: i64,
+    pub depth: u32,
+    pub direct_book_count: i64,
+    pub total_book_count: i64,
+    /// 名称在字节池中的偏移（相对 `bytes` 起点）。
+    pub name_offset: u32,
+    /// 名称字节长度（UTF-8）。
+    pub name_len: u32,
+}
+
+/// 分类批量条目（V1.1；名称字节池 + 定长行）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CategoryRowsData {
+    pub count: u32,
+    pub rows: Vec<CategoryRowData>,
+    pub bytes: Vec<u8>,
+}
+
+/// 全局阅读背景图的读回（V1.1；`nr_get_background` 的载荷）。
+///
+/// **只回相对文件名**，不回绝对路径（规格 R15）—— 调用方用自己的
+/// app-private 前缀拼接（Android）或数据目录（桌面）。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BackgroundData {
+    /// 数据文件名（核心生成，形如 `bg-<unix>-<pid>.<ext>`）；空 = 未设置。
+    pub file_name: String,
+    /// 图片字节数（0 = 未设置）。
+    pub file_size: i64,
+    /// 遮罩强度（千分比 0..=1000）。
+    pub scrim_permille: i64,
+    /// 缩放口径（`FitMode` 序号）。
+    pub fit_mode: i64,
+    /// 遮罩 alpha（0–255；由千分比换算，界面不再换算）。
+    pub scrim_alpha: u8,
+}
+
+/// 自定义配色的基色读回（V1.1；`nr_get_theme_base` 的载荷）。
+///
+/// **只含 4 个基色与 enabled**（规格 R11：40 个令牌不落库）。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ThemeBaseData {
+    pub enabled: bool,
+    /// 四项各 12 字节（`#RRGGBB` + NUL）；未设置该项为**全 0**。
+    ///
+    /// ABI 不用 `Option<String>`（跨语言 nullable 字符串易错），故用固定
+    /// 长度 + 「全 0 = 未设置」的口径。
+    pub foreground: String,
+    pub background: String,
+    pub primary: String,
+    pub accent: String,
+}
+
+/// 对比度读数（V1.1；`nr_get_theme_contrast` 的载荷）。
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct ThemeContrastData {
+    /// 对比度 × 100（整数；避免跨语言浮点约定，Kotlin 侧除以 100 显示）。
+    pub ratio_permille_x100: u32,
+    /// 是否达到 `MIN_CONTRAST`。
+    pub passes: u32,
+    /// 较差的一侧是否为暗色（1 = 暗色更差）。
+    pub worst_in_dark: u32,
+}
+
+/// 阅读历史一行（V1.1；`nr_list_history` 的定长条目）。
+///
+/// C 对齐布局（`i64×6 + u32×4`）：`0,8,16,24,32,40,48,52,56,60` ⇒ 64 字节。
+///
+/// 标题与文件名都在批次字节池里（`title_offset` / `file_offset`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HistoryRowData {
+    pub id: i64,
+    pub book_id: i64,
+    /// 打开时间（Unix 秒）。
+    pub opened_at: i64,
+    pub chapter_index: i64,
+    pub byte_offset: i64,
+    /// 进入方式码（`EntryKind::as_i64`）。
+    pub entry_kind: i64,
+    pub title_offset: u32,
+    pub title_len: u32,
+    /// 来源**末段文件名**在字节池中的偏移（不暴露完整定位符）。
+    pub file_offset: u32,
+    pub file_len: u32,
+    /// **已由核心格式化**的时间标签在字节池中的偏移（规格 §3.6）。
+    ///
+    /// 界面**不得**自行格式化或截断 —— 口径（今天 `HH:MM` / 本年 `MM-DD HH:MM` /
+    /// 跨年 `yyyy-MM-dd HH:MM`）由共享层 `history_view::time_label` 唯一决定。
+    pub label_offset: u32,
+    pub label_len: u32,
+}
+
+/// 阅读历史批量条目（V1.1；字节池 + 定长行）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HistoryRowsData {
+    /// 本次返回的条目数。
+    pub count: u32,
+    /// 全部流水条数（不受 `limit` 影响；界面显示「共 N 条」用）。
+    pub total: u32,
+    pub rows: Vec<HistoryRowData>,
+    pub bytes: Vec<u8>,
+}
+
 /// 章节批次数据（缓冲区字节布局：`nr_chapter[count]` + 尾随 UTF-8 标题）。
 #[derive(Debug, Clone, Default)]
 pub struct ChapterBatchData {
@@ -391,9 +501,577 @@ impl Engine {
         &self.config
     }
 
+    /// 读回自定义配色的基色（V1.1）。
+    ///
+    /// **未设置过**返回 `enabled = false` 且四项为空（界面据此显示「未设置」）。
+    pub fn theme_base(&self) -> ThemeBaseData {
+        use reading_storage::theme;
+        let Some(custom) = theme::load_custom_theme(self.storage.conn()).ok().flatten() else {
+            return ThemeBaseData::default();
+        };
+        ThemeBaseData {
+            enabled: custom.enabled,
+            // `unwrap_or_default` ⇒ `None` 变空串（= 全 0 口径）。
+            foreground: custom.base.foreground.unwrap_or_default(),
+            background: custom.base.background.unwrap_or_default(),
+            primary: custom.base.primary.unwrap_or_default(),
+            accent: custom.base.accent.unwrap_or_default(),
+        }
+    }
+
+    /// 写入一个基色（V1.1；**只存基色**）。
+    ///
+    /// `which`：`0`=正文 `1`=背景 `2`=主色 `3`=强调。
+    /// `value` 为空串 = **清除该项**（回落内置值），不是写入空颜色。
+    pub fn set_theme_base(&mut self, which: u32, value: &str) -> NrResult<()> {
+        use reading_storage::theme::{self, BaseColors, ThemeCustom};
+        let trimmed = value.trim();
+        if !trimmed.is_empty() && theme::parse_hex(Some(trimmed)).is_none() {
+            return Err(invalid(format!(
+                "基色不是合法的 #RRGGBB：{trimmed}（已保留原值）"
+            )));
+        }
+        // 读-改-写单行记录；`enabled` **沿用原值**（是否启用是用户显式选择，
+        // 改基色不该替他打开）。
+        let mut next = theme::load_custom_theme(self.storage.conn())
+            .map_err(map_storage_error)?
+            .unwrap_or_else(|| ThemeCustom {
+                enabled: false,
+                base: BaseColors::default(),
+                updated_at: 0,
+            });
+        let slot = (!trimmed.is_empty()).then(|| trimmed.to_ascii_lowercase());
+        match which {
+            0 => next.base.foreground = slot,
+            1 => next.base.background = slot,
+            2 => next.base.primary = slot,
+            3 => next.base.accent = slot,
+            other => return Err(invalid(format!("基色索引必须在 0..=3，收到 {other}"))),
+        }
+        theme::save_custom_theme(self.storage.conn(), &next, connection::now_unix())
+            .map_err(map_storage_error)
+    }
+
+    /// 切换「启用自定义配色」（V1.1）。
+    ///
+    /// 关闭时**保留基色**（只置 `enabled = false`）—— 用户下次开启不必重选。
+    pub fn set_theme_enabled(&mut self, enabled: bool) -> NrResult<()> {
+        use reading_storage::theme::{self, BaseColors, ThemeCustom};
+        let mut next = theme::load_custom_theme(self.storage.conn())
+            .map_err(map_storage_error)?
+            .unwrap_or_else(|| ThemeCustom {
+                enabled: false,
+                base: BaseColors::default(),
+                updated_at: 0,
+            });
+        next.enabled = enabled;
+        theme::save_custom_theme(self.storage.conn(), &next, connection::now_unix())
+            .map_err(map_storage_error)
+    }
+
+    /// 取一个派生令牌的颜色（V1.1；`nr_get_theme_token`）。
+    ///
+    /// `which` 是 `PALETTE_FIELDS` 的下标；`dark != 0` 取暗色一套。
+    ///
+    /// 派生与对比度**全在共享层**（`theme_derive`），此处只搬运结果 ——
+    /// 桌面与 Android 走同一函数，故不会有两个真相（V1.1 P5 §3.3）。
+    pub fn theme_token(&self, which: u32, dark: bool) -> NrResult<[u8; 4]> {
+        use reading_storage::theme;
+        use reading_storage::theme_derive;
+        let Some(field) = theme_derive::PALETTE_FIELDS.get(which as usize) else {
+            return Err(invalid(format!(
+                "令牌索引必须在 0..{}，收到 {which}",
+                theme_derive::PALETTE_FIELDS.len()
+            )));
+        };
+        let custom = theme::load_custom_theme(self.storage.conn()).map_err(map_storage_error)?;
+        let Some(custom) = custom.filter(|item| item.enabled) else {
+            // 未启用 ⇒ 回**内置**值（与 `apply_palette` 的回落一致）。
+            // `ColorPair` 用 4 元组，本函数返 `[u8; 4]` —— 故在此转换。
+            let builtin = if dark {
+                field.value.dark
+            } else {
+                field.value.light
+            };
+            return Ok([builtin.0, builtin.1, builtin.2, builtin.3]);
+        };
+        let derived = theme_derive::derive(&custom.base);
+        Ok(if dark {
+            derived.dark_of(field.slint_name)
+        } else {
+            derived.light_of(field.slint_name)
+        }
+        .unwrap_or({
+            let builtin = if dark {
+                field.value.dark
+            } else {
+                field.value.light
+            };
+            [builtin.0, builtin.1, builtin.2, builtin.3]
+        }))
+    }
+
+    /// 取对比度读数（V1.1；`nr_get_theme_contrast`）。
+    ///
+    /// 未启用自定义配色时按**内置**明/暗算（仍给出读数，让用户有参照）。
+    pub fn theme_contrast(&self) -> NrResult<ThemeContrastData> {
+        use reading_storage::theme;
+        use reading_storage::theme_derive;
+        let custom = theme::load_custom_theme(self.storage.conn()).map_err(map_storage_error)?;
+        let (derived, report) = match custom.filter(|item| item.enabled) {
+            Some(custom) => theme_derive::derive_from_theme(&custom),
+            None => {
+                // 内置配色：直接对 `PALETTE_FIELDS` 的 text-primary/background 算。
+                let field = |name: &str| {
+                    theme_derive::PALETTE_FIELDS
+                        .iter()
+                        .find(|item| item.slint_name == name)
+                        .map(|item| {
+                            (
+                                [item.value.light.0, item.value.light.1, item.value.light.2],
+                                [item.value.dark.0, item.value.dark.1, item.value.dark.2],
+                            )
+                        })
+                        .unwrap_or(([0, 0, 0], [255, 255, 255]))
+                };
+                let (light_fg, light_bg) = field("text-primary");
+                let (dark_fg, dark_bg) = field("background");
+                let light = theme_derive::contrast_ratio(light_fg, light_bg);
+                let dark = theme_derive::contrast_ratio(dark_fg, dark_bg);
+                let (ratio, worst_in_dark) = if dark < light {
+                    (dark, true)
+                } else {
+                    (light, false)
+                };
+                (
+                    theme_derive::DerivedPalette {
+                        light: Vec::new(),
+                        dark: Vec::new(),
+                    },
+                    theme_derive::ContrastReport {
+                        ratio,
+                        passes: ratio >= theme_derive::MIN_CONTRAST,
+                        worst_in_dark,
+                    },
+                )
+            }
+        };
+        let _ = derived;
+        Ok(ThemeContrastData {
+            // 比值 × 100（跨语言不传浮点；Kotlin 侧除以 100 显示）。
+            ratio_permille_x100: (report.ratio * 100.0).round().max(0.0) as u32,
+            passes: u32::from(report.passes),
+            worst_in_dark: u32::from(report.worst_in_dark),
+        })
+    }
+
+    /// 读回全局背景（V1.1；**只回相对文件名**，R15）。
+    ///
+    /// 未设置时 `file_name` 为空串（界面据此显示「未设置」）。
+    pub fn background(&self) -> Result<BackgroundData, String> {
+        use reading_storage::background;
+        let record = background::load(self.storage.conn()).map_err(|error| error.to_string())?;
+        Ok(match record {
+            None => BackgroundData::default(),
+            Some(record) => {
+                let scrim_alpha = background::scrim_to_alpha(record.scrim_permille);
+                BackgroundData {
+                    file_name: record.file_name,
+                    file_size: record.file_size,
+                    scrim_permille: record.scrim_permille,
+                    fit_mode: record.fit_mode.as_i64(),
+                    scrim_alpha,
+                }
+            }
+        })
+    }
+
+    /// 设置全局背景（V1.1）：**复制** `src_path` 到 `dest_dir` 并写库。
+    ///
+    /// 口径（规格 R14–R16）：
+    /// - **原图只读**：只 `copy`，绝不 `rename` / `remove_file` / 写回；
+    /// - 文件名由本方法**生成**（不用用户原名，避免中文/空格/同名冲突）；
+    /// - 数据库只存**安全相对文件名**（存储层再校验一次）。
+    ///
+    /// `dest_dir` 由调用方给（桌面传数据目录；Android 传 app-private 目录）——
+    /// 核心**不猜**平台数据目录（`XDG_DATA_HOME` 在 Android 上不存在）。
+    pub fn set_background(
+        &mut self,
+        src_path: &Path,
+        dest_dir: &Path,
+        fit_mode: Option<i64>,
+        scrim_permille: Option<i64>,
+        now: i64,
+    ) -> Result<BackgroundData, String> {
+        use reading_storage::background::{self, FitMode};
+
+        // 1) 源图校验：存在 + 扩展名在白名单内。
+        const ALLOWED: [&str; 4] = ["png", "jpg", "jpeg", "webp"];
+        if !src_path.is_file() {
+            return Err(format!("背景图不存在或不是文件：{}", src_path.display()));
+        }
+        let ext = src_path
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(|value| value.to_ascii_lowercase())
+            .unwrap_or_default();
+        if !ALLOWED.contains(&ext.as_str()) {
+            return Err(format!(
+                "不支持的图片格式「{ext}」；仅支持 {}",
+                ALLOWED.join(" / ")
+            ));
+        }
+
+        // 2) 生成安全文件名 + 存储层二次校验。
+        //
+        // 必须**每次唯一**：同一秒内换图时 `{unix}-{pid}` 会重复，导致新文件
+        // 覆盖旧的，而清理逻辑又把「同名」当自己跳过 —— 结果旧文件残留、
+        // 数据库与磁盘不一致（契约测试实测踩中）。
+        // 用「目标已存在则加序号」保证唯一，且仍是可预测的安全名。
+        let base = format!("bg-{now}-{}", std::process::id());
+        let mut file_name = format!("{base}.{ext}");
+        let mut serial = 1u32;
+        while dest_dir.join(&file_name).exists() {
+            file_name = format!("{base}-{serial}.{ext}");
+            serial += 1;
+        }
+        background::validate_file_name(&file_name).map_err(|error| error.to_string())?;
+
+        // 3) 复制（**只读**：原图不动）。
+        std::fs::create_dir_all(dest_dir)
+            .map_err(|error| format!("创建背景图目录失败：{error}"))?;
+        let target = dest_dir.join(&file_name);
+        std::fs::copy(src_path, &target)
+            .map_err(|error| format!("复制背景图失败（{}）：{error}", src_path.display()))?;
+        let size = std::fs::metadata(&target)
+            .map_err(|error| format!("读取背景图大小失败：{error}"))?
+            .len() as i64;
+
+        // 4) 写库（失败则清掉刚复制的文件，不留孤儿）。
+        let fit = fit_mode.map(FitMode::from_i64).unwrap_or(FitMode::Cover);
+        let scrim = scrim_permille.unwrap_or(background::DEFAULT_SCRIM_PERMILLE);
+        let previous = {
+            let mut storage = self.storage_mut();
+            let previous = background::load(storage.conn())
+                .ok()
+                .flatten()
+                .map(|r| r.file_name);
+            match background::set(storage.conn(), &file_name, size, scrim, fit, now) {
+                Ok(()) => previous,
+                Err(error) => {
+                    let _ = std::fs::remove_file(&target);
+                    return Err(error.to_string());
+                }
+            }
+        };
+        // 5) 清理**旧**文件（只删核心生成的 `bg-*`，绝不动用户原图）。
+        if let Some(old) = previous {
+            if old != file_name && old.starts_with("bg-") {
+                let _ = std::fs::remove_file(dest_dir.join(&old));
+            }
+        }
+
+        Ok(BackgroundData {
+            file_name,
+            file_size: size,
+            scrim_permille: scrim,
+            fit_mode: fit.as_i64(),
+            scrim_alpha: background::scrim_to_alpha(scrim),
+        })
+    }
+
+    /// 只调遮罩强度（V1.1；不换图）。
+    pub fn set_background_scrim(&mut self, permille: i64) -> Result<BackgroundData, String> {
+        use reading_storage::background;
+        background::set_scrim(self.storage.conn(), permille, connection::now_unix())
+            .map_err(|error| error.to_string())?;
+        self.background()
+    }
+
+    /// 清除全局背景（V1.1）。
+    ///
+    /// **只删核心生成的文件**（`bg-*` 前缀）；`dest_dir` 不存在时不报错。
+    /// **不动用户原图**（它不在 `dest_dir` 里）。
+    pub fn clear_background(&mut self, dest_dir: &Path) -> Result<BackgroundData, String> {
+        use reading_storage::background;
+        let removed = background::clear(self.storage.conn(), connection::now_unix())
+            .map_err(|error| error.to_string())?;
+        if let Some(name) = removed {
+            if name.starts_with("bg-") {
+                let _ = std::fs::remove_file(dest_dir.join(&name));
+            }
+        }
+        self.background()
+    }
+
+    /// 某作用域下**在架**书籍的 id 列表（V1.1；`nr_list_books_in_scope` 的载荷）。
+    ///
+    /// 子树展开在**核心**完成 —— 界面只做集合成员判断，不得自己遍历父子链。
+    pub fn books_in_scope(&self, scope_kind: i32, category_id: i64) -> NrResult<Vec<i64>> {
+        use reading_storage::categories;
+        categories::books_in_scope(self.storage.conn(), scope_kind, category_id)
+            .map_err(map_storage_error)
+    }
+
+    /// 合法的移动 / 删除目标（V1.1；`nr_category_move_targets` 的载荷）。
+    ///
+    /// 含「未分类」（id = -1）；自身与全部子孙 `selectable = false`。
+    /// **环判定在核心完成** —— 界面不得自行遍历父子链。
+    pub fn category_move_targets(
+        &self,
+        source_id: i64,
+    ) -> NrResult<Vec<reading_storage::categories::MoveTarget>> {
+        use reading_storage::categories;
+        categories::move_targets(self.storage.conn(), source_id).map_err(map_storage_error)
+    }
+
+    /// 重命名分类（V1.1；`nr_rename_category`）。
+    ///
+    /// 同名冲突 / 不存在的 id 由存储层拒绝（**保留原值**），调用方如实回报。
+    pub fn rename_category(&self, category_id: i64, name: &str) -> NrResult<()> {
+        use reading_storage::categories;
+        categories::rename_category(
+            self.storage.conn(),
+            category_id,
+            name,
+            connection::now_unix(),
+        )
+        .map_err(map_storage_error)?;
+        Ok(())
+    }
+
+    /// 移动分类到新的父分类（V1.1；`nr_move_category`）。
+    ///
+    /// `new_parent = -1` 表示移到根层。**移入自身或子孙必须拒绝**
+    /// （否则产生环 ⇒ 树投影死循环，规格 R5）—— 拒绝由存储层实施。
+    pub fn move_category(&self, category_id: i64, new_parent: i64) -> NrResult<()> {
+        use reading_storage::categories;
+        let parent = if new_parent < 0 {
+            None
+        } else {
+            Some(new_parent)
+        };
+        categories::move_category(
+            self.storage.conn(),
+            category_id,
+            parent,
+            connection::now_unix(),
+        )
+        .map_err(map_storage_error)?;
+        Ok(())
+    }
+
+    /// 书籍 → 分类 映射（V1.1；`nr_list_book_categories` 的载荷）。
+    ///
+    /// `category_id = -1` 表示**未分类** —— 与 ABI 的「None 用 -1 哨兵」口径一致。
+    /// 只含**在架**书籍（与书架口径一致）。
+    ///
+    /// 界面用它把书架条目按分类过滤：宿主目录给出 `sourceIdentity → bookId`（A1），
+    /// 本映射给出 `bookId → categoryId`，两者相合即可筛选。
+    pub fn book_categories(&self) -> NrResult<Vec<(i64, i64)>> {
+        use reading_storage::books;
+        let pairs = books::list_book_categories(self.storage.conn()).map_err(map_storage_error)?;
+        Ok(pairs
+            .into_iter()
+            .map(|(book_id, category_id)| (book_id, category_id.unwrap_or(-1)))
+            .collect())
+    }
+
+    /// 阅读历史批量条目（V1.1；`nr_list_history` 的载荷）。
+    ///
+    /// `grouped = true` 走聚合视图（组按最近时间倒序）；`book_id > 0` 限定单书。
+    /// **排序在存储层完成**（`history::list` / `list_grouped`），此处不重排。
+    pub fn history_rows(
+        &self,
+        book_id: i64,
+        limit: i32,
+        grouped: bool,
+    ) -> NrResult<HistoryRowsData> {
+        use reading_storage::history;
+        use reading_storage::history_view;
+        let conn = self.storage.conn();
+        let cap = limit.max(0) as usize;
+        let entries = if grouped {
+            // 聚合视图：组头带条数与最近时间，组内流水平铺在行数组里
+            // （Kotlin 侧按 `book_id` 变化识别组边界，不必二次解析）。
+            let groups = history::list_grouped(conn).map_err(map_storage_error)?;
+            let mut flat: Vec<history::HistoryEntry> = Vec::new();
+            for group in groups {
+                flat.extend(group.entries);
+                if cap > 0 && flat.len() >= cap {
+                    break;
+                }
+            }
+            if cap > 0 {
+                flat.truncate(cap);
+            }
+            flat
+        } else if book_id > 0 {
+            history::list_by_book(conn, book_id, Some(cap as i64)).map_err(map_storage_error)?
+        } else {
+            history::list(conn, Some(cap as i64)).map_err(map_storage_error)?
+        };
+
+        // `count()` 返回 i64；转 u32 前饱和（负数只可能是数据异常，夹到 0 而不 panic）。
+        // 负载：定长行 + UTF-8 字节池（标题 + 来源末段文件名）。
+        let mut bytes: Vec<u8> = Vec::new();
+        let mut rows: Vec<HistoryRowData> = Vec::with_capacity(entries.len());
+        // `count()` 的 SQL **不含占位符**，故必须传空参数（曾误传 1 个，
+        // 触发 `Wrong number of parameters` —— 与分类查询同类缺陷）。
+        let total = history::count(conn)
+            .map_err(map_storage_error)?
+            .max(0)
+            .min(u32::MAX as i64) as u32;
+        for entry in &entries {
+            let title_offset = bytes.len() as u32;
+            bytes.extend_from_slice(entry.book_title.as_bytes());
+            // 只回**末段文件名**（不暴露完整定位符）。
+            // 复用共享层 —— 此前本文件自己写了一份等价逻辑，属重复实现。
+            let tail = history_view::file_label(&entry.source_locator);
+            let file_offset = bytes.len() as u32;
+            bytes.extend_from_slice(tail.as_bytes());
+            // 时间标签**由核心格式化**（规格 §3.6）；界面不得自己格式化。
+            let label = history_view::time_label(conn, entry.opened_at);
+            let label_offset = bytes.len() as u32;
+            bytes.extend_from_slice(label.as_bytes());
+            rows.push(HistoryRowData {
+                id: entry.id,
+                book_id: entry.book_id,
+                opened_at: entry.opened_at,
+                chapter_index: entry.chapter_index,
+                byte_offset: entry.byte_offset,
+                entry_kind: entry.entry_kind.as_i64(),
+                title_offset,
+                title_len: entry.book_title.len() as u32,
+                file_offset,
+                file_len: tail.len() as u32,
+                label_offset,
+                label_len: label.len() as u32,
+            });
+        }
+        Ok(HistoryRowsData {
+            count: rows.len() as u32,
+            total,
+            rows,
+            bytes,
+        })
+    }
+
+    /// 清除一条阅读流水（V1.1；`nr_clear_history_entry`）。
+    ///
+    /// `false` = 该 id 不存在（调用方应如实回报「已不存在」而非「已清除」）。
+    pub fn clear_history_entry(&mut self, entry_id: i64) -> NrResult<bool> {
+        use reading_storage::history;
+        history::remove_one(self.storage.conn(), entry_id).map_err(map_storage_error)
+    }
+
+    /// 清除某本书的全部阅读流水（V1.1；`nr_clear_history_for_book`）。
+    ///
+    /// **只删流水**：不动书籍 / 进度 / 书签（由 `history::remove_by_book` 保证）。
+    pub fn clear_history_for_book(&mut self, book_id: i64) -> NrResult<u32> {
+        use reading_storage::history;
+        let removed =
+            history::remove_by_book(self.storage.conn(), book_id).map_err(map_storage_error)?;
+        Ok(removed as u32)
+    }
+
     /// 本地存储（测试与审计用）。
     pub fn storage(&self) -> &Storage {
         &self.storage
+    }
+
+    /// 本地存储（**可变**；V1.1 分类写入需要）。
+    ///
+    /// 事务型操作（如 `delete_category`）要求 `&mut Connection`，故必须
+    /// 经此拿可借用；调用点只经 FFI 导出暴露，不接受外部传入的连接。
+    pub fn storage_mut(&mut self) -> &mut Storage {
+        &mut self.storage
+    }
+
+    /// 分类批量条目（V1.1；`nr_list_categories` 的载荷）。
+    pub fn category_rows(&self) -> NrResult<CategoryRowsData> {
+        use reading_storage::categories;
+        let nodes = categories::project_tree(self.storage.conn()).map_err(map_storage_error)?;
+        // `CategoryNode` 刻意**不暴露** `parent_id`（桌面侧同样另建父链映射）；
+        // 这里从扁平列表重建 `id -> parent_id`，保持单一投影口径。
+        let flat = categories::list_categories(self.storage.conn()).map_err(map_storage_error)?;
+        let parents: std::collections::HashMap<i64, i64> = flat
+            .iter()
+            .map(|item| (item.id, item.parent_id.unwrap_or(-1)))
+            .collect();
+        // 载荷形状：定长条目 + UTF-8 名称字节池（与 `nr_get_chapters` 同构）。
+        let mut bytes: Vec<u8> = Vec::new();
+        let mut rows: Vec<CategoryRowData> = Vec::with_capacity(nodes.len());
+        for node in nodes {
+            let name_offset = bytes.len() as u32;
+            bytes.extend_from_slice(node.name.as_bytes());
+            rows.push(CategoryRowData {
+                id: node.id,
+                parent_id: parents.get(&node.id).copied().unwrap_or(-1),
+                depth: node.depth as u32,
+                direct_book_count: node.direct_book_count,
+                total_book_count: node.total_book_count,
+                name_offset,
+                name_len: node.name.len() as u32,
+            });
+        }
+        Ok(CategoryRowsData {
+            count: rows.len() as u32,
+            rows,
+            bytes,
+        })
+    }
+
+    /// 新建分类（V1.1；同名 / 父不存在的判定**在存储层**，此处只转发）。
+    pub fn create_category(&mut self, parent_id: Option<i64>, name: &str) -> NrResult<i64> {
+        use reading_storage::categories;
+        let now = connection::now_unix();
+        categories::create_category(self.storage.conn(), parent_id, name, now)
+            .map_err(map_storage_error)
+    }
+
+    /// 移动书籍到分类（V1.1；`category_id = None` = 未分类）。
+    pub fn move_book_to_category(
+        &mut self,
+        book_id: i64,
+        category_id: Option<i64>,
+    ) -> NrResult<()> {
+        use reading_storage::categories;
+        let now = connection::now_unix();
+        categories::move_book_at(self.storage.conn(), book_id, category_id, now)
+            .map_err(map_storage_error)
+    }
+
+    /// 删除分类（V1.1；**必须显式给出书籍去向**）。
+    ///
+    /// `destination = 0`（未选去向）时**直接拒绝且零副作用** —— 与桌面侧
+    /// `DeleteChoice::None` 同语义（规格 R3 / P5 §3.1）。
+    pub fn delete_category(
+        &mut self,
+        id: i64,
+        destination: i32,
+        target_id: Option<i64>,
+    ) -> NrResult<u32> {
+        use reading_storage::categories::{self, DeleteDestination};
+        // `0` = 未选去向 —— 在此拒绝（不构造任何默认去向）。
+        let chosen = match destination {
+            1 => DeleteDestination::MoveToCategory {
+                target_id: target_id
+                    .ok_or_else(|| invalid("destination=1（移入另一分类）必须给出 target_id"))?,
+            },
+            2 => DeleteDestination::RemoveFromShelf,
+            3 => DeleteDestination::MoveToRoot,
+            other => {
+                return Err(invalid(format!(
+                    "destination 必须显式给出（1=移入分类 2=移出书架 3=移回根），收到 {other}"
+                )))
+            }
+        };
+        let now = connection::now_unix();
+        let storage = self.storage_mut();
+        let report = categories::delete_category(storage.conn_mut(), id, chosen, now)
+            .map_err(map_storage_error)?;
+        Ok(report.moved_books as u32)
     }
 
     /// 当前打开的书籍。
@@ -529,7 +1207,42 @@ impl Engine {
         });
         // 换书 ⇒ 旧排版缓存不再适用。
         self.cache = None;
+        // 来源信息一并记入流水（Android 侧显示文件名用）。
+        self.record_open_history(book_id, &source_kind, &spec.identity);
         Ok(outcome)
+    }
+
+    /// 每次打开写一条阅读流水（V1.1；规格 HR1）。
+    ///
+    /// **桌面与 Android 同一条路径**（都在 `open_txt` 里）—— 这样「每次打开
+    /// 一条」在两个平台都成立，不需要各写一套，也不会有「一端记了另一端没记」。
+    ///
+    /// 写失败**只忽略、不打断打开**（历史是辅助信息，不是阅读的前提）。
+    fn record_open_history(&mut self, book_id: i64, source_kind: &str, source_locator: &str) {
+        use reading_storage::books;
+        use reading_storage::history::{self, EntryKind, HistoryInput};
+        // 书名以**存储层记录**为准（权威口径；`derived_name` 此时已被 import 消费）。
+        let Ok(Some(book)) = books::get_book(self.storage.conn(), book_id) else {
+            return;
+        };
+        let input = HistoryInput {
+            book_id,
+            book_title: book.display_name.clone(),
+            opened_at: connection::now_unix(),
+            // 打开瞬间的位置：首屏尚未排版，记 0（与桌面「无恢复进度」时一致）。
+            chapter_index: 0,
+            byte_offset: 0,
+            // ABI 层只有一个打开入口，故一律记「书架打开」。
+            // 「进度恢复」由桌面侧在**恢复成功后**补记（它才知道恢复是否命中）。
+            entry_kind: EntryKind::FromShelf,
+            source_kind: source_kind.to_string(),
+            source_locator: source_locator.to_string(),
+            content_index_version: 0,
+        };
+        if let Err(error) = history::record(self.storage.conn(), &input) {
+            // 不打断打开：仅记日志由调用方承担（引擎层无 logger）。
+            let _ = error;
+        }
     }
 
     /// 取章节索引：优先本地存储缓存（校验覆盖率与版本），否则可取消地扫描并落库。
@@ -542,8 +1255,8 @@ impl Engine {
     ) -> NrResult<(ChapterIndex, bool)> {
         // 扫描器版本一致才允许复用缓存索引：规则/解码行为变更后必须重扫，
         // 否则「更新应用」对既有书籍无效（用户须卸载重装才能生效）。
-        let stored_scanner = meta::chapter_scanner_version(self.storage.conn())
-            .map_err(map_storage_error)?;
+        let stored_scanner =
+            meta::chapter_scanner_version(self.storage.conn()).map_err(map_storage_error)?;
         let scanner_current = stored_scanner == reading_index::CHAPTER_SCANNER_VERSION;
         let stored = storage_index::list_chapters(self.storage.conn(), book_id)
             .map_err(map_storage_error)?;
@@ -552,11 +1265,8 @@ impl Engine {
                 return Ok((index, true));
             }
         }
-        let (index, _stats) = reading_core::scan_chapters_from_source_with_encoding(
-            source,
-            &|| false,
-            encoding,
-        )?;
+        let (index, _stats) =
+            reading_core::scan_chapters_from_source_with_encoding(source, &|| false, encoding)?;
         if !scanner_current {
             // 重扫后：记录版本 + 递增内容索引版本（章节区间可能变化，旧布局/分页缓存必须失效）。
             let now = connection::now_unix();
@@ -1323,7 +2033,7 @@ pub fn map_storage_error(error: StorageError) -> NrError {
 }
 
 /// 结构体字节视图（全部字段为整数/标量，无指针 ⇒ 可安全按字节读取）。
-fn struct_bytes<T>(value: &T) -> Vec<u8> {
+pub(crate) fn struct_bytes<T>(value: &T) -> Vec<u8> {
     let bytes = unsafe {
         std::slice::from_raw_parts((value as *const T).cast::<u8>(), std::mem::size_of::<T>())
     };
@@ -1415,6 +2125,33 @@ pub fn truncate_utf8(text: &str, max_bytes: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn history_rows_reports_a_readable_error_when_storage_is_unusable() {
+        // 定位用：`nr_list_history` 返回 `INVALID_ARGUMENT`（码 10）时，
+        // 说明 `history_rows` 内部出错。此测试把该路径钉住。
+        let engine = Engine::new(EngineConfig::in_memory()).expect("建内存引擎");
+        // 未打开任何书籍、无任何流水 ⇒ 空树是**正常**结果，不是错误。
+        let rows = engine
+            .history_rows(0, 0, false)
+            .expect("空库列历史必须成功");
+        assert_eq!(rows.count, 0, "空库无流水");
+        assert_eq!(rows.total, 0, "空库总条数为 0");
+        assert!(rows.rows.is_empty());
+        assert!(rows.bytes.is_empty(), "空批次不应带缓冲区字节");
+    }
+
+    #[test]
+    fn history_rows_write_requires_positive_limit_semantics() {
+        let engine = Engine::new(EngineConfig::in_memory()).expect("建内存引擎");
+        // `limit <= 0` 意为「不限」，不得被当成 0 条。
+        for limit in [0, -1, -100] {
+            let rows = engine
+                .history_rows(0, limit, false)
+                .expect("不限量必须成功");
+            assert_eq!(rows.count, 0, "limit={limit} 应理解为不限，而非 0 条");
+        }
+    }
 
     #[test]
     fn engine_rejects_invalid_window_cap() {

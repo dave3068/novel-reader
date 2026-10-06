@@ -1629,12 +1629,17 @@ mod tests {
 /// 目录只剩一个虚拟章节「全文」。
 ///
 /// UTF-8 走零拷贝借用；其他编码用 `encoding_rs` 解码（GB18030 覆盖 GBK 的码位空间）。
-pub fn decode_line<'a>(bytes: &'a [u8], encoding: TextEncoding) -> Option<std::borrow::Cow<'a, str>> {
+pub fn decode_line<'a>(
+    bytes: &'a [u8],
+    encoding: TextEncoding,
+) -> Option<std::borrow::Cow<'a, str>> {
     if bytes.is_empty() {
         return Some(std::borrow::Cow::Borrowed(""));
     }
     if matches!(encoding, TextEncoding::Utf8 | TextEncoding::Utf8Bom) {
-        return std::str::from_utf8(bytes).ok().map(std::borrow::Cow::Borrowed);
+        return std::str::from_utf8(bytes)
+            .ok()
+            .map(std::borrow::Cow::Borrowed);
     }
     let codec = match encoding {
         TextEncoding::Utf16Le => encoding_rs::UTF_16LE,

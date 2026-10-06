@@ -314,6 +314,158 @@ typedef struct nr_chapter_batch {
     nr_buffer bytes;         /* Rust 分配，调用方用 nr_release_buffer 归还 */
 } nr_chapter_batch;
 
+/* ==================== 分类树（V1.1；加性契约修订） ==================== */
+
+/* 分类树一行（48 字节）。名称不在本结构里：
+ * name_offset / name_len 指向 nr_category_batch.bytes 的 UTF-8 字节。
+ * parent_id 为 -1 表示「根下」（存储层是 NULL；ABI 不传 Option）。 */
+typedef struct nr_category {
+    int64_t id;                 /* 分类 id */
+    int64_t parent_id;          /* 父分类 id；-1 = 根下 */
+    int64_t direct_book_count;  /* 直属书籍数 */
+    int64_t total_book_count;   /* 含子孙的合计书籍数 */
+    uint32_t depth;             /* 层级深度（根下为 1） */
+    uint32_t name_offset;       /* 名称在字节池中的偏移 */
+    uint32_t name_len;          /* 名称字节长度（UTF-8） */
+    uint32_t reserved0;         /* 必须为 0 */
+} nr_category;
+
+/* 分类批次缓冲区布局：[nr_category; count] 后紧接全部名称的 UTF-8 字节。
+ * 与 nr_chapter_batch 同构，故调用方（Kotlin/JNI）可复用同一套归还流程。 */
+typedef struct nr_category_batch {
+    uint32_t count;      /* 本次返回条目数 */
+    uint32_t reserved0;  /* 必须为 0 */
+    nr_buffer bytes;     /* Rust 分配，调用方用 nr_release_buffer 归还 */
+} nr_category_batch;
+
+/* ==================== 阅读历史（V1.1；加性契约修订） ==================== */
+
+/* 阅读历史一行（72 字节）。书名与文件名都不在本结构里：
+ * title_offset/title_len 与 file_offset/file_len 指向 nr_history_batch.bytes 的 UTF-8 字节。
+ * file_* 只含来源**末段文件名**（不暴露完整定位符）。
+ * entry_kind：0=书架打开 1=阅读页打开 2=进度恢复 3=书签跳转 4=章节跳转。 */
+typedef struct nr_history {
+    int64_t id;              /* 流水 id */
+    int64_t book_id;         /* 书籍 id */
+    int64_t opened_at;       /* 打开时间（Unix 秒） */
+    int64_t chapter_index;   /* 打开时的章节序号 */
+    int64_t byte_offset;     /* 打开时的字节偏移 */
+    int64_t entry_kind;      /* 进入方式码 */
+    uint32_t title_offset;   /* 书名在字节池中的偏移 */
+    uint32_t title_len;      /* 书名字节长度（UTF-8） */
+    uint32_t file_offset;    /* 文件名在字节池中的偏移 */
+    uint32_t file_len;       /* 文件名字节长度（UTF-8） */
+    uint32_t label_offset;   /* **已由核心格式化**的时间标签在字节池中的偏移 */
+    uint32_t label_len;      /* 时间标签字节长度（UTF-8） */
+} nr_history;
+
+/* 阅读历史批次缓冲区布局：[nr_history; count] 后紧接全部书名与文件名的 UTF-8 字节。
+ * 每行的三段在池中**紧邻**（先书名、再文件名、后时间标签），偏移均相对整块缓冲区。
+ * label_* 是**核心已格式化**的时间标签（今天 HH:MM / 本年 MM-DD HH:MM / 跨年 yyyy-MM-dd HH:MM）——
+ * 界面不得自行格式化或截断（规格 §3.6）。
+ * total 是全部流水条数，**不受** limit 影响（界面显示「共 N 条」用）。 */
+typedef struct nr_history_batch {
+    uint32_t count;      /* 本次返回条目数 */
+    uint32_t total;      /* 全部流水条数 */
+    nr_buffer bytes;     /* Rust 分配，调用方用 nr_release_buffer 归还 */
+} nr_history_batch;
+
+/* ==================== 自定义配色（V1.1；加性契约修订） ==================== */
+
+/* 自定义配色的基色（56 字节）。**只存 4 个基色** —— 40 个语义令牌不落库，
+ * 由核心按基色确定性派生（桌面与 Android 同一函数，故两端显示一致）。
+ * 四项各 12 字节（#RRGGBB + NUL）；**全 0 = 该项未设置**（沿用内置值）。 */
+typedef struct nr_theme_base {
+    uint32_t struct_size;   /* 必须等于 sizeof(nr_theme_base) */
+    uint32_t enabled;       /* 1 = 启用自定义配色；0 = 走内置明/暗 */
+    uint8_t  foreground[12];/* 正文基色 #RRGGBB + NUL；全 0 = 未设置 */
+    uint8_t  background[12];/* 背景基色 */
+    uint8_t  primary[12];   /* 主色基色 */
+    uint8_t  accent[12];    /* 强调色基色 */
+} nr_theme_base;
+
+/* 对比度读数（24 字节，8 字节对齐）。比值用**整数 × 100**（跨语言不传浮点）：
+ * 4.54:1 ⇒ ratio_x100 = 454。passes = 0 时核心**已保留用户基色**（R12）。 */
+typedef struct nr_theme_contrast_result {
+    uint32_t struct_size;   /* 必须等于 sizeof(nr_theme_contrast_result) */
+    uint32_t ratio_x100;    /* 对比度 × 100 */
+    uint32_t passes;        /* 1 = 达到可读性建议；0 = 不足（已保留基色） */
+    uint32_t worst_in_dark; /* 1 = 暗色那侧更差 */
+    uint32_t reserved0;     /* 必须为 0 */
+    uint32_t reserved1;     /* 必须为 0（补到 8 字节对齐） */
+} nr_theme_contrast_result;
+
+/* ==================== 全局阅读背景图（V1.1；加性契约修订） ==================== */
+
+/* 背景信息（48 字节，8 字节对齐）。**只回相对文件名**（R15）—— 调用方拼自己的
+ * app-private 前缀；绝对路径由平台决定，核心不猜（XDG_DATA_HOME 在 Android 上不存在）。
+ * file_name_len = 0 表示未设置（此时批次仍写回头部）。
+ * fit_mode：0=覆盖铺满 1=原始尺寸平铺 2=原始尺寸居中。
+ * scrim_alpha 已由核心从千分比换算（界面不再换算）。 */
+typedef struct nr_background {
+    int64_t  file_size;       /* 图片字节数（0 = 未设置） */
+    int64_t  scrim_permille;  /* 遮罩强度（千分比 0..=1000） */
+    int64_t  fit_mode;        /* 缩放口径 */
+    int64_t  reserved0;       /* 必须为 0 */
+    uint8_t  scrim_alpha;     /* 遮罩 alpha（0..255） */
+    uint8_t  reserved1;       /* 必须为 0 */
+    uint16_t reserved2;       /* 必须为 0 */
+    uint32_t file_name_len;   /* 文件名字节长度（UTF-8）；0 = 未设置 */
+    uint32_t file_name_offset;/* 文件名在批次字节池中的偏移 */
+    uint32_t reserved3;       /* 必须为 0 */
+} nr_background;
+
+/* 背景批次：[nr_background; 1] 后紧接文件名的 UTF-8 字节。
+ * 与其它批次同构，Kotlin 侧复用同一套缓冲区归还流程。 */
+typedef struct nr_background_batch {
+    uint32_t count;      /* 1 = 已设置；0 = 未设置 */
+    uint32_t reserved0;  /* 必须为 0 */
+    nr_buffer bytes;     /* Rust 分配，调用方用 nr_release_buffer 归还 */
+} nr_background_batch;
+
+/* ==================== 书籍分类映射（V1.1；筛选前置） ==================== */
+
+/* 移动 / 删除目标的一行（40 字节）。id = -1 表示「未分类」。
+ * selectable = 0 表示自身或子孙（选了会成环）—— 刻意不隐藏而只标记，便于向用户解释。 */
+typedef struct nr_category_choice {
+    int64_t id;              /* -1 = 未分类 */
+    int32_t depth;           /* 层级，用于缩进显示 */
+    uint32_t selectable;     /* 0 = 不可选（自身/子孙）；1 = 可选 */
+    int64_t total_count;     /* 含子孙的在架书籍数 */
+    uint32_t name_offset;
+    uint32_t name_len;
+    uint32_t reserved0;      /* 必须为 0 */
+    uint32_t reserved1;      /* 必须为 0 */
+} nr_category_choice;
+
+/* 目标选项批次（32 字节）。 */
+typedef struct nr_category_choice_batch {
+    uint32_t count;
+    uint32_t reserved0;  /* 必须为 0 */
+    nr_buffer bytes;     /* Rust 分配，调用方用 nr_release_buffer 归还 */
+} nr_category_choice_batch;
+
+/* 通用 i64 列表（32 字节）：字节池是 count 个小端 int64（bytes.len == count * 8）。 */
+typedef struct nr_id_list {
+    uint32_t count;
+    uint32_t reserved0;  /* 必须为 0 */
+    nr_buffer bytes;     /* Rust 分配，调用方用 nr_release_buffer 归还 */
+} nr_id_list;
+
+/* 书籍 → 分类 的一行（16 字节）。category_id = -1 表示未分类（None 哨兵口径）。 */
+typedef struct nr_book_category {
+    int64_t book_id;
+    int64_t category_id;  /* -1 = 未分类 */
+} nr_book_category;
+
+/* 书籍分类批次。行内**无字符串**，故字节池就是行本身（bytes.len == count * 16）；
+ * 仍沿用「批次头 + 字节池」的统一形状，调用方复用同一套归还流程。 */
+typedef struct nr_book_category_batch {
+    uint32_t count;
+    uint32_t reserved0;  /* 必须为 0 */
+    nr_buffer bytes;     /* Rust 分配，调用方用 nr_release_buffer 归还 */
+} nr_book_category_batch;
+
 /* ============================ 书签 ============================ */
 
 typedef struct nr_bookmark_input {
@@ -357,7 +509,7 @@ typedef struct nr_error_info {
     nr_buffer message;       /* UTF-8；Rust 分配，调用方用 nr_release_buffer 归还 */
 } nr_error_info;
 
-/* ==================== 入口（冻结 18 项 + nr_set_encoding，共 19 项） ==================== */
+/* ==================== 入口（冻结 18 项 + nr_set_encoding + V1.1 分类 4 + 历史 3 + 配色 5 + 背景 4 + 书籍分类映射 1 项，共 40 项） ==================== */
 
 /* 1. 查询 ABI 版本。无需句柄；可与编译期宏 NR_ABI_VERSION 对照。 */
 uint32_t nr_abi_version(void);
@@ -421,6 +573,121 @@ int32_t nr_rebuild_index(uint64_t engine, uint64_t book_id, uint64_t request_id,
  *     书籍必须是当前打开的那一本（与 nr_rebuild_index 同一约定）。
  *     覆盖后立即按新编码重扫章节索引并递增内容索引版本；out_result 可为 NULL。 */
 int32_t nr_set_encoding(uint64_t engine, uint64_t book_id, uint32_t encoding_code, nr_set_encoding_result *out_result);
+
+/* ---- 分类树（V1.1；加性契约修订：既有 19 项的顺序与语义不变）---- */
+
+/* 列出分类树（一次性返回整棵树 + 名称字节池）。
+ * 排序与层级由核心给出，调用方**不得**自行排序。
+ * out_batch 可为 NULL（此时只做校验不写回执）。 */
+int32_t nr_list_categories(uint64_t engine, nr_category_batch *out_batch);
+
+/* 新建分类。parent_id 传 -1 表示根下。
+ * 同父同名返回 NR_ERR_INVALID_ARGUMENT（与桌面同语义）。
+ * name_ptr/name_len 必须指向合法 UTF-8；空名被拒。
+ * out_category_id 可为 NULL。 */
+int32_t nr_create_category(uint64_t engine, int64_t parent_id, const uint8_t *name_ptr, uint32_t name_len, int64_t *out_category_id);
+
+/* 移动书籍到分类。category_id 传 -1 表示移到未分类（根）。 */
+int32_t nr_move_book_to_category(uint64_t engine, int64_t book_id, int64_t category_id);
+
+/* 删除分类。destination **必须显式给出**：
+ *   1 = 移入 target_id、2 = 一并移出书架、3 = 移回根（未分类）。
+ * 传 0（未选去向）返回 NR_ERR_INVALID_ARGUMENT 且**零副作用** ——
+ * 与桌面侧「未选去向不执行删除」同语义。
+ * target_id 仅在 destination = 1 时被读取；out_moved_count 可为 NULL。 */
+int32_t nr_delete_category(uint64_t engine, int64_t category_id, int32_t destination, int64_t target_id, uint32_t *out_moved_count);
+
+/* ---- 阅读历史（V1.1；加性契约修订）---- */
+
+/* 列出阅读历史。book_id > 0 限定单书；limit > 0 限量；grouped != 0 走按书聚合。
+ * **排序在核心完成**（opened_at DESC），调用方不得自行排序。
+ * out_batch 可为 NULL（此时只做校验不写回执）。 */
+int32_t nr_list_history(uint64_t engine, int64_t book_id, int32_t limit, int32_t grouped, nr_history_batch *out_batch);
+
+/* 清除一条阅读流水。out_removed 写回 1 = 已清除、0 = 该 id 不存在。
+ * **只删流水**：不动书籍 / 阅读进度 / 书签。out_removed 可为 NULL。 */
+int32_t nr_clear_history_entry(uint64_t engine, int64_t entry_id, uint32_t *out_removed);
+
+/* 清除某本书的全部阅读流水。out_removed_count 写回实际删除条数。
+ * **只删流水**。out_removed_count 可为 NULL。 */
+int32_t nr_clear_history_for_book(uint64_t engine, int64_t book_id, uint32_t *out_removed_count);
+
+/* ---- 自定义配色（V1.1；加性契约修订）---- */
+
+/* 读回自定义配色的基色。**只回 4 个基色与 enabled** —— 40 个语义令牌不落库（R11）。
+ * 四项各 12 字节，**全 0 = 该项未设置**（沿用内置值）。
+ * out_base 可为 NULL（此时只做校验）。 */
+int32_t nr_get_theme_base(uint64_t engine, nr_theme_base *out_base);
+
+/* 写入一个基色。which：0=正文 1=背景 2=主色 3=强调。
+ * value_len 传 **0** = **清除该项**（回落内置值，不是写入空颜色）；
+ * 非空但不是合法 #RRGGBB 时返回 NR_ERR_INVALID_ARGUMENT 且**保留原值**。
+ * 写基色**不会**自动打开 enabled（那是用户的显式选择）。 */
+int32_t nr_set_theme_base(uint64_t engine, uint32_t which, const uint8_t *value_ptr, uint32_t value_len);
+
+/* 切换「启用自定义配色」。关闭时**保留基色**（下次开启不必重选）。 */
+int32_t nr_set_theme_enabled(uint64_t engine, uint32_t enabled);
+
+/* 取一个派生令牌的 RGBA（写 4 字节）。which 是令牌表下标；dark != 0 取暗色一套。
+ * 越界索引返回 NR_ERR_INVALID_ARGUMENT；未启用自定义配色时回**内置**值。
+ * 派生**全在核心**（桌面与 Android 同一函数，故两端显示一致）。
+ * out_rgba 必须可写（为 NULL 时只做校验）。 */
+int32_t nr_get_theme_token(uint64_t engine, uint32_t which, uint32_t dark, uint8_t *out_rgba);
+
+/* 取对比度读数。ratio_x100 = 比值 × 100（如 4.54:1 ⇒ 454）。
+ * passes = 0 表示不足，但核心**已保留用户基色**（R12 —— 只提示，不强改）。
+ * out_result 可为 NULL（此时只做校验）。 */
+int32_t nr_get_theme_contrast(uint64_t engine, nr_theme_contrast_result *out_result);
+
+/* ---- 全局阅读背景图（V1.1；加性契约修订）---- */
+
+/* 读回背景。**只回相对文件名**（R15）；file_name_len = 0 表示未设置。
+ * out_batch 可为 NULL（此时只做校验）。 */
+int32_t nr_get_background(uint64_t engine, nr_background_batch *out_batch);
+
+/* 设置背景：核心**复制** src_path 到 dest_dir（原图只读，绝不移动/删除），
+ * 生成安全文件名，**只把相对名写库**（R14–R16）。
+ * dest_dir 由调用方给（桌面传数据目录；Android 传 app-private 目录）——
+ * 核心**不猜平台数据目录**。
+ * fit_mode < 0 或 scrim_permille < 0 = 用默认值。
+ * out_batch 可为 NULL（此时只做写库）。 */
+/* 注意：**必须单行声明** —— 头文件一致性测试按「单行以 int32_t 开头」扫描，
+ * 多行会被漏掉（实测踩中，会让函数凭空「消失」）。 */
+int32_t nr_set_background(uint64_t engine, const uint8_t *src_path_ptr, uint32_t src_path_len, const uint8_t *dest_dir_ptr, uint32_t dest_dir_len, int32_t fit_mode, int32_t scrim_permille, nr_background_batch *out_batch);
+
+/* 只调遮罩强度（不换图）。permille 必须在 0..=1000，否则被拒。
+ * out_batch 可为 NULL。 */
+int32_t nr_set_background_scrim(uint64_t engine, int32_t scrim_permille, nr_background_batch *out_batch);
+
+/* 清除背景：**只删核心生成的文件**（bg-* 前缀）；**不动用户原图**。
+ * out_batch 可为 NULL。 */
+int32_t nr_clear_background(uint64_t engine, const uint8_t *dest_dir_ptr, uint32_t dest_dir_len, nr_background_batch *out_batch);
+
+/* ---- 书籍分类映射（V1.1；筛选前置）---- */
+
+/* 合法的移动 / 删除目标。含「未分类」（id = -1）；source_id 自身与全部子孙 selectable = 0。
+ * 环判定在**核心**完成 —— 界面不得自行遍历父子链。 */
+int32_t nr_category_move_targets(uint64_t engine, int64_t source_id, nr_category_choice_batch *out_batch);
+
+/* 重命名分类（V1.1）。同名冲突 / 不存在的 id 由核心拒绝并保留原值。 */
+int32_t nr_rename_category(uint64_t engine, int64_t category_id, const uint8_t *name, uint32_t name_len);
+
+/* 移动分类到新的父分类（V1.1）。new_parent_id = -1 表示移到根层。
+ * 移入自身或子孙必须拒绝（否则产生环 ⇒ 树投影死循环，规格 R5）。 */
+int32_t nr_move_category(uint64_t engine, int64_t category_id, int64_t new_parent_id);
+
+/* 列出某作用域下的**在架**书籍 id。
+ * scope_kind: 0 = 全部、1 = 仅未分类、2 = 指定分类（**含子孙**）。
+ * SCOPE_CATEGORY 时 category_id 必填；其余两种忽略。
+ * 子树展开在**核心**完成 —— 界面只做集合成员判断。
+ * out_batch 可为 NULL（此时只做校验）。 */
+int32_t nr_list_books_in_scope(uint64_t engine, int32_t scope_kind, int64_t category_id, nr_id_list *out_batch);
+
+/* 列出书籍 → 分类 映射（只含**在架**书籍）；category_id = -1 表示未分类。
+ * 用途：界面把书架条目按分类过滤 —— 宿主目录给出 sourceIdentity → bookId，
+ * 本入口给出 bookId → categoryId，两者相合即可筛选。
+ * out_batch 可为 NULL（此时只做校验）。 */
+int32_t nr_list_book_categories(uint64_t engine, nr_book_category_batch *out_batch);
 
 /* 16. 取消请求（协作式）。request_id 必须非 0；对长任务可从另一线程调用。 */
 int32_t nr_cancel_request(uint64_t engine, uint64_t request_id);

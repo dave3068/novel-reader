@@ -302,7 +302,8 @@ impl PaginationCache {
             return stale(BoundaryCommitStatus::StaleRequestId);
         }
 
-        if let Err(error) = validate_page_boundary(source, &boundary, request.total_bytes, encoding) {
+        if let Err(error) = validate_page_boundary(source, &boundary, request.total_bytes, encoding)
+        {
             return BoundaryCommitOutcome {
                 status: BoundaryCommitStatus::Rejected,
                 boundary: None,
@@ -543,8 +544,11 @@ mod tests {
 
         let end = 40u64;
         let request_id = cache.begin_request();
-        let outcome =
-            cache.commit_page_boundary(&source, &request(&cache, request_id, 0, end, total), TextEncoding::Utf8);
+        let outcome = cache.commit_page_boundary(
+            &source,
+            &request(&cache, request_id, 0, end, total),
+            TextEncoding::Utf8,
+        );
         assert_eq!(outcome.status, BoundaryCommitStatus::Committed);
         assert_eq!(outcome.error_code, 0);
         assert!(outcome.is_committed());
@@ -569,19 +573,31 @@ mod tests {
         let mut cache = PaginationCache::new(LayoutSignature::default(), 1).expect("建立缓存");
 
         let first = cache.begin_request();
-        let committed = cache.commit_page_boundary(&source, &request(&cache, first, 0, 30, total), TextEncoding::Utf8);
+        let committed = cache.commit_page_boundary(
+            &source,
+            &request(&cache, first, 0, 30, total),
+            TextEncoding::Utf8,
+        );
         assert_eq!(committed.status, BoundaryCommitStatus::Committed);
 
         // 同签名同起点同终点 → 幂等接受，返回同一份边界。
         let second = cache.begin_request();
-        let again = cache.commit_page_boundary(&source, &request(&cache, second, 0, 30, total), TextEncoding::Utf8);
+        let again = cache.commit_page_boundary(
+            &source,
+            &request(&cache, second, 0, 30, total),
+            TextEncoding::Utf8,
+        );
         assert_eq!(again.status, BoundaryCommitStatus::DuplicateIdentical);
         assert_eq!(again.boundary, Some(PageBoundary::new(0, 30)));
         assert_eq!(cache.len(), 1, "幂等提交不得新增记录");
 
         // 同起点不同终点 → 缓存结果不一致，必须拒绝而不是覆盖。
         let third = cache.begin_request();
-        let conflict = cache.commit_page_boundary(&source, &request(&cache, third, 0, 60, total), TextEncoding::Utf8);
+        let conflict = cache.commit_page_boundary(
+            &source,
+            &request(&cache, third, 0, 60, total),
+            TextEncoding::Utf8,
+        );
         assert!(conflict.is_rejected());
         assert_eq!(
             conflict.rejection,
@@ -604,7 +620,11 @@ mod tests {
         let mut cache = PaginationCache::new(LayoutSignature::default(), 1).expect("建立缓存");
 
         let mid_char = cache.begin_request();
-        let illegal = cache.commit_page_boundary(&source, &request(&cache, mid_char, 0, 1, total), TextEncoding::Utf8);
+        let illegal = cache.commit_page_boundary(
+            &source,
+            &request(&cache, mid_char, 0, 1, total),
+            TextEncoding::Utf8,
+        );
         assert!(illegal.is_rejected());
         assert_eq!(
             illegal.rejection,
@@ -613,27 +633,40 @@ mod tests {
         assert_eq!(illegal.error_code, 3);
 
         let empty = cache.begin_request();
-        let zero = cache.commit_page_boundary(&source, &request(&cache, empty, 6, 6, total), TextEncoding::Utf8);
+        let zero = cache.commit_page_boundary(
+            &source,
+            &request(&cache, empty, 6, 6, total),
+            TextEncoding::Utf8,
+        );
         assert_eq!(zero.status, BoundaryCommitStatus::Rejected);
         assert_eq!(zero.rejection, Some(BoundaryRejection::EmptyInterval));
 
         let reversed = cache.begin_request();
-        let backwards =
-            cache.commit_page_boundary(&source, &request(&cache, reversed, 12, 6, total), TextEncoding::Utf8);
+        let backwards = cache.commit_page_boundary(
+            &source,
+            &request(&cache, reversed, 12, 6, total),
+            TextEncoding::Utf8,
+        );
         assert_eq!(
             backwards.rejection,
             Some(BoundaryRejection::ReversedInterval)
         );
 
         let beyond = cache.begin_request();
-        let out =
-            cache.commit_page_boundary(&source, &request(&cache, beyond, 0, total + 1, total), TextEncoding::Utf8);
+        let out = cache.commit_page_boundary(
+            &source,
+            &request(&cache, beyond, 0, total + 1, total),
+            TextEncoding::Utf8,
+        );
         assert_eq!(out.rejection, Some(BoundaryRejection::OutOfRange));
         assert_eq!(out.error_code, 2);
 
         let mismatch = cache.begin_request();
-        let wrong_total =
-            cache.commit_page_boundary(&source, &request(&cache, mismatch, 0, 6, total + 8), TextEncoding::Utf8);
+        let wrong_total = cache.commit_page_boundary(
+            &source,
+            &request(&cache, mismatch, 0, 6, total + 8),
+            TextEncoding::Utf8,
+        );
         assert_eq!(
             wrong_total.rejection.expect("必须带拒绝原因"),
             BoundaryRejection::TotalLengthMismatch
@@ -653,8 +686,11 @@ mod tests {
 
         for (start, end) in [(0u64, 10u64), (10, 20), (20, 30)] {
             let request_id = cache.begin_request();
-            let outcome = cache
-                .commit_page_boundary(&source, &request(&cache, request_id, start, end, total), TextEncoding::Utf8);
+            let outcome = cache.commit_page_boundary(
+                &source,
+                &request(&cache, request_id, start, end, total),
+                TextEncoding::Utf8,
+            );
             assert!(outcome.is_committed(), "{outcome:?}");
         }
         assert_eq!(cache.len(), 3);
@@ -683,8 +719,11 @@ mod tests {
 
         // 世代已递增：携带旧 layout_id 的在途结果必须被丢弃，且不写入任何缓存状态。
         let request_id = cache.begin_request();
-        let committed =
-            cache.commit_page_boundary(&source, &request(&cache, request_id, 0, 10, total), TextEncoding::Utf8);
+        let committed = cache.commit_page_boundary(
+            &source,
+            &request(&cache, request_id, 0, 10, total),
+            TextEncoding::Utf8,
+        );
         assert!(committed.is_committed(), "{committed:?}");
         let mut stale_request = request(&cache, request_id, 40, 50, total);
         stale_request.layout_id = previous_layout_id;
@@ -706,7 +745,11 @@ mod tests {
         let mut cache = PaginationCache::new(LayoutSignature::default(), 1).expect("建立缓存");
         let request_id = cache.begin_request();
         assert!(cache
-            .commit_page_boundary(&source, &request(&cache, request_id, 0, 10, total), TextEncoding::Utf8)
+            .commit_page_boundary(
+                &source,
+                &request(&cache, request_id, 0, 10, total),
+                TextEncoding::Utf8
+            )
             .is_committed());
         let old_layout_id = cache.layout_id();
 
@@ -756,8 +799,11 @@ mod tests {
         for size in sizes {
             let end = start + size;
             let request_id = cache.begin_request();
-            let outcome = cache
-                .commit_page_boundary(&source, &request(&cache, request_id, start, end, total), TextEncoding::Utf8);
+            let outcome = cache.commit_page_boundary(
+                &source,
+                &request(&cache, request_id, start, end, total),
+                TextEncoding::Utf8,
+            );
             assert_eq!(
                 outcome.status,
                 BoundaryCommitStatus::Committed,

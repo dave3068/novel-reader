@@ -349,6 +349,6 @@ mod tests {
         assert_eq!(ReadStats::default().read_calls, 0);
     }
 }
-pub use crate::source::is_boundary;
 pub use crate::encoding::decode_line;
 pub use crate::source::align_to_boundaries;
+pub use crate::source::is_boundary;

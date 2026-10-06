@@ -13,8 +13,8 @@ use reading_index::boundary::{
     check_strict_advance, is_char_boundary_at, is_char_boundary_in_window, validate_interval,
     validate_page_boundary, BoundaryRejection, PageBoundary, PageBoundaryChain,
 };
-use reading_source::{FileTextSource, SourceError, TextSource};
 use reading_source::TextEncoding;
+use reading_source::{FileTextSource, SourceError, TextSource};
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -55,7 +55,8 @@ fn boundary_char_probe_matches_str_facts_byte_for_byte() {
 
     for offset in 0..=total {
         let expected = text.is_char_boundary(offset as usize);
-        let actual = is_char_boundary_at(&source, 0, offset, TextEncoding::Utf8).expect("探测必须成功");
+        let actual =
+            is_char_boundary_at(&source, 0, offset, TextEncoding::Utf8).expect("探测必须成功");
         assert_eq!(
             actual, expected,
             "偏移 {offset} 的字符边界判定必须与 str::is_char_boundary 一致"
@@ -98,7 +99,13 @@ fn boundary_validation_rejects_mid_char_empty_and_out_of_range() {
     let total = source.len();
 
     // 合法：覆盖全文。
-    validate_page_boundary(&source, &PageBoundary::new(0, total), total, TextEncoding::Utf8).expect("全文边界合法");
+    validate_page_boundary(
+        &source,
+        &PageBoundary::new(0, total),
+        total,
+        TextEncoding::Utf8,
+    )
+    .expect("全文边界合法");
 
     // 非法：end 落在字符内部（多字节字符的每个内部偏移都必须被拒）。
     let mut rejected_internal = 0usize;
@@ -106,8 +113,13 @@ fn boundary_validation_rejects_mid_char_empty_and_out_of_range() {
         if text.is_char_boundary(offset as usize) {
             continue;
         }
-        let error = validate_page_boundary(&source, &PageBoundary::new(0, offset), total, TextEncoding::Utf8)
-            .expect_err("字符中间的 end 必须被拒");
+        let error = validate_page_boundary(
+            &source,
+            &PageBoundary::new(0, offset),
+            total,
+            TextEncoding::Utf8,
+        )
+        .expect_err("字符中间的 end 必须被拒");
         assert_eq!(error.rejection(), BoundaryRejection::IllegalCharBoundary);
         assert_eq!(error.code(), 3);
         rejected_internal += 1;
@@ -125,12 +137,22 @@ fn boundary_validation_rejects_mid_char_empty_and_out_of_range() {
     assert_eq!(reversed.rejection(), BoundaryRejection::ReversedInterval);
 
     // 非法：越界与长度不一致。
-    let beyond = validate_page_boundary(&source, &PageBoundary::new(0, total + 1), total, TextEncoding::Utf8)
-        .expect_err("越界必须被拒");
+    let beyond = validate_page_boundary(
+        &source,
+        &PageBoundary::new(0, total + 1),
+        total,
+        TextEncoding::Utf8,
+    )
+    .expect_err("越界必须被拒");
     assert_eq!(beyond.rejection(), BoundaryRejection::OutOfRange);
     assert_eq!(beyond.code(), 2);
-    let mismatch = validate_page_boundary(&source, &PageBoundary::new(0, 12), total + 5, TextEncoding::Utf8)
-        .expect_err("长度不一致必须被拒");
+    let mismatch = validate_page_boundary(
+        &source,
+        &PageBoundary::new(0, 12),
+        total + 5,
+        TextEncoding::Utf8,
+    )
+    .expect_err("长度不一致必须被拒");
     assert_eq!(mismatch.rejection(), BoundaryRejection::TotalLengthMismatch);
 
     // 严格前进：空隙/重叠/停滞分别有独立原因。
@@ -166,7 +188,8 @@ fn boundary_chain_partitions_text_in_both_directions() {
             end += 1;
         }
         let boundary = PageBoundary::new(start as u64, end as u64);
-        validate_page_boundary(&source, &boundary, total, TextEncoding::Utf8).expect("测量结果必须合法");
+        validate_page_boundary(&source, &boundary, total, TextEncoding::Utf8)
+            .expect("测量结果必须合法");
         chain.push(boundary).expect("页面必须严格前进");
         start = end;
     }

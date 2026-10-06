@@ -284,7 +284,273 @@ pub struct NrChapterBatch {
     pub bytes: NrBuffer,
 }
 
-/// 新增书签（`nr_bookmark_input`）。
+/// 分类树一行（`nr_category`；V1.1 分类批量，规格 P5 §3.1）。
+///
+/// C 对齐布局（`u32,u32,u32,u32,i64,i64,i64,i64`）：
+/// `0,4,8,12,16,24,32,40` ⇒ 48 字节。
+///
+/// `parent_id` 用哨兵 `-1` 表示根（存储层是 `NULL`）—— ABI 不传 `Option`。
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct NrCategory {
+    /// 分类 id。
+    pub id: i64,
+    /// 父分类 id；`-1` = 根下。
+    pub parent_id: i64,
+    /// 直属书籍数。
+    pub direct_book_count: i64,
+    /// 含子孙的合计书籍数。
+    pub total_book_count: i64,
+    /// 层级深度（根下为 1）。
+    pub depth: u32,
+    /// 名称在批次字节池中的偏移。
+    pub name_offset: u32,
+    /// 名称字节长度（UTF-8）。
+    pub name_len: u32,
+    /// 保留字段，必须为 0。
+    pub reserved0: u32,
+}
+
+/// 分类批次（`nr_category_batch`）：固定长度数组 + 尾随 UTF-8 名称字节。
+///
+/// 与 [`NrChapterBatch`] 同构，故 Kotlin 侧可复用同一套缓冲区归还流程。
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NrCategoryBatch {
+    /// 本次返回的分类条目数。
+    pub count: u32,
+    /// 保留字段，必须为 0。
+    pub reserved0: u32,
+    /// 字节缓冲区（`nr_category[count]` + 名称字节；Rust 分配，调用方归还）。
+    pub bytes: NrBuffer,
+}
+
+/// 阅读历史一行（`nr_history`；V1.1 阅读历史批量，规格 P5 §3.2）。
+///
+/// C 对齐布局（`i64×6 + u32×6`）：`0,8,16,24,32,40,48,52,56,60,64,68` ⇒ 72 字节。
+///
+/// 标题与文件名都在批次字节池里（`title_offset` / `file_offset`）；
+/// `file_*` 只含来源**末段文件名**（不暴露完整定位符）。
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct NrHistory {
+    /// 流水 id。
+    pub id: i64,
+    /// 书籍 id。
+    pub book_id: i64,
+    /// 打开时间（Unix 秒）。
+    pub opened_at: i64,
+    /// 打开时的章节序号。
+    pub chapter_index: i64,
+    /// 打开时的字节偏移。
+    pub byte_offset: i64,
+    /// 进入方式码（0=书架打开 1=阅读页打开 2=进度恢复 3=书签跳转 4=章节跳转）。
+    pub entry_kind: i64,
+    /// 书名在字节池中的偏移 / 长度（UTF-8）。
+    pub title_offset: u32,
+    pub title_len: u32,
+    /// 文件名在字节池中的偏移 / 长度（UTF-8）。
+    pub file_offset: u32,
+    pub file_len: u32,
+    /// **已由核心格式化**的时间标签在字节池中的偏移 / 长度（UTF-8；规格 §3.6）。
+    ///
+    /// 界面**不得**自行格式化 —— 口径由 `reading_storage::history_view::time_label`
+    /// 唯一决定（今天 `HH:MM` / 本年 `MM-DD HH:MM` / 跨年 `yyyy-MM-dd HH:MM`）。
+    pub label_offset: u32,
+    pub label_len: u32,
+}
+
+/// 阅读历史批次（`nr_history_batch`）：固定长度数组 + 尾随 UTF-8 字节。
+///
+/// 与 [`NrCategoryBatch`] 同构，Kotlin 侧复用同一套缓冲区归还流程。
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NrHistoryBatch {
+    /// 本次返回的条目数。
+    pub count: u32,
+    /// 全部流水条数（**不受** `limit` 影响；界面显示「共 N 条」用）。
+    pub total: u32,
+    /// 字节缓冲区（`nr_history[count]` + 标题/文件名字节；Rust 分配，调用方归还）。
+    pub bytes: NrBuffer,
+}
+
+/// 自定义配色的基色（`nr_theme_base`；V1.1 配色，规格 P5 §3.3）。
+///
+/// **只含 4 个基色与 enabled** —— 40 个语义令牌**不落库**（规格 R11），
+/// 由核心按基色确定性派生（桌面与 Android 同一函数）。
+///
+/// 四项各 12 字节（`#RRGGBB` + NUL）；**全 0 = 该项未设置**（沿用内置值）。
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct NrThemeBase {
+    /// 保留字段，必须为 0（对齐既有结构的首字段惯例）。
+    pub struct_size: u32,
+    /// 是否启用自定义配色（0 = 关闭，走内置明/暗；1 = 启用）。
+    pub enabled: u32,
+    /// 正文基色 `#RRGGBB` + NUL；全 0 = 未设置。
+    pub foreground: [u8; 12],
+    /// 背景基色（同上口径）。
+    pub background: [u8; 12],
+    /// 主色基色（同上口径）。
+    pub primary: [u8; 12],
+    /// 强调色基色（同上口径）。
+    pub accent: [u8; 12],
+}
+
+impl Default for NrThemeBase {
+    fn default() -> Self {
+        Self {
+            struct_size: std::mem::size_of::<NrThemeBase>() as u32,
+            enabled: 0,
+            foreground: [0; 12],
+            background: [0; 12],
+            primary: [0; 12],
+            accent: [0; 12],
+        }
+    }
+}
+
+/// 对比度读数（`nr_theme_contrast_result`；V1.1）。
+///
+/// 比值用**整数 × 100**（跨语言不传浮点；Kotlin 侧除以 100 显示为 `x.xx : 1`）。
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NrThemeContrastResult {
+    pub struct_size: u32,
+    /// 对比度 × 100（如 `4.54:1` ⇒ 454）。
+    pub ratio_x100: u32,
+    /// 是否达到可读性建议（1 = 达标；0 = 不足，**已保留用户基色**）。
+    pub passes: u32,
+    /// 较差的一侧是否为暗色（1 = 暗色更差）。
+    pub worst_in_dark: u32,
+    /// 保留字段，必须为 0。
+    pub reserved0: u32,
+    /// 保留字段，必须为 0。
+    ///
+    /// 存在的原因：ABI 契约要求**每个结构体按 8 字节对齐**（`abi_layout` 逐项断言），
+    /// 5 × u32 = 20 不满足，故补到 24。
+    pub reserved1: u32,
+}
+
+/// 全局阅读背景图（`nr_background`；V1.1 背景，规格 P5 §3.4）。
+///
+/// **只回相对文件名**，不回绝对路径（R15）—— 调用方用自己的 app-private
+/// 前缀（Android）或数据目录（桌面）拼接。
+///
+/// C 对齐布局（i64×3 + i64 + u8 + u32×3）：`0,8,16,24,32,40,44` ⇒ 48 字节（8 对齐）。
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct NrBackground {
+    /// 图片字节数（0 = 未设置）。
+    pub file_size: i64,
+    /// 遮罩强度（千分比 0..=1000）。
+    pub scrim_permille: i64,
+    /// 缩放口径（0=覆盖铺满 1=原始尺寸平铺 2=原始尺寸居中）。
+    pub fit_mode: i64,
+    /// 保留字段，必须为 0。
+    pub reserved0: i64,
+    /// 遮罩 alpha（0–255；已由核心从千分比换算，界面不再换算）。
+    pub scrim_alpha: u8,
+    /// 保留字段，必须为 0。
+    pub reserved1: u8,
+    pub reserved2: u16,
+    /// 数据文件名（核心生成，形如 `bg-<unix>-<pid>.<ext>`）；
+    /// **长度 0 = 未设置**（不进字节池，避免未设置时也要归还缓冲区）。
+    pub file_name_len: u32,
+    /// 文件名在批次字节池中的偏移（相对整块缓冲区）。
+    pub file_name_offset: u32,
+    /// 保留字段，必须为 0。
+    pub reserved3: u32,
+}
+
+/// 背景批次（`nr_background_batch`）：定长头 + 文件名字节。
+///
+/// 与其它批次同构，Kotlin 侧复用同一套缓冲区归还流程。
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NrBackgroundBatch {
+    /// 本批条目数（恒为 0 或 1；保留字段口径与其它批次一致）。
+    pub count: u32,
+    /// 保留字段，必须为 0。
+    pub reserved0: u32,
+    /// 字节缓冲区（`nr_background[1]` + 文件名字节；Rust 分配，调用方归还）。
+    pub bytes: NrBuffer,
+}
+
+/// 移动 / 删除目标的一行（`nr_category_choice`；V1.1）。
+///
+/// C 对齐布局：`i64 + i32 + u32 + i64 + u32 × 4` ⇒ **40 字节**（8 字节对齐）。
+///
+/// `id = -1` 表示「未分类」。`selectable = 0` 表示自身或子孙（选了会成环）——
+/// 刻意**不隐藏**而只标记，便于向用户解释「为什么不能选」。
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NrCategoryChoice {
+    pub id: i64,
+    pub depth: i32,
+    /// 0 = 不可选（自身 / 子孙）；1 = 可选。
+    pub selectable: u32,
+    /// 含子孙的在架书籍数（未分类行 = 未分类书籍数）。
+    pub total_count: i64,
+    pub name_offset: u32,
+    pub name_len: u32,
+    pub reserved0: u32,
+    pub reserved1: u32,
+}
+
+/// 目标选项批次（`nr_category_choice_batch`）。
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NrCategoryChoiceBatch {
+    pub count: u32,
+    pub reserved0: u32,
+    pub bytes: NrBuffer,
+}
+
+/// 通用 i64 列表（`nr_id_list`；V1.1）。
+///
+/// C 对齐布局（u32 × 2 + 24 字节 `nr_buffer`）⇒ **32 字节**。
+/// 字节池是 `count` 个小端 `i64`（`bytes.len == count * 8`）。
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NrIdList {
+    /// 元素个数。
+    pub count: u32,
+    /// 保留字段，必须为 0。
+    pub reserved0: u32,
+    /// 字节缓冲区（`int64_t[count]`；Rust 分配，调用方归还）。
+    pub bytes: NrBuffer,
+}
+
+/// 书籍 → 分类 映射的一行（`nr_book_category`；V1.1）。
+///
+/// C 对齐布局（i64 × 2）：`0,8` ⇒ **16 字节**（8 字节对齐）。
+///
+/// `category_id = -1` 表示**未分类**（ABI 的 None 哨兵口径）。
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct NrBookCategory {
+    pub book_id: i64,
+    /// 分类 id；`-1` = 未分类。
+    pub category_id: i64,
+}
+
+/// 书籍分类批次（`nr_book_category_batch`）。
+///
+/// 行内**无字符串**，故字节池就是行本身（`bytes.len == count * 16`）；
+/// 仍沿用「批次头 + 字节池」的统一形状，Kotlin 侧复用同一套归还流程。
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NrBookCategoryBatch {
+    /// 本批条目数。
+    pub count: u32,
+    /// 保留字段，必须为 0。
+    pub reserved0: u32,
+    /// 字节缓冲区（`nr_book_category[count]`；Rust 分配，调用方归还）。
+    pub bytes: NrBuffer,
+}
+
+/// 书签输入（`nr_bookmark_input`）。
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct NrBookmarkInput {
@@ -530,6 +796,141 @@ pub const ABI_STRUCTS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
+        "nr_category",
+        &[
+            ("id", "int64_t"),
+            ("parent_id", "int64_t"),
+            ("direct_book_count", "int64_t"),
+            ("total_book_count", "int64_t"),
+            ("depth", "uint32_t"),
+            ("name_offset", "uint32_t"),
+            ("name_len", "uint32_t"),
+            ("reserved0", "uint32_t"),
+        ],
+    ),
+    (
+        "nr_category_batch",
+        &[
+            ("count", "uint32_t"),
+            ("reserved0", "uint32_t"),
+            ("bytes", "nr_buffer"),
+        ],
+    ),
+    (
+        "nr_history",
+        &[
+            ("id", "int64_t"),
+            ("book_id", "int64_t"),
+            ("opened_at", "int64_t"),
+            ("chapter_index", "int64_t"),
+            ("byte_offset", "int64_t"),
+            ("entry_kind", "int64_t"),
+            ("title_offset", "uint32_t"),
+            ("title_len", "uint32_t"),
+            ("file_offset", "uint32_t"),
+            ("file_len", "uint32_t"),
+            ("label_offset", "uint32_t"),
+            ("label_len", "uint32_t"),
+        ],
+    ),
+    (
+        "nr_history_batch",
+        &[
+            ("count", "uint32_t"),
+            ("total", "uint32_t"),
+            ("bytes", "nr_buffer"),
+        ],
+    ),
+    (
+        "nr_theme_base",
+        &[
+            ("struct_size", "uint32_t"),
+            ("enabled", "uint32_t"),
+            ("foreground[12]", "uint8_t"),
+            ("background[12]", "uint8_t"),
+            ("primary[12]", "uint8_t"),
+            ("accent[12]", "uint8_t"),
+        ],
+    ),
+    (
+        "nr_theme_contrast_result",
+        &[
+            ("struct_size", "uint32_t"),
+            ("ratio_x100", "uint32_t"),
+            ("passes", "uint32_t"),
+            ("worst_in_dark", "uint32_t"),
+            ("reserved0", "uint32_t"),
+            ("reserved1", "uint32_t"),
+        ],
+    ),
+    (
+        "nr_background",
+        &[
+            ("file_size", "int64_t"),
+            ("scrim_permille", "int64_t"),
+            ("fit_mode", "int64_t"),
+            ("reserved0", "int64_t"),
+            ("scrim_alpha", "uint8_t"),
+            ("reserved1", "uint8_t"),
+            ("reserved2", "uint16_t"),
+            ("file_name_len", "uint32_t"),
+            ("file_name_offset", "uint32_t"),
+            ("reserved3", "uint32_t"),
+        ],
+    ),
+    (
+        "nr_background_batch",
+        &[
+            ("count", "uint32_t"),
+            ("reserved0", "uint32_t"),
+            ("bytes", "nr_buffer"),
+        ],
+    ),
+    (
+        "nr_category_choice",
+        &[
+            ("id", "int64_t"),
+            ("depth", "int32_t"),
+            ("selectable", "uint32_t"),
+            ("total_count", "int64_t"),
+            ("name_offset", "uint32_t"),
+            ("name_len", "uint32_t"),
+            ("reserved0", "uint32_t"),
+            ("reserved1", "uint32_t"),
+        ],
+    ),
+    (
+        "nr_category_choice_batch",
+        &[
+            ("count", "uint32_t"),
+            ("reserved0", "uint32_t"),
+            ("bytes", "nr_buffer"),
+        ],
+    ),
+    (
+        "nr_id_list",
+        &[
+            ("count", "uint32_t"),
+            ("reserved0", "uint32_t"),
+            ("bytes", "nr_buffer"),
+        ],
+    ),
+    (
+        "nr_book_category",
+        &[
+            ("book_id", "int64_t"),
+            ("category_id", "int64_t"),
+        ],
+    ),
+    (
+        "nr_book_category_batch",
+        &[
+            ("count", "uint32_t"),
+            ("reserved0", "uint32_t"),
+            ("bytes", "nr_buffer"),
+        ],
+    ),
+    (
         "nr_bookmark_input",
         &[
             ("struct_size", "uint32_t"),
@@ -604,9 +1005,40 @@ pub fn struct_sizes() -> Vec<(&'static str, usize)> {
         ),
         ("nr_chapter", std::mem::size_of::<NrChapter>()),
         ("nr_chapter_batch", std::mem::size_of::<NrChapterBatch>()),
+        ("nr_category", std::mem::size_of::<NrCategory>()),
+        ("nr_category_batch", std::mem::size_of::<NrCategoryBatch>()),
+        ("nr_history", std::mem::size_of::<NrHistory>()),
+        ("nr_history_batch", std::mem::size_of::<NrHistoryBatch>()),
+        ("nr_theme_base", std::mem::size_of::<NrThemeBase>()),
+        (
+            "nr_theme_contrast_result",
+            std::mem::size_of::<NrThemeContrastResult>(),
+        ),
+        ("nr_background", std::mem::size_of::<NrBackground>()),
+        (
+            "nr_background_batch",
+            std::mem::size_of::<NrBackgroundBatch>(),
+        ),
+        (
+            "nr_category_choice",
+            std::mem::size_of::<NrCategoryChoice>(),
+        ),
+        (
+            "nr_category_choice_batch",
+            std::mem::size_of::<NrCategoryChoiceBatch>(),
+        ),
+        ("nr_id_list", std::mem::size_of::<NrIdList>()),
+        ("nr_book_category", std::mem::size_of::<NrBookCategory>()),
+        (
+            "nr_book_category_batch",
+            std::mem::size_of::<NrBookCategoryBatch>(),
+        ),
         ("nr_bookmark_input", std::mem::size_of::<NrBookmarkInput>()),
-        ("nr_set_encoding_result", std::mem::size_of::<NrSetEncodingResult>()),
-    ("nr_rebuild_result", std::mem::size_of::<NrRebuildResult>()),
+        (
+            "nr_set_encoding_result",
+            std::mem::size_of::<NrSetEncodingResult>(),
+        ),
+        ("nr_rebuild_result", std::mem::size_of::<NrRebuildResult>()),
         ("nr_error_info", std::mem::size_of::<NrErrorInfo>()),
     ]
 }
@@ -622,7 +1054,10 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), total, "结构体清单不得重复");
-        assert_eq!(total, 17, "头文件与 Rust 必须同时维护 17 个结构体（16 + nr_set_encoding_result）");
+        assert_eq!(
+            total, 30,
+            "头文件与 Rust 必须同时维护 17 个结构体（16 + nr_set_encoding_result）"
+        );
         for (name, fields) in ABI_STRUCTS {
             assert!(name.starts_with("nr_"), "{name} 必须使用 nr_ 前缀");
             let mut field_names: Vec<&str> = fields.iter().map(|(field, _)| *field).collect();
