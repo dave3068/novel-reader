@@ -328,7 +328,7 @@ data class CategoryRowView(
     val depth: Int,
     /** 直接归属本分类的在架书籍数（核心给）。 */
     val directCount: Long,
-    /** 含子孙的在架书籍数（核心给）—— 选中本行时可见的书籍口径与它一致。 */
+    /** 含子孙的在架书籍数（核心给）—— 徽标信息；选中后的列表口径为**直属**（见 [CategoryState]）。 */
     val totalCount: Long,
     val hasChildren: Boolean,
     val expanded: Boolean,
@@ -344,13 +344,21 @@ data class CategoryRowView(
 }
 
 /**
- * 书架分类侧栏（V1.1）。
+ * 书架分类（V1.1；2026-10-09 起为「文件管理器式」**直属口径**）。
  *
- * [selectedId]：`null` = 根「全部书籍」；`-1` = 仅未分类；`> 0` = 某个分类
- * （可见书籍**含子孙**，与核心 [`NrScopeKind`] 的口径一致）。
+ * [selectedId]：`null` = 「全部书籍」（不过滤；宽屏侧栏专用）；`-1` = 根层
+ * （窄屏下钻起点：目录 = 顶层分类、书籍 = 未分类）；`> 0` = 某个分类
+ * （可见书籍 = **直属**该分类的书）。
+ *
+ * 直属归属与可见集合都来自核心映射 [bookCategories]（`nr_list_book_categories`）
+ * —— 界面不遍历父子链、不自行派生分类语义。
  */
 data class CategoryState(
     val rows: List<CategoryRowView> = emptyList(),
+    /** 完整分类节点（核心给；下钻层级、路径与移动目标都由它装配）。 */
+    val nodes: List<CategoryTreeAssembly.Node> = emptyList(),
+    /** 书籍 → 分类映射（核心 `nr_list_book_categories`；`-1` = 未分类）。 */
+    val bookCategories: Map<Long, Long> = emptyMap(),
     val selectedId: Long? = null,
     /** 已折叠的分类 id（只影响**下发哪些行**，不影响核心的任何计算）。 */
     val collapsed: Set<Long> = emptySet(),
@@ -437,8 +445,64 @@ object CategoryTreeAssembly {
         return out
     }
 
+    /**
+     * 下钻：某位置的**直属子目录**行（保持核心给出的兄弟顺序）。
+     *
+     * [location]：`null` / [UNCATEGORIZED] = 根层（无真实父节点的节点，含孤儿容错 ——
+     * 与 [flatten] 同一规则）；其他 = 该分类的直属子分类。空列表 = 没有子目录。
+     */
+    fun levelChildren(nodes: List<Node>, location: Long?): List<CategoryRowView> {
+        if (nodes.isEmpty()) return emptyList()
+        val byParent = nodes.groupBy { node ->
+            if (nodes.any { it.id == node.parentId }) node.parentId else ROOT
+        }
+        val atRoot = location == null || location == UNCATEGORIZED
+        val children = if (atRoot) byParent[ROOT] ?: emptyList() else byParent[location] ?: emptyList()
+        return children.map { node ->
+            CategoryRowView(
+                id = node.id,
+                name = node.name,
+                depth = node.depth,
+                directCount = node.directCount,
+                totalCount = node.totalCount,
+                hasChildren = byParent[node.id]?.isNotEmpty() == true,
+                expanded = true,
+                selected = false,
+            )
+        }
+    }
+
+    /**
+     * 从根到 [id] 的节点路径（含 [id] 自身；[id] 不存在时为空列表）。
+     *
+     * 面包屑与「返回上一级」文案都由它派生。经父链上溯；核心已防环，这里仍有
+     * 防御性上限（同节点不重复入路径、最多 [MAX_PATH_DEPTH] 层）。
+     */
+    fun pathTo(nodes: List<Node>, id: Long): List<Node> {
+        if (nodes.isEmpty()) return emptyList()
+        val byId = nodes.associateBy { it.id }
+        val path = ArrayDeque<Node>()
+        val seen = HashSet<Long>()
+        var current = byId[id] ?: return emptyList()
+        while (seen.add(current.id)) {
+            path.addFirst(current)
+            if (path.size >= MAX_PATH_DEPTH) break
+            current = byId[current.parentId] ?: break
+        }
+        return path.toList()
+    }
+
+    /** [id] 的**真实**父节点 id（没有 / 父节点缺失 ⇒ `null`，调用方映射为根层）。 */
+    fun parentOf(nodes: List<Node>, id: Long): Long? {
+        val node = nodes.firstOrNull { it.id == id } ?: return null
+        return if (nodes.any { it.id == node.parentId }) node.parentId else null
+    }
+
     /** 父链起点（`parentId` 无处可挂时归到这里）。 */
     private const val ROOT = Long.MIN_VALUE
+
+    /** 路径深度上限（防御性；核心已保证无环）。 */
+    private const val MAX_PATH_DEPTH = 64
 }
 /**
  * 阅读历史的一行（V1.1）。

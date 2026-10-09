@@ -34,7 +34,7 @@ android {
         // 构建标记：真机/APK 上一眼确认装的是哪一次构建（子规格 A-T7 / 检查项 C8）。
         // AN6 起由 `scripts/build-android-apk.sh` 产出 dist/ 分发包，标记值同步换代，
         // 使 `scripts/verify-android-apk.py` 能证明「本次构建的代码确实进了 APK」。
-        buildConfigField("String", "BUILD_MARKER", "\"v1-v11-keep-awake-2026-10-09\"")
+        buildConfigField("String", "BUILD_MARKER", "\"v1-v11-drill-nav-2026-10-09\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
             abiFilters += listOf(nrAbi)

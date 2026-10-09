@@ -154,7 +154,8 @@ object ReaderTestTags {
     /** 某个分类的「⋯」操作菜单入口。 */
     fun sidebarMenu(id: Long): String = "shelf-category-menu-$id"
 
-    /** 操作菜单里的三项。 */
+    /** 操作菜单里的四项。 */
+    const val SIDEBAR_MENU_CREATE = "shelf-category-menu-create"
     const val SIDEBAR_MENU_RENAME = "shelf-category-menu-rename"
     const val SIDEBAR_MENU_MOVE = "shelf-category-menu-move"
     const val SIDEBAR_MENU_DELETE = "shelf-category-menu-delete"
@@ -170,4 +171,41 @@ object ReaderTestTags {
 
     /** 确认按钮。 */
     const val SIDEBAR_CONFIRM = "shelf-category-confirm"
+
+    // ---- 书架分类下钻（窄屏；2026-10-09 文件管理器式）----
+
+    /** 下钻内容区根。 */
+    const val DRILL = "shelf-drill"
+
+    /** 「返回上一级」行。 */
+    const val DRILL_BACK = "shelf-drill-back"
+
+    /** 下钻列表里的某个目录行。 */
+    fun drillDir(id: Long): String = "shelf-drill-dir-$id"
+
+    /** 某个目录行的「⋯」菜单入口。 */
+    fun drillDirMenu(id: Long): String = "shelf-drill-dir-menu-$id"
+
+    /** 窄屏底部的「新建分类」（建在当前目录）。 */
+    const val DRILL_CREATE = "shelf-drill-create"
+
+    /** 窄屏下钻的空层提示。 */
+    const val DRILL_EMPTY_HINT = "shelf-drill-empty-hint"
+
+    // ---- 书籍操作（移动到… / 移除；两布局共用）----
+
+    /** 书籍行「⋯」菜单入口（来源标识唯一）。 */
+    fun shelfBookMenu(sourceIdentity: String): String = "shelf-book-menu-$sourceIdentity"
+
+    /** 菜单里的「移动到…」。 */
+    const val BOOK_MENU_MOVE = "shelf-book-menu-move"
+
+    /** 书籍移动目标对话框。 */
+    const val BOOK_MOVE_DIALOG = "shelf-book-move-dialog"
+
+    /** 某个移动目标行（`-1` = 根下/未分类）。 */
+    fun bookMoveTarget(id: Long): String = "shelf-book-move-target-$id"
+
+    /** 移动目标对话框确认。 */
+    const val BOOK_MOVE_CONFIRM = "shelf-book-move-confirm"
 }
