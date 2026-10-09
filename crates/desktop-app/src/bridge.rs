@@ -209,6 +209,7 @@ mod tests {
                     status_text: "书架已加载".to_string(),
                     categories: Vec::new(),
                     filtered_count: 1,
+                    scope_label: String::new(),
                 },
             }),
         );

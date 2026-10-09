@@ -2471,9 +2471,10 @@ fn move_targets_include_uncategorized_first_with_its_name() {
     let engine = create_engine();
     let targets = read_move_targets(engine, -1);
     assert_eq!(targets.first().map(|(id, ..)| *id), Some(-1i64));
+    // 分类移动的首行 = 「移回根下」（`parent_id = NULL`）；分类无「未分类」概念。
     assert_eq!(
         targets.first().map(|(_, _, name)| name.as_str()),
-        Some("未分类")
+        Some("移到根下（全部书籍）")
     );
     assert!(
         targets.first().map(|(_, ok, _)| *ok).unwrap_or(false),

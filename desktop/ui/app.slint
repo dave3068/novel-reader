@@ -236,6 +236,8 @@ export global UiMetrics {
     // 分类侧栏（V1.1；数值由 Rust 的 layout.rs 注入）
     in property <length> sidebar-width: 0px;
     in property <length> sidebar-head-height: 0px;
+    /// 侧栏底部说明行高（C1：底部说明行 28）。
+    in property <length> sidebar-hint-height: 0px;
     in property <length> sidebar-row-height: 0px;
     in property <length> sidebar-indent: 0px;
     in property <length> tree-arrow-size: 0px;
@@ -288,6 +290,7 @@ export global Skin {
     in property <color> background: #00000000;
     in property <color> layer-01: #00000000;
     in property <color> layer-02: #00000000;
+    in property <color> row-hover: #00000000;  // C2：行 hover 底色（g10）
     in property <color> field-01: #00000000;
     in property <color> border-subtle: #00000000;
     in property <color> border-strong: #00000000;
@@ -353,6 +356,9 @@ export global Icons {
     out property <string> toolbar-collapse: "M 2 11 L 8 6 L 14 11";
     out property <string> collapse: "M 4 10 L 8 6 L 12 10";
     out property <string> close: "M 4 4 L 12 12 M 12 4 L 4 12";
+    // 「新建分类」（侧栏头）。设计稿 C1 用「＋」；此前误用 `info`（圆形 i），
+    // 语义不符（一个信息图标却执行新建），实测截图里被误读为「…」按钮。
+    out property <string> plus: "M 8 3 V 13 M 3 8 H 13";
     out property <string> search: "M 7 2 A 5 5 0 1 0 7 12 A 5 5 0 1 0 7 2 M 10.6 10.6 L 14 14";
     out property <string> moon: "M 11.6 2.4 A 6 6 0 1 0 13.4 11.6 A 7 7 0 0 1 11.6 2.4 Z";
     out property <string> sun: "M 8 4.5 A 3.5 3.5 0 1 0 8 11.5 A 3.5 3.5 0 1 0 8 4.5 M 8 1 V 2.5 M 8 13.5 V 15 M 1 8 H 2.5 M 13.5 8 H 15 M 3 3 L 4 4 M 12 12 L 13 13 M 13 3 L 12 4 M 4 12 L 3 13";
@@ -524,6 +530,12 @@ component IconButton inherits Rectangle {
     // 悬停变化时上报提示：文本（空串 = 收回）/ 锚点 x / 期望方位（1=下 0=上）。
     callback tip-request(string, length, int);
     in property <length> button-size: root.compact ? UiMetrics.icon-button-compact-size : UiMetrics.icon-button-size;
+    /// 自身悬停态（只读）。
+    ///
+    /// 供「悬停浮出」类交互**合并判定**：若显隐只看**行**的 hover，指针一移到按钮上，
+    /// 顶层元素变成按钮本身 ⇒ 行的 hover 变假 ⇒ 按钮被移除 ⇒ 指针又落到行上 ⇒ 按钮重现
+    /// ⇒ **高频闪烁且点不中**（实测：按下瞬间按钮正好消失）。
+    out property <bool> hovered: area.has-hover;
     callback activated();
 
     width: root.button-size;
@@ -806,7 +818,10 @@ component RadioItem inherits Rectangle {
     callback selected();
 
     height: UiMetrics.space-24;
-    background: transparent;
+    // 设计稿 C5：当前目标 = **primary-10 底 + 对勾**。
+    // ⚠️ 早前只把圆圈边框从 1px 加粗到 4px —— 差异太细微，用户看不出选中变化
+    // （实测反馈「无法选中其它项」）。现按设计补底纹与对勾。
+    background: root.checked ? Skin.primary-soft : transparent;
 
     Rectangle {
         x: 0;
@@ -818,11 +833,21 @@ component RadioItem inherits Rectangle {
         border-width: root.checked ? UiMetrics.space-4 : UiMetrics.hairline;
         border-color: root.checked ? Skin.primary : (root.enabled ? Skin.control-track : Skin.disabled-border);
     }
+    // 选中对勾（设计稿 C5 明确要求）。
+    if root.checked : Icon {
+        x: parent.width - UiMetrics.space-24;
+        y: (parent.height - UiMetrics.icon-size) / 2;
+        width: UiMetrics.icon-size;
+        height: UiMetrics.icon-size;
+        shape: Icons.check;
+        size: UiMetrics.icon-size;
+        color: Skin.primary;
+    }
     Text {
         text: root.caption;
         x: UiMetrics.radio-size + UiMetrics.space-8;
         y: 0;
-        width: parent.width - UiMetrics.radio-size - UiMetrics.space-8;
+        width: parent.width - UiMetrics.radio-size - UiMetrics.space-8 - UiMetrics.space-24;
         height: parent.height;
         font-size: UiMetrics.ui-font-size;
         color: root.enabled ? Skin.text-primary : Skin.disabled-text;
@@ -1502,6 +1527,16 @@ component RowMenuStrip inherits Rectangle {
                         variant: 1;
                         padding-x: root.dense ? UiMetrics.space-8 : UiMetrics.space-16;
                         compact: true;
+                        caption: "移动到分类…";
+                        activated => {
+                            // 设计稿 C5：与分类行「…」调同一浮层（标题与说明不同）。
+                            root.picked("move");
+                        }
+                    }
+                    TextButton {
+                        variant: 1;
+                        padding-x: root.dense ? UiMetrics.space-8 : UiMetrics.space-16;
+                        compact: true;
                         caption: "重命名";
                         activated => {
                             root.picked("rename");
@@ -1560,7 +1595,11 @@ component CategoryRowView inherits Rectangle {
     callback row-menu(string);
 
     height: UiMetrics.sidebar-row-height;
-    background: root.selected ? Skin.primary-soft : Skin.field-01;
+    // C2 行状态：默认 field-01 / **hover（g10 底）** / 选中 primary-soft。
+    // hover 用独立令牌 `row-hover`（见 layout.rs 注释：复用 layer-01/02 在某一主题下不可见）。
+    background: row-hit.has-hover
+        ? (root.selected ? Skin.primary-soft : Skin.row-hover)
+        : (root.selected ? Skin.primary-soft : Skin.field-01);
 
     // 选中态左侧 2 像素 主色条（与列表选中同口径）。
     if root.selected : Rectangle {
@@ -1595,9 +1634,22 @@ component CategoryRowView inherits Rectangle {
         }
     }
 
-    // 分类名（缩进后）。
+    // 行图标（C1：「每项前有文件夹/书籍图标」，选中时 primary-70）。
+    // 「全部书籍」用 book，其余（未分类 / 真实分类）用 folder。
+    Icon {
+        x: UiMetrics.space-8 + UiMetrics.tree-arrow-size + root.row-depth * UiMetrics.sidebar-indent;
+        y: (parent.height - UiMetrics.icon-size) / 2;
+        width: UiMetrics.icon-size;
+        height: UiMetrics.icon-size;
+        shape: root.row-kind == 0 ? Icons.book : Icons.folder;
+        size: UiMetrics.icon-size;
+        color: root.selected ? Skin.primary-strong : Skin.text-secondary;
+    }
+
+    // 分类名（缩进后；让出图标位）。
     Text {
-        x: UiMetrics.space-8 + UiMetrics.tree-arrow-size + UiMetrics.space-8
+        x: UiMetrics.space-8 + UiMetrics.tree-arrow-size + UiMetrics.icon-size
+            + UiMetrics.space-4 + UiMetrics.space-8
             + root.row-depth * UiMetrics.sidebar-indent;
         y: 0;
         width: parent.width - self.x - UiMetrics.space-8 - UiMetrics.space-24;
@@ -1606,19 +1658,32 @@ component CategoryRowView inherits Rectangle {
         font-size: UiMetrics.ui-font-size;
         font-weight: root.selected ? 600 : 400;
         // 不可选（移动模式的自身与子孙）用 disabled 文字色。
+        // C1：**空分类**（含子孙也无书）名称弱化 —— 设计稿写 text-3，本主题取 `text-placeholder`。
         color: root.move-blocked ? Skin.text-disabled
-            : (root.selected ? Skin.primary-strong : Skin.text-primary);
+            : (root.selected ? Skin.primary-strong
+                : (root.total-count == 0 ? Skin.text-placeholder : Skin.text-primary));
         vertical-alignment: center;
         overflow: elide;
     }
 
-    // 书籍计数（直属；有子孙时显示合计）。
+    // 书籍计数（C1：**直接**书籍数，不含子孙）。
+    //
+    // ⚠️ 早前写的是 `root.has-children ? root.total-count : root.direct-count` —— 有子分类时
+    // 显示**合计**（含子孙），与设计稿 C1「该分类**直接**书籍数（不含子孙）」不符；
+    // 画框 C1 的「全部书籍 24 = 未分类 3 + 科幻 9 + 中国科幻 5 + 外国科幻 4 + 历史 3」也证明
+    // 各分类计数是直接数（否则会重复计数）。根行的 `total-count` 由 Rust 单独给（= 各分类直接数之和）。
+    //
+    // ⚠️ 计数必须**让出「…」按钮的位置**：早前 x 取 `parent.width - self.width - space-8`，
+    // 而「…」按钮占 `parent.width - icon-button-size - space-4` 起的一段 —— 两者**完全重叠**，
+    // 计数被按钮盖住（实测截图里看不到任何计数）。现改为从右往左依次让出按钮与间距。
     Text {
-        x: parent.width - self.width - UiMetrics.space-8;
+        x: parent.width - UiMetrics.scrollbar-gutter - UiMetrics.scrollbar-width
+            - UiMetrics.space-4 - UiMetrics.icon-button-size
+            - UiMetrics.space-8 - self.width;
         y: 0;
         height: parent.height;
         width: UiMetrics.space-24;
-        text: root.has-children ? root.total-count : root.direct-count;
+        text: root.direct-count;
         font-size: UiMetrics.caption-font-size;
         color: root.move-blocked ? Skin.text-disabled : Skin.text-secondary;
         horizontal-alignment: right;
@@ -1626,15 +1691,27 @@ component CategoryRowView inherits Rectangle {
     }
 
     // 整行点击 = 选中（再点已选中项回到根，由 Rust 判定）。
-    TouchArea {
+    row-hit := TouchArea {
         clicked => {
             root.row-clicked(root.row-id);
         }
     }
 
     // 行尾「…」：仅真实分类有（虚拟行不可重命名/移动/删除）。
-    if !root.virtual-row : IconButton {
-        x: parent.width - UiMetrics.icon-button-size - UiMetrics.space-4;
+    // 设计稿 C2：**悬停才显示**（常显会在 240px 侧栏里与计数抢位置、显得杂乱）。
+    //
+    // ⚠️ 必须**让开纵向滚动条的命中区**：`ScrollBar` 的命中区被刻意加宽
+    // （`x: 0 - scrollbar-width`，两侧各扩一个条宽）以便抓住细条，
+    // 其左缘落在 `width - scrollbar-gutter - scrollbar-width`。
+    // 早前按钮取 `width - icon-button-size - space-4` ⇒ 右半正好压在滚动条命中区下，
+    // **点不中**（实测：鼠标落在按钮右半即被滚动条截走）。
+    // 现按「留白 + 条宽 + 间距 + 按钮」从右往左让位。
+    // 显隐 = **行悬停 或 按钮自身悬停**（合并判定，消除闪烁；见 `IconButton.hovered` 注释）。
+    // 用 `visible:` 而非 `if`：`if` 条件无法引用其内部元素，会形成自引用死结。
+    more-btn := IconButton {
+        visible: !root.virtual-row && (row-hit.has-hover || self.hovered);
+        x: parent.width - UiMetrics.scrollbar-gutter - UiMetrics.scrollbar-width
+            - UiMetrics.space-4 - UiMetrics.icon-button-size;
         y: (parent.height - UiMetrics.icon-button-size) / 2;
         shape: Icons.more;
         tip-below: false;
@@ -1735,6 +1812,7 @@ component CategoryActionDialog inherits Rectangle {
     in property <bool> can-confirm: true;
     in property <string> note-line: "";
     in property <[ChoiceRow]> targets: [];
+    in property <string> root-target-caption: "";
     in property <int> target-index: -1;
     callback cancelled();
     callback name-edited(string);
@@ -1778,8 +1856,13 @@ component CategoryActionDialog inherits Rectangle {
                 height: self.preferred-height;
             }
 
-            // 父分类只读行（新建时默认 = 进入时选中的分类）。
-            if root.mode != 2 : Text {
+            // 说明行（新建=父分类；重命名=原名称；删除=书籍去向提示；**移动=目标选择说明**）。
+            //
+            // ⚠️ 原条件是 `mode != 2` —— 把**移动态**整块排除，于是设计稿 C5 要求的
+            // 「标题与说明不同」在界面上根本看不到（说明被吞掉，实测复现）。
+            // 改为「**非空才渲染**」：分类移动本就把它置空串（⇒ 仍不显示），
+            // 删除态与新建/重命名态的条件不变；书籍移动的说明因此得以显示。
+            if root.parent-line != "" : Text {
                 text: root.parent-line;
                 font-size: UiMetrics.label-font-size;
                 color: Skin.text-secondary;
@@ -1798,15 +1881,38 @@ component CategoryActionDialog inherits Rectangle {
             // 移动目标列表（设计稿 C5）。
             if root.mode == 2 : VerticalLayout {
                 width: parent.width;
+                // ⚠️ **必须固定为自身固有高度**：未固定时，布局的富余空间会被塞给**首个子项**
+                // ⇒ 实测首行「移到根下」**行高更大、留白更多、圆圈更粗**（与其余行视觉不一致），
+                // 且其命中区与视觉错位（鼠标点不中）。固定高度后各行完全一致。
+                height: self.preferred-height;
                 spacing: UiMetrics.space-4;
+
+                // ① **固定首项（虚拟节点）**：设计稿 C5 —— 根不可作分类，但「移到根下」是
+                //    无归属目标，属**虚拟节点**，**固定为第一项**。
+                //    ⚠️ 它**不参与下面的 `for` 循环**：实测「循环生成的首项」鼠标点不中
+                //    （第 2 项起正常；驱动路径正常 ⇒ 属命中判定问题）。固定渲染可绕开该问题，
+                //    且更贴合设计（虚拟节点本就不该混在真实分类数据里）。
+                RadioItem {
+                    width: parent.width;
+                    // 文案由 Rust 投影（含计数）；虚拟节点**不在** `targets` 数据里。
+                    caption: root.root-target-caption;
+                    checked: root.target-index == 0;
+                    enabled: true;
+                    selected => {
+                        root.target-picked(0);
+                    }
+                }
+
+                // ② 真实分类：数据里**不含**虚拟节点 ⇒ 无需 `visible` 技巧（否则会占一个空槽位、
+                //    使首行下方多出一段间距 —— 实测）。下标 +1 与 Rust 约定（0 = 虚拟节点）对齐。
                 for row[index] in root.targets : RadioItem {
                     width: parent.width;
                     caption: row.name;
-                    checked: root.target-index == index;
+                    checked: root.target-index == index + 1;
                     // 可选性由 Rust 给出（`enabled`），界面不解析文案。
                     enabled: row.enabled;
                     selected => {
-                        root.target-picked(index);
+                        root.target-picked(index + 1);
                     }
                 }
             }
@@ -2203,6 +2309,7 @@ component HistoryGroupHeadView inherits Rectangle {
         activated => {
             root.group-menu(root.book-id);
         }
+
     }
 
     TouchArea {
@@ -2257,6 +2364,8 @@ component ShelfPage inherits Rectangle {
     in property <string> search: "";
     in property <string> sort-value: "";
     in property <string> count-label: "";
+    /// 页头面包屑（C1）；空串则不显示（例如历史视图）。
+    in property <string> scope-label: "";
     in property <bool> notice: false;
     in property <string> notice-title: "";
     in property <string> notice-body: "";
@@ -2307,7 +2416,8 @@ component ShelfPage inherits Rectangle {
         IconButton {
             x: parent.width - UiMetrics.icon-button-size - UiMetrics.space-8;
             y: (UiMetrics.sidebar-head-height - UiMetrics.icon-button-size) / 2;
-            shape: Icons.info;
+            shape: Icons.plus;
+            caption: "新建分类";
             tip-below: true;
             // 语义（新建）由 Rust 的可访问名称给出；此处只转发动作。
             activated => {
@@ -2315,14 +2425,20 @@ component ShelfPage inherits Rectangle {
             }
         }
 
-        // 树区（可滚动；行高与缩进全走 UiMetrics）。
+        // 树区（可滚动；行高与缩进全走 UiMetrics）。底部让出说明行（C1：底部说明行 28）。
         Flickable {
             x: 0;
             y: UiMetrics.sidebar-head-height;
             width: parent.width;
-            height: parent.height - UiMetrics.sidebar-head-height;
+            height: parent.height - UiMetrics.sidebar-head-height - UiMetrics.sidebar-hint-height;
             viewport-height: root.categories.length * UiMetrics.sidebar-row-height;
-            viewport-y: clamp(0px, self.height - self.viewport-height, self.y);
+            // ⚠️ **不要写 viewport-y**：Slint 的 clamp 是 `clamp(value, min, max)`，
+            // 早前写成 `clamp(0px, self.height - self.viewport-height, self.y)` —— 把 0 当作
+            // value 传入 ⇒ 实际求值为 `max(height - viewport-height, 0)`；800 高窗口下得到 536px，
+            // 于是整棵分类树被推到侧栏底部、头上留出约 460px 空白（实测截图复现）。
+            // 本文件其余 Flickable（书架列表 2574 / 历史 2458、2484）都不写 viewport-y，靠原生滚动，
+            // 此处与之同口径。
+            interactive: self.viewport-height > self.height;
 
             for row[index] in root.categories : CategoryRowView {
                 x: 0;
@@ -2355,7 +2471,9 @@ component ShelfPage inherits Rectangle {
                 height: parent.height;
                 ratio: root.categories.length == 0 ? 0
                     : (parent.height / (root.categories.length * UiMetrics.sidebar-row-height));
-                handle-ratio: clamp(0.1, 1, self.ratio);
+                // ⚠️ Slint 的 clamp 是 `clamp(value, min, max)`；早前写成 `clamp(0.1, 1, self.ratio)`
+                // （把 0.1 当 value）⇒ 恒等于 1，滚动条把手**永远是满格**。
+                handle-ratio: clamp(self.ratio, 0.1, 1);
             }
         }
 
@@ -2382,6 +2500,29 @@ component ShelfPage inherits Rectangle {
             width: UiMetrics.hairline;
             height: parent.height;
             background: Skin.border-subtle;
+        }
+
+        // 底部说明行（C1：底部说明行 28，可去）。放在树区下方、侧栏底端。
+        HorizontalLayout {
+            x: 0;
+            y: parent.height - UiMetrics.sidebar-hint-height;
+            width: parent.width;
+            height: UiMetrics.sidebar-hint-height;
+            Rectangle {
+                width: parent.width;
+                height: parent.height;
+                background: Skin.layer-01;
+                Text {
+                    x: UiMetrics.space-16;
+                    width: parent.width - UiMetrics.space-16 * 2;
+                    height: parent.height;
+                    text: "空分类仍显示，便于放入书籍";
+                    font-size: UiMetrics.caption-font-size;
+                    color: Skin.text-placeholder;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
         }
     }
 
@@ -2964,10 +3105,15 @@ component ShelfPage inherits Rectangle {
 
     // ---- 页头（80）：标题 24/600 + 计数 Tag；右侧 搜索 · 视图 · 排序 · 主按钮 ----
     // 说明：页头在源码顺序上位于列表之后 —— 这样排序字段的行内浮层不会被表格遮住。
+    //
+    // ⚠️ 页头必须从 **list-left** 起算、宽取 **list-width**：早前写成 `x: 0; width: parent.width`
+    // 让它横跨整页（含侧栏区）⇒ 「书架」标题直接画在侧栏「分类」之上（实测两段文字重叠），
+    // 且右侧那串控件整体右移一个侧栏宽，搜索框左侧凭空多出一条 240px 空白。
+    // 与列表、空态用同一套 list-left / list-width 口径（见本文件 2550 / 2569 / 2951 行）。
     Rectangle {
-        x: 0;
+        x: root.list-left;
         y: 0;
-        width: parent.width;
+        width: root.list-width;
         height: UiMetrics.page-header-height;
         background: transparent;
 
@@ -2979,11 +3125,28 @@ component ShelfPage inherits Rectangle {
             font-weight: 600;
             color: Skin.text-primary;
         }
-        Tag {
+        count-tag := Tag {
             x: UiMetrics.space-16 + title-text.preferred-width + UiMetrics.space-12;
             y: UiMetrics.space-16 + UiMetrics.space-8;
             tone: 0;
             text: root.count-label;
+        }
+        // 面包屑（C1：「分类：全部书籍 / 科幻 / 中国科幻」）—— 选中分类时同步显示。
+        // 文案由 Rust 的 `category_tree::breadcrumb` 给出；界面只做展示。
+        //
+        // ⚠️ 放在页头**第二行**：第一行右侧被「搜索 · 视图 · 排序 · 导入 · 批量导入」整条
+        // 控件链占满，留给面包屑的宽度不足 ⇒ 实测被省略成「分类: 全部书...」。
+        // 页头高 80，第一行（标题/徽标）只占上半，第二行放整条面包屑宽度充足。
+        if root.scope-label != "" : Text {
+            x: UiMetrics.space-16;
+            y: UiMetrics.space-16 + UiMetrics.space-24;
+            width: search-field.x - self.x - UiMetrics.space-12;
+            height: UiMetrics.tag-height;
+            text: "分类：" + root.scope-label;
+            font-size: UiMetrics.caption-font-size;
+            color: Skin.text-secondary;
+            vertical-alignment: center;
+            overflow: elide;
         }
         title-text := Text {
             x: 0px - parent.width;
@@ -3022,7 +3185,12 @@ component ShelfPage inherits Rectangle {
             }
         }
         sort-field := Rectangle {
-            x: import-btn.x - UiMetrics.space-16 - self.width;
+            // ⚠️ 必须从 **history-btn** 往左排，不能也用 `import-btn.x`：
+            // 早前 `sort-field.x` 与 `history-btn.x` 用了**完全相同的公式**
+            // （都是 `import-btn.x - space-16 - self.width`）⇒ 两者画在同一位置，
+            // 排序下拉框把「最近阅读」按钮**整个盖住**（看不到也点不到，实测复现）。
+            // 正确链（从右往左）：批量导入 ← 导入 TXT ← 最近阅读 ← 排序 ← 卡片 ← 列表 ← 搜索。
+            x: history-btn.x - UiMetrics.space-16 - self.width;
             y: (parent.height - self.height) / 2;
             width: UiMetrics.sort-field-width;
             height: UiMetrics.button-height-compact;
@@ -4849,6 +5017,8 @@ export component AppWindow inherits Window {
     // 书架排序序号（0=最近阅读 1=书名 2=导入时间）。
     in property <int> shelf-sort-current: 0;
     in property <string> shelf-count: "";
+    /// 页头面包屑（V1.1 / C1）。Rust 已拼好「全部书籍 / 科幻 / 中国科幻」，界面不拼路径。
+    in property <string> shelf-scope: "";
     in property <bool> shelf-notice: false;
     in property <string> shelf-notice-title: "";
     in property <string> shelf-notice-body: "";
@@ -4871,6 +5041,7 @@ export component AppWindow inherits Window {
     in property <string> category-dialog-label: "保存";
     in property <bool> category-dialog-can-confirm: false;
     in property <[ChoiceRow]> category-target-rows: [];
+    in property <string> category-root-target: "";
     in property <int> category-target-index: -1;
     // 导入归类浮层（V1.1；设计稿 C7）。
     in property <bool> organize-dialog-open: false;
@@ -5201,6 +5372,7 @@ export component AppWindow inherits Window {
         sort-value: root.shelf-sort-value;
         sort-current: root.shelf-sort-current;
         count-label: root.shelf-count;
+        scope-label: root.shelf-scope;
         notice: root.shelf-notice;
         notice-title: root.shelf-notice-title;
         notice-body: root.shelf-notice-body;
@@ -5677,6 +5849,8 @@ export component AppWindow inherits Window {
     }
 
     // ---- 分类操作浮层（V1.1；新建/重命名、删除去向、移动到分类）----
+
+    // ---- 导入归类浮层（V1.1）----
     if root.category-dialog-open : CategoryActionDialog {
         x: 0;
         y: 0;
@@ -5691,6 +5865,7 @@ export component AppWindow inherits Window {
         confirm-label: root.category-dialog-label;
         can-confirm: root.category-dialog-can-confirm;
         targets: root.category-target-rows;
+        root-target-caption: root.category-root-target;
         target-index: root.category-target-index;
         name-edited(text) => {
             root.category-dialog-name-edited(text);
@@ -5706,7 +5881,6 @@ export component AppWindow inherits Window {
         }
     }
 
-    // ---- 导入归类浮层（V1.1）----
     if root.organize-dialog-open : ImportOrganizeDialog {
         x: 0;
         y: 0;
@@ -5766,5 +5940,6 @@ export component AppWindow inherits Window {
             root.toast-action-clicked();
         }
     }
+
 }
 

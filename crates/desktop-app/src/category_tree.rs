@@ -388,6 +388,21 @@ mod tests {
     }
 
     #[test]
+    fn sidebar_rows_are_depth_first_children_right_after_their_parent() {
+        // 设计稿 C1：子分类**紧跟父分类**（深度优先）。
+        // 早前投影用 `VecDeque::pop_front` + 子节点入队尾 ⇒ 广度优先，
+        // 子分类被排到所有根兄弟之后（实测侧栏里「中国科幻/外国科幻」跑到「历史」后面），
+        // 视觉上像「子项脱离了父项」。这条测试把顺序钉住。
+        let (storage, _, _, _, _, _) = fixture();
+        let (rows, _) = project(storage.conn(), &SidebarInput::default()).expect("投影");
+        assert_eq!(
+            names(&rows),
+            ["全部书籍", "未分类", "科幻", "中国科幻", "外国科幻", "历史"],
+            "侧栏必须是深度优先序（子分类紧跟父分类）"
+        );
+    }
+
+    #[test]
     fn real_categories_carry_depth_and_counts() {
         let (storage, sci, cn, _, _, _) = fixture();
         let (rows, _) = project(storage.conn(), &SidebarInput::default()).expect("投影");
