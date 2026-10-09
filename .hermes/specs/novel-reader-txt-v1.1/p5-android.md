@@ -685,3 +685,19 @@ R3（§3.3+§3.5 配色） | T1-B3 | C-P5-3 |
 R4（§3.4 背景） | T1-B4 | C-P5-4 |
 R5（§3.6 语义对等） | T1 全部 | C-P5-5 |
 R6（§4 站点勘察） | S3 门禁 | C-P5-6 |
+
+---
+
+## 10. 追加记录（2026-10-09）：书架分类导航改版（文件管理器式·直属口径）
+
+> 本节为**改版记录**，不改变 §1–§9 的历史结论（它们记录了改版前的实施与证据）。
+
+- **动因**：左右布局（侧栏 + 列表）在竖屏手机过于拥挤（主人真机反馈）。
+- **改版**：窄屏（< 600dp）单列下钻（目录在上、书籍在下，逐层进入；系统返回键/返回行逐级回退）；
+  宽屏保留左右布局。过滤口径由「含子孙」（`nr_list_books_in_scope` 的 scope_kind=2）改为
+  **直属**（核心映射 `nr_list_book_categories` 逐本判定）—— 每本书只出现一次。
+- **新增能力**：书籍「移动到…」入口（此前仅桌面有；复用既有 `nr_move_book_to_category`，**无 ABI 变更**）。
+- **实现**：`ui/CategoryDrill.kt`（新）、`ui/CategoryOpsDialogs.kt`（两布局共用）、`reader/ShelfLayout.kt`（纯判定）、
+  `ReaderViewModel` 导航/过滤/移书；设计口径见 `docs/design/novel-reader-v1.1-android-design.md`（§4 A-C1/A-C6/A-C7）。
+- **证据**：JVM 全量 347 项（`CategoryDrillTest` 11 项 + `CategorySidebarTest` 24 项）；
+  门禁 `scripts/verify-android-scope.py` [14]（含反向对照与三处变异证明）。
