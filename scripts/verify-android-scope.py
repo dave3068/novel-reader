@@ -42,7 +42,13 @@
       （`addFlags` / `clearFlags` 成对，且由 `ui.route` 观测驱动），决策必须落在纯 Kotlin 的
       `ScreenOnController.kt`（仅 `ReaderRoute.READER` 保持常亮，其余路由恢复系统息屏）。
       反向对照：占位页与「只置位、不按路由、从不恢复」的写法必须被判为失败。
-      （背景：真机反馈「阅读中很容易息屏」；视频类应用的常亮做法即此。）
+      （背景：真机反馈「阅读中很容易息屏」；视频类应用的常亮做法即此。）；
+  [14] 书架分类下钻（窄屏，2026-10-09 文件管理器式）：`ShelfScreen.kt` 必须保留**自适应**
+      两分支（复用纯函数 `ShelfLayout.isCompact`：窄屏 [CategoryDrill]、宽屏 [CategorySidebar]）
+      并接上「逐级返回」与「书籍移动」回调；`CategoryDrill.kt` 必须把**目录排在书籍之前**下发、
+      注册系统返回键与「返回上一级」行、在窄屏归一化「全部书籍」位置。
+      反向对照：只有侧栏、或把书籍排在目录之前的形状必须被判为失败。
+      （背景：左右布局在竖屏手机上过于拥挤 —— 主人真机反馈。）；
 
 `--check-no-whole-file-read` 语义：**只**执行第 3 项（整本正文传递门禁），其余检查打印显式 SKIP，
 用于聚焦复核该门禁。默认（不带标志）执行全部检查，第 3 项同样是阻断项。
@@ -693,6 +699,79 @@ def check_keep_screen_on(files: dict[Path, str]) -> None:
         )
 
 
+def check_shelf_drill(files: dict[Path, str]) -> None:
+    """[14] 书架分类下钻（窄屏）与书籍移动（2026-10-09 文件管理器式改版）。
+
+    - `ShelfScreen.kt`：自适应宽度判定 + 两分支（窄屏下钻 / 宽屏侧栏）+ 返回与移书接线；
+    - `CategoryDrill.kt`：**目录先于书籍**下发（同一层级：目录在上、文件在下）、
+      系统返回键逐级回退、「返回上一级」行、窄屏归一化（无「全部书籍」位置）；
+    - 书籍移动链路：行「⋯」菜单 → 目标弹框 → `onMoveBookToCategory` 回调。
+    """
+    print("[14] 书架分类下钻（窄屏）与书籍移动（文件管理器式）")
+    shelf = next((path for path in files if path.name == "ShelfScreen.kt"), None)
+    drill = next((path for path in files if path.name == "CategoryDrill.kt"), None)
+    if shelf is None:
+        skip("[14] 未找到 ShelfScreen.kt（下钻接线无从校验）")
+        return
+
+    shelf_required = (
+        ("自适应宽度判定（复用纯函数）", "shelflayout.iscompact("),
+        ("窄屏分支：下钻列表", "categorydrill("),
+        ("宽屏分支：保留侧栏", "categorysidebar("),
+        ("逐级返回接线", "onnavigateup"),
+        ("书籍移动接线（弹框确认 → 回调）", "onmovebooktocategory"),
+    )
+    drill_required = (
+        ("目录/书籍同列（复用纯装配 levelChildren）", "categorytreeassembly.levelchildren("),
+        ("系统返回键逐级回退（BackHandler）", "backhandler("),
+        ("「返回上一级」行", "drill_back"),
+        ("窄屏归一化（无「全部书籍」位置）", "launchedeffect(unit)"),
+        ("「新建分类」建在当前目录", "drill_create"),
+    )
+
+    def judge_shelf(raw: str) -> list[str]:
+        lowered = raw.lower()
+        return [label for label, token in shelf_required if token not in lowered]
+
+    def judge_drill(raw: str) -> list[str]:
+        lowered = raw.lower()
+        missing = [label for label, token in drill_required if token not in lowered]
+        # 目录必须**先于**书籍下发（同一层级的目录在上方、文件在下方）。
+        dirs_at = lowered.find("items(items = dirs")
+        books_at = lowered.find("items(items = shelf.books")
+        if dirs_at < 0 or books_at < 0 or dirs_at >= books_at:
+            missing.append("目录未排在书籍之前（应：目录在上、文件在下）")
+        return missing
+
+    issues: list[str] = []
+    missing = judge_shelf(files[shelf])
+    if missing:
+        issues.append("ShelfScreen.kt 缺少：" + "; ".join(missing))
+    if drill is None:
+        issues.append("缺少 CategoryDrill.kt：窄屏下钻视图不存在（会退回拥挤的左右布局）")
+    else:
+        missing = judge_drill(files[drill])
+        if missing:
+            issues.append("CategoryDrill.kt 缺少：" + "; ".join(missing))
+
+    if issues:
+        fail("[14] 书架下钻/移书缺失：" + "; ".join(issues))
+    else:
+        ok("[14] 下钻（目录先于书籍）+ 自适应分支 + 返回/归一化 + 书籍移动接线均在位")
+
+    # 反向对照：两类坏形状必须被本检查判为失败。
+    stub_sidebar_only = "class shelf { row { categorysidebar(...) } }"
+    stub_books_first = (
+        "launchedeffect(unit) {} backhandler(...) {} drill_back drill_create "
+        "categorytreeassembly.levelchildren(...) "
+        "lazycolumn { items(items = shelf.books) {}; items(items = dirs) {} }"
+    )
+    if not judge_shelf(stub_sidebar_only) or not judge_drill(stub_books_first):
+        fail("[14] 反向对照失效：只有侧栏 / 书籍排在目录之前的形状竟然通过检查")
+    else:
+        ok("[14] 反向对照：缺下钻分支、以及「书籍排在目录之前」的写法均会被本检查判为失败")
+
+
 def check_positive_control() -> None:
     print("[6] 正向对照：扫描规则在内置 fixture 上必须命中（证明非空检查）")
     fixture = {
@@ -842,6 +921,7 @@ def main(argv: list[str] | None = None) -> int:
         skip("[10] 阅读交互层（本模式跳过；由默认模式执行）")
         skip("[11] 编码贯通（本模式跳过；由默认模式执行）")
         skip("[13] 阅读时保持屏幕常亮（本模式跳过；由默认模式执行）")
+        skip("[14] 书架下钻与书籍移动（本模式跳过；由默认模式执行）")
     else:
         check_fileset(files, core)
         check_business_not_copied(core)
@@ -856,6 +936,7 @@ def main(argv: list[str] | None = None) -> int:
         check_encoding_pipeline(files)
         check_resume_and_chapter_list(files)
         check_keep_screen_on(files)
+        check_shelf_drill(files)
         check_positive_control()
 
     print("-" * 60)
