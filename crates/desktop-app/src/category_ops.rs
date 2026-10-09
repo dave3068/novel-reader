@@ -105,10 +105,17 @@ pub fn move_book(db_path: &Path, book_id: i64, category_id: Option<i64>) -> Resu
     let storage = open(db_path)?;
     categories::move_book_at(storage.conn(), book_id, category_id, now_unix())
         .map_err(|error| error.to_string())?;
-    Ok(match category_id {
-        Some(_) => "已移动到所选分类".to_string(),
-        None => "已移到未分类".to_string(),
-    })
+    // 完成反馈（设计稿 C5：「已移动到「科幻 / 中国科幻」」）：
+    // 用**目标分类的祖先链**，但去掉根「全部书籍」——设计稿示例不含它，且根不是分类。
+    let scope = match category_id {
+        Some(id) => crate::category_tree::breadcrumb(storage.conn(), &id.to_string()),
+        None => "未分类".to_string(),
+    };
+    let scope = scope
+        .strip_prefix("全部书籍 / ")
+        .unwrap_or(scope.as_str())
+        .to_string();
+    Ok(format!("已移动到「{scope}」"))
 }
 
 /// 删除分类前的计划（删除浮层的计数来源；规格 R3）。
@@ -265,6 +272,84 @@ mod tests {
         )
         .expect("导入")
         .book_id
+    }
+
+    /// 取分类 id（`create_category` 只回文案，故按名字查回 id）。
+    fn cat_id(db: &Path, name: &str) -> i64 {
+        let storage = open(db).expect("开库");
+        storage
+            .conn()
+            .query_row(
+                "SELECT id FROM book_categories WHERE name = ?1",
+                [name],
+                |row| row.get(0),
+            )
+            .expect("分类 id")
+    }
+
+    #[test]
+    fn book_move_targets_offer_every_category_and_put_uncategorized_first() {
+        // 设计稿 C5：书籍移动的目标 = 「未分类」（钉顶）+ 全部分类；
+        // 与分类移动不同 —— 书**不会成环**，故**没有不可选的目标**。
+        let tmp = Temp::new("book-targets");
+        let db = tmp.db();
+        create_category(&db, None, "科幻").expect("科幻");
+        let sci = cat_id(&db, "科幻");
+        create_category(&db, Some(sci), "中国科幻").expect("中国科幻");
+        let cn = cat_id(&db, "中国科幻");
+        create_category(&db, None, "历史").expect("历史");
+        let book = seed(&db, "/tmp/bt.txt", "bt");
+        crate::category_ops::move_book(&db, book, Some(sci)).expect("先归到科幻");
+
+        let rows = book_move_targets(&db).expect("书籍目标");
+        let names: Vec<String> = rows.iter().map(|row| row.name.clone()).collect();
+        assert!(names[0].starts_with("未分类"), "未分类钉在顶部：{names:?}");
+        assert!(names.iter().any(|n| n.contains("科幻")), "含科幻：{names:?}");
+        assert!(names.iter().any(|n| n.contains("中国科幻")), "含子分类：{names:?}");
+        assert!(names.iter().any(|n| n.contains("历史")), "含历史：{names:?}");
+        assert!(
+            rows.iter().all(|row| row.enabled),
+            "书籍目标**全部可选**（无「不可选」）：{names:?}"
+        );
+        // 树序与分类移动**同源**：深度优先，子分类紧跟父分类。
+        let i_sci = names
+            .iter()
+            .position(|n| n.contains("科幻") && !n.contains("中国"))
+            .expect("科幻行");
+        let i_cn = names
+            .iter()
+            .position(|n| n.contains("中国科幻"))
+            .expect("中国科幻行");
+        assert_eq!(i_cn, i_sci + 1, "子分类紧跟父分类：{names:?}");
+
+        // id 列表与名称列表**逐下标对齐**；「未分类」= None（`move_book` 的移出口径）。
+        let ids = book_move_target_ids(&db).expect("书籍目标 id");
+        assert_eq!(ids.len(), names.len(), "id 列表必须与名称列表等长");
+        assert_eq!(ids[0], None, "未分类 = None");
+        assert_eq!(ids[i_cn], Some(cn), "下标与 id 对齐");
+    }
+
+    #[test]
+    fn move_book_reports_the_target_breadcrumb_without_the_root() {
+        // 设计稿 C5 完成反馈：「已移动到「科幻 / 中国科幻」」——祖先链、**去根**。
+        let tmp = Temp::new("book-msg");
+        let db = tmp.db();
+        create_category(&db, None, "科幻").expect("科幻");
+        let sci = cat_id(&db, "科幻");
+        create_category(&db, Some(sci), "中国科幻").expect("中国科幻");
+        let cn = cat_id(&db, "中国科幻");
+        let book = seed(&db, "/tmp/bm.txt", "bm");
+
+        assert_eq!(
+            crate::category_ops::move_book(&db, book, Some(cn)).expect("移动"),
+            "已移动到「科幻 / 中国科幻」",
+            "C5 完成反馈（去根）"
+        );
+        assert_eq!(
+            crate::category_ops::move_book(&db, book, None).expect("移出"),
+            "已移动到「未分类」",
+            "移出所有分类"
+        );
     }
 
     #[test]
@@ -464,7 +549,9 @@ mod tests {
 
         let rows = move_targets(&db, sci).expect("目标");
         let text: Vec<&str> = rows.iter().map(|row| row.name.as_str()).collect();
-        assert!(text[0].starts_with("未分类"), "未分类钉在顶部：{text:?}");
+        // 分类移动的首行语义是「移回根下」（`parent_id = NULL`），不是「未分类」
+        // —— 分类没有「未分类」概念；旧断言按书籍语义写，已随标签修正。
+        assert!(text[0].starts_with("移到根下"), "根目标钉在顶部：{text:?}");
         assert!(
             text.iter()
                 .any(|name| name.contains("不可选") && name.contains("科幻")),
@@ -533,4 +620,53 @@ mod tests {
         assert!(items[2].name.contains("移动到分类"));
         assert!(items[3].name.contains("删除"), "删除必须是最后一项");
     }
+
+
+}
+
+/// 「移动到分类」的目标列表（**书籍**；设计稿 C5）。
+///
+/// 与[`move_targets`]（分类移动）的区别：**书籍没有不可选的目标** —— 任何分类
+/// （含「未分类」）都可作目标；「自身与子孙不可选」只对分类移动成立。
+///
+/// 顺序与缩进来自**共享存储层**的树投影（与分类移动同源），避免两处各自算一套树序。
+/// 「未分类」**钉在顶部**（设计稿 C5）。
+pub fn book_move_targets(
+    db_path: &Path,
+) -> Result<Vec<crate::app_state::ChoiceRow>, String> {
+    use crate::app_state::ChoiceRow;
+    let storage = open(db_path)?;
+    let (nodes, unclassified) =
+        categories::project_tree_with_uncategorized(storage.conn()).map_err(|error| error.to_string())?;
+
+    let mut rows = Vec::with_capacity(nodes.len() + 1);
+    rows.push(ChoiceRow {
+        name: format!("未分类（{unclassified} 本）"),
+        current: false,
+        enabled: true,
+    });
+    for node in &nodes {
+        let indent = "　".repeat(node.depth.max(0) as usize);
+        rows.push(ChoiceRow {
+            name: format!("{indent}{}（{} 本）", node.name, node.direct_book_count),
+            current: false,
+            enabled: true,
+        });
+    }
+    Ok(rows)
+}
+
+/// 书籍移动目标的 id 列表（与 [`book_move_targets`] **同序**；`None` = 未分类）。
+///
+/// 与名称列表**逐下标对齐**（界面用 0 基下标查它）—— 同 [`move_target_ids`] 的纪律。
+pub fn book_move_target_ids(db_path: &Path) -> Result<Vec<Option<i64>>, String> {
+    let storage = open(db_path)?;
+    let (nodes, _) =
+        categories::project_tree_with_uncategorized(storage.conn()).map_err(|error| error.to_string())?;
+    let mut ids = Vec::with_capacity(nodes.len() + 1);
+    ids.push(None);
+    ids.extend(nodes.iter().map(|node| Some(node.id)));
+    Ok(ids)
+
+
 }

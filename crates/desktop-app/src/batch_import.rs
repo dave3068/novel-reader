@@ -311,7 +311,11 @@ pub fn run_import(db_path: &Path, planned: &[PlannedFile], now: i64) -> BatchImp
 }
 
 /// 导入后归类（失败只回报，不影响已导入的书籍）。
-fn assign_category(db_path: &Path, book_id: i64, category_id: i64, now: i64) -> Option<String> {
+/// 导入后把书归入分类；返回 `None` = 成功，`Some(文案)` = 失败（如实回报，不静默当成功）。
+///
+/// **单文件导入**（设计稿 C7「单文件导入直接归入当前分类」）与**批量导入**共用本函数，
+/// 保证两处归类走**同一条写入路径**与**同一错误文案**。
+pub fn assign_category(db_path: &Path, book_id: i64, category_id: i64, now: i64) -> Option<String> {
     let storage = match open_storage(db_path) {
         Ok(storage) => storage,
         // 数据库都打不开时**如实回报**，不静默当成成功。

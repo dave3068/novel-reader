@@ -608,9 +608,15 @@ pub fn project_tree(conn: &Connection) -> Result<Vec<CategoryNode>> {
         if let Some(kids) = children.get(&category.id) {
             let by_id: HashMap<i64, &Category> =
                 categories.iter().map(|item| (item.id, item)).collect();
-            for child_id in kids {
+            // ⚠️ **深度优先**：子分类必须紧跟父分类。
+            // 早前这里是 `queue.push_back(...)` + `pop_front` ⇒ 实际是**广度优先**，
+            // 子分类被排到所有根兄弟之后。实测（科幻→中国科幻/外国科幻、历史、待读 四分类）：
+            //   得到「科幻, 历史, 待读, 中国科幻, 外国科幻」
+            //   应为「科幻, 中国科幻, 外国科幻, 历史, 待读」
+            // 侧栏看上去像「子项脱离了父项」。改为**逆序 `push_front`**，弹出即正序。
+            for child_id in kids.iter().rev() {
                 if let Some(child) = by_id.get(child_id) {
-                    queue.push_back((child, depth + 1));
+                    queue.push_front((child, depth + 1));
                 }
             }
         }
@@ -1126,7 +1132,10 @@ pub fn move_targets(conn: &Connection, source_id: i64) -> Result<Vec<MoveTarget>
     let mut rows = Vec::with_capacity(nodes.len() + 1);
     rows.push(MoveTarget {
         id: -1,
-        name: "未分类".to_string(),
+        // ⚠️ 分类移动的首行**语义是「移回根下」**（`parent_id = NULL`），不是「未分类」——
+        // 分类不存在「未分类」概念，旧标签「未分类」让用户看不出可移回根（实测反馈
+        // 「无法再次移回根；应当可以选择移动到根节点」）。核心写入本就支持（`None` = 根）。
+        name: "移到根下（全部书籍）".to_string(),
         depth: 0,
         selectable: true,
         total_count: unclassified,

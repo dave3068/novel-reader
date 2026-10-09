@@ -242,6 +242,7 @@ pub fn load_shelf_in(db_path: &Path, scope: &ShelfScope) -> BackgroundPayload {
         settings: Box::new(SettingsView { ..settings }),
         categories,
         filtered_count,
+        scope_label: scope,
     }
 }
 

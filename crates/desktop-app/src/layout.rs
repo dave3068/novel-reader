@@ -166,6 +166,8 @@ pub const PANEL_HINT_HEIGHT: u32 = 32;
 pub const SIDEBAR_WIDTH: u32 = 240;
 /// 侧栏头高度（像素；标题 + 新建按钮）。
 pub const SIDEBAR_HEAD_HEIGHT: u32 = 40;
+/// 侧栏底部说明行高（设计稿 C1：底部说明行 28）。
+pub const SIDEBAR_HINT_HEIGHT: u32 = 28;
 /// 侧栏树行高（像素）。
 pub const SIDEBAR_ROW_HEIGHT: u32 = 32;
 /// 侧栏每层缩进（像素）。
@@ -389,6 +391,7 @@ pub struct LayoutMetrics {
     pub sidebar_width: u32,
     /// 侧栏头高度。
     pub sidebar_head_height: u32,
+    pub sidebar_hint_height: u32,
     /// 侧栏树行高。
     pub sidebar_row_height: u32,
     /// 每层缩进。
@@ -554,6 +557,7 @@ impl LayoutMetrics {
         // 分类侧栏（V1.1）。
         sidebar_width: SIDEBAR_WIDTH,
         sidebar_head_height: SIDEBAR_HEAD_HEIGHT,
+        sidebar_hint_height: SIDEBAR_HINT_HEIGHT,
         sidebar_row_height: SIDEBAR_ROW_HEIGHT,
         sidebar_indent: SIDEBAR_INDENT,
         tree_arrow_size: TREE_ARROW_SIZE,
@@ -745,6 +749,14 @@ pub const PALETTE_FIELDS: &[PaletteField] = &[
         "layer-02",
         (0xff, 0xff, 0xff, 0xff),
         (0x39, 0x39, 0x39, 0xff),
+    ),
+    // 行 hover 底色（设计稿 C2：「hover（g10 底）」）。**必须单独给**：
+    // 亮色下 `layer-02` 是纯白、`layer-01` 与侧栏底同色；暗色下 `layer-01` 又与行底
+    // `field-01` 同色 —— 复用任一都会让 hover **完全看不出来**（实测推演）。
+    f(
+        "row-hover",
+        (0xec, 0xec, 0xec, 0xff),
+        (0x33, 0x33, 0x33, 0xff),
     ),
     f(
         "field-01",
@@ -1102,6 +1114,11 @@ pub const LAYOUT_METRIC_FIELDS: &[MetricField] = &[
         "sidebar-head-height",
         "SIDEBAR_HEAD_HEIGHT",
         SIDEBAR_HEAD_HEIGHT,
+    ),
+    m(
+        "sidebar-hint-height",
+        "SIDEBAR_HINT_HEIGHT",
+        SIDEBAR_HINT_HEIGHT,
     ),
     m(
         "sidebar-row-height",

@@ -164,6 +164,32 @@ pub const SHELF_MENU_ENV: &str = "NR_SHELF_MENU";
 /// 执行行级动作（`relink:id` / `rename:id` / `remove:id` / `purge:id`；与行级菜单**同一入口**）。
 pub const SHELF_ACTION_ENV: &str = "NR_SHELF_ACTION";
 /// 确认当前弹窗（`1` = 勾选项打开时确认；`0` = 勾选项关闭时确认）。
+/// 浮层「选目标」驱动（`NR_DIALOG_TARGET=<0 基下标>`）。
+///
+/// 补此驱动的原因（2026-10-06）：浮层「**选目标 → 确认**」这一段此前**无程序化对等物**
+/// ⇒ 端到端（点选真实分类再确认）不可自动验证。与界面 `target-picked(index)` 走**同一回调**。
+/// 分类/书籍浮层「确认」驱动（`NR_CATEGORY_DIALOG_CONFIRM=1`）。
+///
+/// ⚠️ 与 `NR_DIALOG_CONFIRM` **不是同一个回调**：后者是通用确认（移出/彻底删除等，带勾选参数），
+/// 本驱动走的是浮层自己的 `category-dialog-confirm()`（无参）—— 分类/书籍移动由它执行。
+/// 实测教训：先前误用 `NR_DIALOG_CONFIRM` 驱动书籍移动，书籍**根本没被移动**（端到端 FAIL）。
+///
+/// 另注：`NR_CATEGORY_MOVE` 等驱动**直接调 `category_ops`**（只覆盖写入路径），
+/// 不覆盖浮层交互；本驱动与 `NR_DIALOG_TARGET` 合起来才补齐「选目标 → 确认」这一段。
+pub const CATEGORY_DIALOG_CONFIRM_ENV: &str = "NR_CATEGORY_DIALOG_CONFIRM";
+/// 书架「导入 TXT」驱动（`NR_SHELF_IMPORT=1`）。
+///
+/// 与界面「导入 TXT」按钮**同一回调**（`on_shelf_import`）。配合 `NR_IMPORT_PATH`
+/// （选择器变为静态、返回该路径）即可**无原生对话框**地跑完整导入链，
+/// 从而验证「单文件导入归入当前分类」（设计稿 C7）—— 原生文件选择框无法自动化。
+pub const SHELF_IMPORT_ENV: &str = "NR_SHELF_IMPORT";
+/// 打开**分类移动浮层**（`NR_CATEGORY_MOVE_DIALOG=<分类id>`）。
+///
+/// 与分类行「…」→「移动」**走同一回调**（`category-menu-picked("category-move", id)`），
+/// 不另写一份逻辑。配合 `NR_DIALOG_TARGET` + `NR_CATEGORY_DIALOG_CONFIRM`
+/// 即可无鼠标地跑完「开浮层 → 选目标 → 确认」，从而验证「移回根」。
+pub const CATEGORY_MOVE_DIALOG_ENV: &str = "NR_CATEGORY_MOVE_DIALOG";
+pub const DIALOG_TARGET_ENV: &str = "NR_DIALOG_TARGET";
 pub const DIALOG_CONFIRM_ENV: &str = "NR_DIALOG_CONFIRM";
 /// 取消当前弹窗（`1`）。
 pub const DIALOG_CANCEL_ENV: &str = "NR_DIALOG_CANCEL";
@@ -438,6 +464,7 @@ pub fn apply_layout_metrics_with_margins(
     // 分类侧栏（V1.1）。
     globals.set_sidebar_width(metrics.sidebar_width as f32);
     globals.set_sidebar_head_height(metrics.sidebar_head_height as f32);
+    globals.set_sidebar_hint_height(metrics.sidebar_hint_height as f32);
     globals.set_sidebar_row_height(metrics.sidebar_row_height as f32);
     globals.set_sidebar_indent(metrics.sidebar_indent as f32);
     globals.set_tree_arrow_size(metrics.tree_arrow_size as f32);
@@ -493,6 +520,7 @@ pub fn apply_palette(ui: &AppWindow, dark: bool) {
             "background" => globals.set_background(color),
             "layer-01" => globals.set_layer_01(color),
             "layer-02" => globals.set_layer_02(color),
+            "row-hover" => globals.set_row_hover(color),
             "field-01" => globals.set_field_01(color),
             "border-subtle" => globals.set_border_subtle(color),
             "border-strong" => globals.set_border_strong(color),
@@ -567,6 +595,7 @@ pub fn apply_palette_with(
             "background" => globals.set_background(color),
             "layer-01" => globals.set_layer_01(color),
             "layer-02" => globals.set_layer_02(color),
+            "row-hover" => globals.set_row_hover(color),
             "field-01" => globals.set_field_01(color),
             "border-subtle" => globals.set_border_subtle(color),
             "border-strong" => globals.set_border_strong(color),
@@ -924,6 +953,7 @@ pub fn apply_snapshot(ui: &AppWindow, snapshot: &UiSnapshot) {
     ui.set_shelf_sort_value(snapshot.shelf.sort_label.as_str().into());
     ui.set_shelf_sort_current(snapshot.shelf.sort_index);
     ui.set_shelf_count(snapshot.shelf.count_label.as_str().into());
+    ui.set_shelf_scope(snapshot.shelf.scope_label.as_str().into());
     ui.set_shelf_notice(snapshot.shelf.notice);
     ui.set_shelf_notice_title(snapshot.shelf.notice_title.as_str().into());
     ui.set_shelf_notice_body(snapshot.shelf.notice_body.as_str().into());
@@ -963,20 +993,36 @@ pub fn apply_snapshot(ui: &AppWindow, snapshot: &UiSnapshot) {
     ui.set_category_dialog_label(dialog.category_dialog_label.as_str().into());
     // 「可否确认」由 Rust 判定：新建/重命名需非空名；删除需已选去向；移动需已选目标。
     ui.set_category_dialog_can_confirm(category_dialog_can_confirm(dialog));
-    ui.set_category_target_index(dialog.category_delete_destination - 1);
+    // 单选高亮下标：**按形态取不同来源**（移动态与删除态的语义不同）。
+    // 删除态：去向 1..3 → 单选项 0..2；移动态：用户所选的目标行下标（-1 = 未选）。
+    ui.set_category_target_index(match category_dialog_mode(dialog) {
+        2 => dialog.category_move_target_index,
+        _ => dialog.category_delete_destination - 1,
+    });
     // 分类行内菜单（V1.1）：下标由 Rust 依据已投影的行反查（界面不自己找）。
     ui.set_category_menu_id(snapshot.shelf.category_menu_id.as_str().into());
     ui.set_category_menu_offset(snapshot.shelf.category_menu_offset);
     // 移动态的目标行（分类专用属性，不与编码选择的 choice-rows 混用）。
+    // 首项是**虚拟节点**（移到根下），由界面固定渲染；数据行里**不含**它 —— 否则
+    // 它会占一个布局槽位（即使不可见），使首行下方多出一段间距（实测）。
     let target_rows: Vec<ChoiceRow> = dialog
         .category_menu_items
         .iter()
+        .skip(1)
         .map(|row| ChoiceRow {
             name: row.name.as_str().into(),
             current: row.current,
             enabled: row.enabled,
         })
         .collect();
+    ui.set_category_root_target(
+        dialog
+            .category_menu_items
+            .first()
+            .map(|row| row.name.as_str())
+            .unwrap_or_default()
+            .into(),
+    );
     ui.set_category_target_rows(ModelRc::new(VecModel::from(target_rows)));
 
     // 阅读历史（V1.1）：流水行与组头（投影在 Rust，界面只渲染）。
@@ -1117,7 +1163,7 @@ pub fn apply_snapshot(ui: &AppWindow, snapshot: &UiSnapshot) {
         let line = format!(
             "NR-STATE screen={} index={} rows={} menu_open={} theme_dark={} row_status={} \
              chapter={} chapters={} toc_rows={} toc_open={} toc_matches={} marks={} marks_open={} mark_sel={} \
-             gesture={} progress={} settings={} encoding={} dialog={} toast={} shelf_view={} shelf_sort={} \
+             gesture={} progress={} settings={} encoding={} dialog={} dlg_target={} toast={} shelf_view={} shelf_sort={} \
              shelf_search={} settings_h={} status={}",
             snapshot.screen.slint_name(),
             snapshot.screen.index(),
@@ -1138,6 +1184,13 @@ pub fn apply_snapshot(ui: &AppWindow, snapshot: &UiSnapshot) {
             snapshot.settings.rows.len(),
             snapshot.reader.encoding_name.replace(' ', "_"),
             snapshot.dialog.kind,
+            // 浮层单选高亮下标（**界面实际收到的值**）：把「回显」也纳入程序化判据。
+            // 动机：此前端到端只核对**数据库写入**，漏掉了「写入正确 ≠ 回显正确」
+            // （实测缺陷：目标 id 写对了，但单选高亮恒在首项）。
+            match crate::ui::category_dialog_mode(&snapshot.dialog) {
+                2 => snapshot.dialog.category_move_target_index,
+                _ => snapshot.dialog.category_delete_destination - 1,
+            },
             u8::from(snapshot.toast.visible),
             snapshot.shelf.view,
             snapshot.shelf.sort_label.replace(' ', "_"),
@@ -4316,6 +4369,26 @@ pub fn run() -> Result<(), slint::PlatformError> {
             let result = import::run_import_flow(&db_path, picker.as_ref(), import::now_unix());
             match &result {
                 Ok(import::ImportFlow::Imported(report)) => {
+                    // V1.1（设计稿 C7）：**单文件导入直接归入当前分类**。
+                    // 归属口径与分类选择一致：空串 = 根「全部书籍」、`-1` = 仅未分类
+                    // ⇒ 两者都**不写归属**；仅**正数**（真实分类 id）才写入。
+                    // 复用批量导入的 `assign_category`（同一写入路径与同一错误文案）。
+                    let scope = lock(&state).shelf_category().trim().to_string();
+                    if let Ok(category_id) = scope.parse::<i64>() {
+                        if category_id > 0 {
+                            if let Some(error) = crate::batch_import::assign_category(
+                                &db_path,
+                                report.book_id,
+                                category_id,
+                                import::now_unix(),
+                            ) {
+                                // 导入本身已成功（书已在书架）；归类失败如实回显，不谎报成功。
+                                mutate_and_refresh(&ui, &state, |guard| {
+                                    guard.set_status(error);
+                                });
+                            }
+                        }
+                    }
                     let file = report
                         .path
                         .file_name()
@@ -4588,6 +4661,42 @@ pub fn run() -> Result<(), slint::PlatformError> {
                         guard.open_rename("重命名书架显示名", &title, &id_text);
                     });
                 }
+                "move" => {
+                    // 设计稿 C5「移动到分类（书籍）」：与分类行「…」**调同一浮层**，
+                    // 只是标题与说明不同。书籍**没有不可选的目标**（任何分类含未分类都可作目标），
+                    // 与分类移动（自身+子孙置灰）不同。
+                    let rows = crate::category_ops::book_move_targets(&db_path).unwrap_or_default();
+                    mutate_and_refresh(&ui, &state, |guard| {
+                        guard.set_shelf_menu_index(-2);
+                        let mut dialog = guard.dialog().clone();
+                        dialog.kind = DIALOG_KIND_CATEGORY;
+                        dialog.category_dialog_error = String::new();
+                        dialog.category_dialog_title = format!("移动书籍「{title}」");
+                        // C5：说明与分类移动不同 —— 点明「未分类 = 无归属」且根不可作目标。
+                        dialog.category_dialog_parent =
+                            "选择目标分类（「未分类」= 移出所有分类；「全部书籍」是根，不是分类）"
+                                .to_string();
+                        dialog.category_dialog_value = String::new();
+                        dialog.category_dialog_label = "移动".to_string();
+                        dialog.category_dialog_id = String::new();
+                        // 分类来源留空；改用 `move_source_book_id` 标记来源是书籍。
+                        dialog.category_dialog_parent_id = String::new();
+                        dialog.move_source_book_id = book_id.to_string();
+                        dialog.category_move_target_index = -1;
+                        dialog.category_delete_id = String::new();
+                        dialog.category_delete_target_id = String::new();
+                        dialog.category_delete_destination = 0;
+                        dialog.category_menu_items = rows
+                            .iter()
+                            .map(|row| ChoiceRowData {
+                                name: row.name.clone(),
+                                current: row.current,
+                                enabled: row.enabled,
+                            })
+                            .collect();
+                        guard.set_dialog(dialog);
+                    });
+                }
                 "remove" => {
                     mutate_and_refresh(&ui, &state, |guard| {
                         guard.set_shelf_menu_index(-2);
@@ -4820,8 +4929,16 @@ pub fn run() -> Result<(), slint::PlatformError> {
                         dialog.category_dialog_parent = String::new();
                         dialog.category_dialog_value = String::new();
                         dialog.category_dialog_label = "移动".to_string();
-                        // 移动态下 delete_id 不参与「删除」判定，但需保留来源 id。
+                        // ⚠️ 必须**清空** `category_delete_id`：`category_dialog_mode` **先判**它非空
+                        // ⇒ 返回 1（删除态）⇒ 浮层渲染成**删除去向列表**而不是分类列表
+                        // （实测缺陷：点「移动」弹出的是「移入另一分类…/一并移出书架/移回根」）。
+                        // 早前注释写「移动态下 delete_id 不参与判定」是**错的**。
+                        // 移动来源已存于 `category_dialog_parent_id`，确认时读的也是它。
+                        dialog.category_delete_id = String::new();
                         dialog.category_dialog_parent_id = id.clone();
+                        // 单选高亮复位（否则会残留上一次移动的高亮）。
+                        dialog.category_move_target_index = -1;
+                        dialog.move_source_book_id = String::new();
                     }
                     "category-delete" => {
                         dialog.category_dialog_title =
@@ -5190,13 +5307,17 @@ pub fn run() -> Result<(), slint::PlatformError> {
             let index = index as i32;
             // 「移入另一分类」需要把第 1 个选项展开为目标选择器：
             // 用同一浮层的移动态承载（目标列表由 Rust 给出，不可选项被禁用）。
-            if index == 0 {
+            //
+            // ⚠️ **必须限定「删除态」**：移动态（mode=2）的 index 0 是**虚拟节点「移到根下」**，
+            // 若裸判 `index == 0` 会把它误当「移入另一分类」⇒ 弹出「原分类下的书将移入…」
+            // 并切成删除子态，且此后**无法再选中该虚拟节点**（实测缺陷）。
+            if index == 0 && category_dialog_mode(&lock(&state).dialog().clone()) == 1 {
                 let dialog = lock(&state).dialog().clone();
                 // 源分类 id 统一取 `category_dialog_parent_id`（移动态的来源）。
                 let source = dialog.category_dialog_parent_id.parse::<i64>().ok();
                 let targets =
                     source.and_then(|cid| crate::category_ops::move_targets(&db_path, cid).ok());
-                mutate_and_refresh(&ui, &state, |guard| {
+            mutate_and_refresh(&ui, &state, |guard| {
                     let mut dialog = guard.dialog().clone();
                     dialog.category_dialog_title = "选择移入的分类".to_string();
                     dialog.category_dialog_parent =
@@ -5229,15 +5350,37 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 // 移动态（mode=2）：下标对应 `move_target_ids`，写回目标 id。
                 if category_dialog_mode(&dialog) == 2 {
                     let picked = index.max(0) as usize;
-                    let source = dialog.category_dialog_parent_id.parse::<i64>();
+                    // 来源是**书籍**（C5）：目标来自 `book_move_target_ids`（任何分类都可选）；
+                    // 来源是**分类**：目标来自 `move_target_ids`（自身与子孙已在核心置灰）。
+                    let rows = if dialog.move_source_book_id.is_empty() {
+                        dialog
+                            .category_dialog_parent_id
+                            .parse::<i64>()
+                            .ok()
+                            .and_then(|source_id| {
+                                crate::category_ops::move_target_ids(&db_path, source_id).ok()
+                            })
+                    } else {
+                        crate::category_ops::book_move_target_ids(&db_path).ok()
+                    };
                     // 目标清单取不到时**不写目标**（保持「未选」），不得默认取根。
-                    if let Ok(source_id) = source {
-                        if let Ok(rows) = crate::category_ops::move_target_ids(&db_path, source_id)
-                        {
-                            if let Some(Some(target)) = rows.get(picked).copied() {
+                    if let Some(rows) = rows {
+                        match rows.get(picked).copied() {
+                            // 真实分类：写 id。
+                            Some(Some(target)) => {
                                 dialog.category_delete_target_id = target.to_string();
                                 dialog.category_delete_destination = 1;
+                                // 单选高亮下标（移动态专用；不能用 destination 推导）。
+                                dialog.category_move_target_index = picked as i32;
                             }
+                            // 「未分类」：目标 id 留**空串** ⇒ 确认时 `parse()` 失败得到 `None`
+                            // ⇒ `move_book(.., None)` 正是「移出所有分类」的口径。
+                            Some(None) => {
+                                dialog.category_delete_target_id = String::new();
+                                dialog.category_delete_destination = 1;
+                                dialog.category_move_target_index = picked as i32;
+                            }
+                            None => {}
                         }
                     }
                 } else {
@@ -5296,12 +5439,21 @@ pub fn run() -> Result<(), slint::PlatformError> {
                         ),
                     ),
                     2 => {
-                        // 移动态的源分类 id 统一取 `category_dialog_parent_id`。
-                        let move_source = snapshot_dialog
-                            .category_dialog_parent_id
-                            .parse::<i64>()
-                            .unwrap_or(-1);
-                        crate::category_ops::move_category(&db, move_source, target_id)
+                        if !snapshot_dialog.move_source_book_id.is_empty() {
+                            // **书籍**移动（C5）：`None` = 未分类（移出所有分类）。
+                            let book_id = snapshot_dialog
+                                .move_source_book_id
+                                .parse::<i64>()
+                                .unwrap_or(-1);
+                            crate::category_ops::move_book(&db, book_id, target_id)
+                        } else {
+                            // 移动态的源分类 id 统一取 `category_dialog_parent_id`。
+                            let move_source = snapshot_dialog
+                                .category_dialog_parent_id
+                                .parse::<i64>()
+                                .unwrap_or(-1);
+                            crate::category_ops::move_category(&db, move_source, target_id)
+                        }
                     }
                     _ => Err("未识别的操作".to_string()),
                 }
@@ -5544,6 +5696,24 @@ pub fn run() -> Result<(), slint::PlatformError> {
                     ui.invoke_shelf_row_action(kind.into(), id.into());
                 }
             }
+
+            // ---- 浮层交互驱动（**必须放在阅读器早退之前**）----
+            // ⚠️ 本启动块在 `reader_selection_from_env()` 为 `None` 时会 **提前 return**
+            // （书架场景即如此）⇒ 放在该 return 之后的驱动**永不执行**。
+            // 实测教训：两个驱动原先放在尾部，书架场景下浮层「选目标 / 确认」从未触发。
+            if let Some(id) = env_text(CATEGORY_MOVE_DIALOG_ENV) {
+                ui.invoke_category_menu_picked("category-move".into(), id.into());
+            }
+            if let Some(index) = env_i64(DIALOG_TARGET_ENV) {
+                // 与界面 `target-picked(index)` **同一回调**（对等性纪律）。
+                ui.invoke_category_dialog_target_picked(index as i32);
+            }
+            // ⚠️ **顺序**：选目标必须**先于**确认。此前写成「确认在前、选目标在后」
+            // ⇒ 确认时还没有目标 ⇒ 书籍被移到「未分类」（端到端实测 category_id 仍为 NULL）。
+            if env_flag(CATEGORY_DIALOG_CONFIRM_ENV) {
+                // 与界面浮层「确认」按钮**同一回调**（对等性纪律）。
+                ui.invoke_category_dialog_confirm();
+            }
             if env_flag(SHORTCUTS_ENV) {
                 ui.invoke_shortcuts_toggle();
             }
@@ -5556,6 +5726,10 @@ pub fn run() -> Result<(), slint::PlatformError> {
             // 都配一个等价驱动，且驱动**调用同一回调**（不是复制一份逻辑）。
             if let Some(id) = env_text(SHELF_OPEN_CATEGORY_ENV) {
                 ui.invoke_shelf_category_select(id.into());
+            }
+            // 导入驱动**必须在分类选择之后**（否则导入时作用域仍是「全部书籍」）。
+            if env_flag(SHELF_IMPORT_ENV) {
+                ui.invoke_shelf_import();
             }
             if let Some(spec) = env_text(CATEGORY_ADD_ENV) {
                 // `父id:名称`；无冒号 = 当前选中分类下。

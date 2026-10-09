@@ -408,6 +408,9 @@ pub struct ShelfView {
     pub sort_index: i32,
     /// 计数 Tag 文案。
     pub count_label: String,
+    /// 页头面包屑（V1.1 / 设计稿 C1：「分类：全部书籍 / 科幻 / 中国科幻」）。
+    /// 由 Rust 的 `category_tree::breadcrumb` 给出；界面不拼路径。
+    pub scope_label: String,
     /// 是否显示失效源通知。
     pub notice: bool,
     /// 通知标题。
@@ -438,6 +441,7 @@ impl Default for ShelfView {
             sort_label: String::new(),
             sort_index: 0,
             count_label: String::new(),
+            scope_label: String::new(),
             notice: false,
             notice_title: String::new(),
             notice_body: String::new(),
@@ -499,6 +503,16 @@ pub struct DialogView {
     pub category_dialog_id: String,
     /// 分类操作弹窗的父分类 id（新建/移动的落点；空串 = 根）。
     pub category_dialog_parent_id: String,
+    /// 移动浮层的**书籍**来源 id（V1.1 / 设计稿 C5）。
+    ///
+    /// 空串 = 来源是**分类**（走 `move_category`）；非空 = 来源是**书籍**（走 `move_book`）。
+    /// 两个入口共用同一浮层（C5：「标题与说明不同」），故用本字段区分执行路径。
+    pub move_source_book_id: String,
+    /// 移动浮层**当前选中的目标下标**（V1.1；-1 = 未选）。
+    ///
+    /// ⚠️ 移动态的单选**不能**用 `category_delete_destination` 推导：那是**删除去向**（1..3），
+    /// 移动态下它恒为 1 ⇒ 下标恒为 0 ⇒ 单选**永远停在第一项**（实测缺陷）。
+    pub category_move_target_index: i32,
     /// 「删除分类」：目标分类 id。
     pub category_delete_id: String,
     /// 「删除分类」：目标分类名。
@@ -803,6 +817,9 @@ pub enum BackgroundPayload {
         categories: Vec<CategoryRow>,
         /// 过滤后的行数（用于页头徽标；V1.1）。
         filtered_count: usize,
+        /// 页头面包屑（V1.1 / 设计稿 C1：「全部书籍 / 科幻 / 中国科幻」）。
+        /// 由 `category_tree::breadcrumb` 在**有连接时**算好（`project()` 没有连接）。
+        scope_label: String,
     },
     /// 失败（保留可读信息，不把错误文本当业务分支）。
     Failure {
@@ -843,6 +860,8 @@ pub struct AppState {
     shelf_rows: Vec<ShelfRow>,
     shelf_total: i64,
     shelf_removed: i64,
+    /// 页头面包屑（V1.1 / C1；由书架加载时算好，见 `BackgroundPayload::Shelf`）。
+    shelf_scope_label: String,
     shelf_sort: i32,
     shelf_view: i32,
     shelf_search: String,
@@ -886,6 +905,7 @@ impl AppState {
             shelf_rows: Vec::new(),
             shelf_total: 0,
             shelf_removed: 0,
+            shelf_scope_label: String::new(),
             shelf_sort: SORT_RECENT,
             shelf_view: 0,
             shelf_search: String::new(),
@@ -1215,11 +1235,13 @@ impl AppState {
                 status_text,
                 categories,
                 filtered_count: _,
+                scope_label,
             } => {
                 self.shelf_rows = rows;
                 self.shelf_categories = categories;
                 self.shelf_total = total_count;
                 self.shelf_removed = removed_count;
+                self.shelf_scope_label = scope_label;
                 self.settings = *settings;
                 self.status_text = status_text;
             }
@@ -1731,6 +1753,7 @@ impl AppState {
             search: self.shelf_search.clone(),
             sort_label: sort_label(self.shelf_sort).to_string(),
             sort_index: self.shelf_sort,
+            scope_label: self.shelf_scope_label.clone(),
             count_label: if shelf_empty {
                 "0 本".to_string()
             } else if self.shelf_removed > 0 {
@@ -1841,6 +1864,7 @@ mod tests {
                 status_text: format!("已加载 {request_id}"),
                 categories: Vec::new(),
                 filtered_count: 1,
+                scope_label: String::new(),
             },
         }
     }
