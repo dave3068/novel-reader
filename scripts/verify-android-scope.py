@@ -37,7 +37,12 @@
       （背景：真机实测「点图标即退出」，根因即此。）；
   [8] 阅读页视口回传必须挂在**始终存在**的正文容器上（`.onSizeChanged` 先于 `page == null` 分支）。
       反向对照：把回传挂进「已有页」分支的死锁写法必须被判为失败。
-      （背景：真机实测长期停在「正在排版…（等待正文区域尺寸）」，根因即此死锁。）
+      （背景：真机实测长期停在「正在排版…（等待正文区域尺寸）」，根因即此死锁。）；
+  [13] 阅读时保持屏幕常亮：`MainActivity.kt` 必须持有 `FLAG_KEEP_SCREEN_ON` 的**路由驱动**开关
+      （`addFlags` / `clearFlags` 成对，且由 `ui.route` 观测驱动），决策必须落在纯 Kotlin 的
+      `ScreenOnController.kt`（仅 `ReaderRoute.READER` 保持常亮，其余路由恢复系统息屏）。
+      反向对照：占位页与「只置位、不按路由、从不恢复」的写法必须被判为失败。
+      （背景：真机反馈「阅读中很容易息屏」；视频类应用的常亮做法即此。）
 
 `--check-no-whole-file-read` 语义：**只**执行第 3 项（整本正文传递门禁），其余检查打印显式 SKIP，
 用于聚焦复核该门禁。默认（不带标志）执行全部检查，第 3 项同样是阻断项。
@@ -369,6 +374,9 @@ def check_probe_isolation(files: dict[Path, str]) -> None:
 
 MAIN_ACTIVITY_NAME = "MainActivity.kt"
 
+# [13] 阅读常亮的决策文件（纯 Kotlin；宿主只做窗口标志写入）。
+SCREEN_ON_CONTROLLER_NAME = "ScreenOnController.kt"
+
 # [9] 「构造期访问上下文」形态：单行属性初始化器里出现 applicationContext / this，
 # 且**不是** by lazy（延迟初始化）——真机实测该写法会在 attachBaseContext 之前抛 NPE 闪退。
 INITIALIZER_USES_CONTEXT = re.compile(
@@ -615,6 +623,76 @@ def check_resume_and_chapter_list(files: dict[Path, str]) -> None:
         ok("[12] 关闭与后台均落盘当前位置；目录浮层定位并高亮当前章（纯函数可测）")
 
 
+def check_keep_screen_on(files: dict[Path, str]) -> None:
+    """[13] 阅读时保持屏幕常亮：路由驱动的窗口标志（真机反馈「阅读中很容易息屏」的回归门禁）。
+
+    - 宿主 `MainActivity.kt` 必须持有 `FLAG_KEEP_SCREEN_ON` 开关**对**（`addFlags` + `clearFlags`），
+      且由 `ui.route` 观测驱动 —— 不是 onCreate 里一次性的常开；
+    - 决策必须落在纯 Kotlin 的 `ScreenOnController.kt`（仅 `ReaderRoute.READER` 保持常亮），
+      宿主只做窗口写入，判定可被 JVM 单测覆盖（`ScreenOnControllerTest`）。
+    """
+    print("[13] 阅读时保持屏幕常亮：路由驱动窗口标志（仅阅读页生效，离开即恢复）")
+    activity = next((path for path in files if path.name == MAIN_ACTIVITY_NAME), None)
+    controller = next((path for path in files if path.name == SCREEN_ON_CONTROLLER_NAME), None)
+    if activity is None:
+        skip("[13] 未找到 MainActivity.kt（常亮接线无从校验）")
+        return
+
+    required = (
+        ("窗口标志 FLAG_KEEP_SCREEN_ON", "flag_keep_screen_on"),
+        ("置位调用 addFlags", "addflags("),
+        ("清位调用 clearFlags（离开阅读页恢复系统息屏）", "clearflags("),
+        ("按路由观测驱动（ui 的 route）", "it.route"),
+        ("接上纯 Kotlin 决策 ScreenOnController", "screenoncontroller"),
+        ("路由变化入口 onRouteChanged", "onroutechanged"),
+    )
+    issues: list[str] = []
+    act = files[activity].lower()
+    missing = [label for label, token in required if token not in act]
+    if missing:
+        issues.append("MainActivity.kt 常亮接线缺失：" + "; ".join(missing))
+
+    if controller is None:
+        issues.append(
+            "缺少 ScreenOnController.kt：路由→常亮判定没有可单测的落点"
+            "（判定内联在宿主机里时 JVM 套件覆盖不到）"
+        )
+    else:
+        ctl = files[controller].lower()
+        if "fun onroutechanged(" not in ctl:
+            issues.append("ScreenOnController 缺少 onRouteChanged 入口")
+        if "readerroute.reader" not in ctl:
+            issues.append("ScreenOnController 未以「仅阅读页」判定（缺 readerroute.reader）")
+        if "applyflag(" not in ctl:
+            issues.append("ScreenOnController 未把判定交给窗口回调（缺 applyFlag 调用）")
+
+    if issues:
+        fail("[13] 阅读常亮缺失：" + "; ".join(issues))
+    else:
+        ok("[13] 窗口标志对 + 路由观测 + ScreenOnController（仅阅读页保持常亮）均在位")
+
+    placeholder = (
+        "class mainactivity : componentactivity() { override fun oncreate() { "
+        "setcontent { text(\"novel reader v1\") } } }"
+    )
+    always_on = (
+        "class mainactivity : componentactivity() { override fun oncreate() { "
+        "super.oncreate(); window.addflags(windowmanager.layoutparams.flag_keep_screen_on) } }"
+    )
+
+    def missing_tokens(text: str) -> list[str]:
+        lowered = text.lower()
+        return [label for label, token in required if token not in lowered]
+
+    if not missing_tokens(placeholder) or not missing_tokens(always_on):
+        fail("[13] 反向对照失效：占位页或「无条件常开、从不恢复」的写法竟然通过检查")
+    else:
+        ok(
+            "[13] 反向对照：占位页（无接线）与「只置位、不按路由、从不恢复」的写法"
+            "均会被本检查判为失败"
+        )
+
+
 def check_positive_control() -> None:
     print("[6] 正向对照：扫描规则在内置 fixture 上必须命中（证明非空检查）")
     fixture = {
@@ -763,6 +841,7 @@ def main(argv: list[str] | None = None) -> int:
         skip("[9] 宿主 Context 时序（本模式跳过；由默认模式执行）")
         skip("[10] 阅读交互层（本模式跳过；由默认模式执行）")
         skip("[11] 编码贯通（本模式跳过；由默认模式执行）")
+        skip("[13] 阅读时保持屏幕常亮（本模式跳过；由默认模式执行）")
     else:
         check_fileset(files, core)
         check_business_not_copied(core)
@@ -776,6 +855,7 @@ def main(argv: list[str] | None = None) -> int:
         check_reader_interaction(files)
         check_encoding_pipeline(files)
         check_resume_and_chapter_list(files)
+        check_keep_screen_on(files)
         check_positive_control()
 
     print("-" * 60)
