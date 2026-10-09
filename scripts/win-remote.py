@@ -41,9 +41,11 @@ PASS = os.environ.get("NR_WIN_PASS", "")
 TIMEOUT = int(os.environ.get("NR_WIN_TIMEOUT", "180"))
 EXTRA = os.environ.get("NR_WIN_SSH_OPTS", "").split()
 
+# ⚠️ `publickey` 必须排在**最前**：原为 `password,keyboard-interactive`（强制排除公钥）
+# ⇒ 即便远端已装好免密公钥也用不上，仍会索要口令。
 BASE = ["-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=15",
         "-o", "NumberOfPasswordPrompts=1",
-        "-o", "PreferredAuthentications=password,keyboard-interactive"]
+        "-o", "PreferredAuthentications=publickey,password,keyboard-interactive"]
 
 
 def _drive(argv: list[str], timeout: int, feeder=None):
@@ -63,7 +65,8 @@ def _drive(argv: list[str], timeout: int, feeder=None):
             if not chunk:
                 break
             out += chunk
-            if not sent and b"assword" in out[-300:]:
+            # 仅在**配置了口令**时作答；留空 = 走公钥免密（未装公钥则会失败并如实报错）。
+            if not sent and PASS and b"assword" in out[-300:]:
                 os.write(fd, (PASS + "\n").encode())
                 sent = True
             if feeder:
@@ -127,9 +130,11 @@ def ps_json(script: str, out_marker: str, timeout: int | None = None) -> dict:
 
 
 def _require_env() -> None:
-    missing = [k for k in ("NR_WIN_HOST", "NR_WIN_USER", "NR_WIN_PASS") if not os.environ.get(k)]
+    # `NR_WIN_PASS` **可选**：已装免密公钥时无需提供（口令只经环境变量传入，绝不写文件）。
+    missing = [k for k in ("NR_WIN_HOST", "NR_WIN_USER") if not os.environ.get(k)]
     if missing:
-        sys.exit("缺少环境变量：" + ", ".join(missing) + "（口令只经环境变量传入，不写文件）")
+        sys.exit("缺少环境变量：" + ", ".join(missing)
+                 + "（口令可选：NR_WIN_PASS 只经环境变量传入，绝不写文件）")
 
 
 def cmd_probe(_args: list[str]) -> int:

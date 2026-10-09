@@ -467,10 +467,26 @@ def check_category_reachability_static(desktop_src: dict[str, str]) -> None:
         "NR_CATEGORY_MOVE",
         "NR_CATEGORY_DELETE",
         "NR_BOOK_MOVE",
+        "NR_CATEGORY_DIALOG_CONFIRM",
+        "NR_SHELF_IMPORT",
+        "NR_CATEGORY_MOVE_DIALOG",
+        "NR_DIALOG_TARGET",
         "NR_IMPORT_ORGANIZE",
     ):
         if env not in ui:
             issues.append(f"缺少等价驱动 {env}（界面入口无程序化对等物）")
+
+    # (c2) 界面**入口**必须在位（不只是驱动）。
+    # ⚠️ 2026-10-06 实测踩中：`NR_BOOK_MOVE` 驱动一直在，但书架行**没有**「移动到分类…」
+    # 按钮 ⇒ 功能只能程序化驱动、用户点不到。(c) 只查「驱动存在」查不出这类缺口，故补本项。
+    # ⚠️ 必须匹配**按钮 caption 赋值**而不是裸词：本文件（与 .slint 内）的**注释**里就有
+    # 「移动到分类」四个字，裸词匹配会命中注释 ⇒ 判据空转（实测踩中：移除按钮仍 PASS）。
+    if 'caption: "移动到分类' not in app_slint:
+        issues.append(
+            "书架行缺少「移动到分类…」入口（设计稿 C5）—— 驱动有、界面入口无（用户点不到）"
+        )
+    if '"move" =>' not in ui:
+        issues.append('书架行「移动到分类…」未接线：picked("move") 在 Rust 侧无处理')
 
     # (d) 驱动必须**调用同一回调**，不得复制一份逻辑。
     if "ui.invoke_shelf_category_select" not in ui:
