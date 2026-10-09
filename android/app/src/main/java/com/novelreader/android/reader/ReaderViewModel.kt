@@ -884,18 +884,26 @@ runCatching { hiddenBooks?.load()?.let { hiddenBooksSet.addAll(it) } }
     // ------------------------------------------------------------------ V1.1 书架分类侧栏
 
     /**
-     * 读回分类树并重新装配侧栏（V1.1）。
+     * 读回分类树并重新装配（V1.1）。
      *
      * 层级（`depth`）、直接/合计计数**全部来自核心**；本方法只把扁平行排成深度优先序。
+     * 任一读回失败 ⇒ 如实回显并**保持原状**（不得让界面停在一个核心并未给出的树上）。
      */
     private fun refreshCategories() {
+        val nodes = readCategoryNodes() ?: return
+        val bookCategories = readBookCategories() ?: return
+        applyCategorySnapshot(nodes, bookCategories)
+    }
+
+    /** 读回分类节点；失败时如实回显并返回 `null`。 */
+    private fun readCategoryNodes(): List<CategoryTreeAssembly.Node>? {
         val read = try {
             engine.listCategories()
         } catch (error: NrException) {
             setStatus("读取分类失败（错误码 ${error.rawCode}）")
-            return
+            return null
         }
-        val nodes = read.named.map { (entry, name) ->
+        return read.named.map { (entry, name) ->
             CategoryTreeAssembly.Node(
                 id = entry.id,
                 parentId = entry.parentId,
@@ -905,27 +913,59 @@ runCatching { hiddenBooks?.load()?.let { hiddenBooksSet.addAll(it) } }
                 totalCount = entry.totalBookCount,
             )
         }
-        val collapsed = _ui.value.categories.collapsed
-        val selected = _ui.value.categories.selectedId
+    }
+
+    /** 读回书籍 → 分类映射（直属归属的**唯一**来源）；失败时如实回显并返回 `null`。 */
+    private fun readBookCategories(): Map<Long, Long>? = try {
+        engine.listBookCategories()
+    } catch (error: NrException) {
+        setStatus("读取书籍分类映射失败（错误码 ${error.rawCode}）")
+        null
+    }
+
+    /**
+     * 把读回的分类数据落进状态：节点、侧栏行、计数，以及**当前位置的可见书籍集合**。
+     *
+     * 直属口径（2026-10-09 主人确认）：`> 0` = 直属该分类的书；`-1` = 未分类的书；
+     * `null` = 不过滤（「全部书籍」，宽屏侧栏专用）。集合由核心映射逐本判定 ——
+     * 界面不遍历父子链、不自行派生分类语义。
+     */
+    private fun applyCategorySnapshot(
+        nodes: List<CategoryTreeAssembly.Node>,
+        bookCategories: Map<Long, Long>,
+    ) {
+        val current = _ui.value.categories
         val rootTotal = countInScope(NrScopeKind.ALL)
         val uncategorized = countInScope(NrScopeKind.UNCATEGORIZED)
         val rows = CategoryTreeAssembly.flatten(
             nodes = nodes,
-            collapsed = collapsed,
-            selectedId = selected,
+            collapsed = current.collapsed,
+            selectedId = current.selectedId,
             rootTotalCount = rootTotal,
+            uncategorizedCount = uncategorized,
         )
         update {
             it.copy(
                 categories = it.categories.copy(
                     rows = rows,
+                    nodes = nodes,
+                    bookCategories = bookCategories,
                     rootTotalCount = rootTotal,
                     uncategorizedCount = uncategorized,
                     loading = false,
                 ),
+                visibleBookIds = visibleSetFor(current.selectedId, bookCategories),
             )
         }
     }
+
+    /** 位置 → 可见书籍集合；`null` = 不过滤。 */
+    private fun visibleSetFor(location: Long?, bookCategories: Map<Long, Long>): Set<Long>? =
+        if (location == null) {
+            null
+        } else {
+            bookCategories.filterValues { it == location }.keys
+        }
 
     /** 某作用域下的书籍数（核心给，界面不自己数）。 */
     private fun countInScope(scopeKind: Int): Long = try {
@@ -935,37 +975,44 @@ runCatching { hiddenBooks?.load()?.let { hiddenBooksSet.addAll(it) } }
     }
 
     /**
-     * 选中一个作用域（V1.1）。
+     * 进入一个位置（V1.1；文件管理器式导航）。
      *
-     * [categoryId]：`null` = 全部；`-1` = 未分类；`> 0` = 分类 id（**含子孙**）。
+     * [categoryId]：`null` = 「全部书籍」（不过滤；宽屏侧栏专用）；`-1` = 根层；
+     * `> 0` = 某个分类（可见书籍 = **直属**该分类的书 —— 每本书只出现一次）。
      *
-     * 可见书籍集合由**核心**给出（子树展开在核心完成）；界面只做集合成员判断。
+     * 先读数、成功才切换：任一读回失败 ⇒ 如实回显且**保持原位置**，不得退化成
+     * 「显示全部 / 空书架」（那会让用户以为筛选生效了）。选中的分类若已不存在
+     * （被别处删除）⇒ 回落到根层，不留悬空位置。
      */
     fun onSelectCategory(categoryId: Long?) {
-        val kind = when {
-            categoryId == null -> NrScopeKind.ALL
-            categoryId == CategoryTreeAssembly.UNCATEGORIZED -> NrScopeKind.UNCATEGORIZED
-            else -> NrScopeKind.CATEGORY
+        val nodes = readCategoryNodes() ?: return
+        val bookCategories = readBookCategories() ?: return
+        val normalized = when {
+            categoryId == null -> null
+            categoryId == CategoryTreeAssembly.UNCATEGORIZED -> categoryId
+            nodes.any { it.id == categoryId } -> categoryId
+            else -> CategoryTreeAssembly.UNCATEGORIZED
         }
-        val ids = try {
-            if (kind == NrScopeKind.ALL) null else engine.listBooksInScope(kind, categoryId ?: 0L)
-        } catch (error: NrException) {
-            // 过滤集合取不到时**明确失败**，不退化成「显示全部」——那会让用户以为筛选生效了。
-            setStatus("读取分类书籍失败（错误码 ${error.rawCode}）")
-            return
-        }
-        update {
-            it.copy(
-                visibleBookIds = ids,
-                categories = it.categories.copy(selectedId = categoryId),
-            )
-        }
-        refreshCategories()
+        update { it.copy(categories = it.categories.copy(selectedId = normalized)) }
+        applyCategorySnapshot(nodes, bookCategories)
         refreshShelfFromCatalog()
     }
 
-    /** 选中根「全部书籍」。 */
+    /** 选中根「全部书籍」（宽屏侧栏；不过滤）。 */
     fun onSelectAllBooks() = onSelectCategory(null)
+
+    /**
+     * 返回上一级（窄屏下钻的返回行 / 系统返回键）。
+     *
+     * 顶部分类 ⇒ 根层；根层本身（`-1`）与「全部书籍」（`null`）不动 ——
+     * 是否退出应用由调用方决定。
+     */
+    fun onNavigateUp() {
+        val current = _ui.value.categories.selectedId ?: return
+        if (current == CategoryTreeAssembly.UNCATEGORIZED) return
+        val parent = CategoryTreeAssembly.parentOf(_ui.value.categories.nodes, current)
+        onSelectCategory(parent ?: CategoryTreeAssembly.UNCATEGORIZED)
+    }
 
     /** 展开 / 折叠一个分类（纯视图状态，不触碰核心）。 */
     fun onToggleCategory(categoryId: Long) {
@@ -1112,8 +1159,18 @@ runCatching { hiddenBooks?.load()?.let { hiddenBooksSet.addAll(it) } }
         }
     }
 
-    /** 把一本书移入分类（V1.1）；[categoryId] `-1` = 移回未分类。 */
-    fun onMoveBookToCategory(bookId: Long, categoryId: Long) {
+    /**
+     * 把一本书移入分类（V1.1；2026-10-09 起界面可达）；[categoryId] `-1` = 移回根下（未分类）。
+     *
+     * [label] 仅用于回显文案（界面有书名；测试可不传）。归属变了 ⇒ 用同一读回路径
+     * 重算侧栏与当前位置的可见集合，保证「侧栏计数 / 列表内容」自洽。
+     */
+    fun onMoveBookToCategory(bookId: Long, categoryId: Long, label: String? = null) {
+        if (bookId <= 0L) {
+            // 从未打开过的书没有核心登记，无法归类 —— 明确回显而不是发一个必然失败的请求。
+            setStatus("该书尚未打开过（首次打开后可移入分类）")
+            return
+        }
         launchSerial {
             try {
                 engine.moveBookToCategory(bookId, categoryId)
@@ -1121,12 +1178,20 @@ runCatching { hiddenBooks?.load()?.let { hiddenBooksSet.addAll(it) } }
                 setStatus("移动书籍被拒（错误码 ${error.rawCode}）")
                 return@launchSerial
             }
-            refreshCategories()
-            // 归属变了 ⇒ 当前作用域的可见集合也要重算（可能这本书已不属于当前分类）。
+            val targetName = if (categoryId == CategoryTreeAssembly.UNCATEGORIZED) {
+                "根下（未分类）"
+            } else {
+                _ui.value.categories.nodes.firstOrNull { it.id == categoryId }?.name ?: "分类"
+            }
+            val bookText = if (label.isNullOrBlank()) "该书" else "《$label》"
             val selected = _ui.value.categories.selectedId
             if (selected != null) {
                 onSelectCategory(selected)
+            } else {
+                refreshCategories()
+                refreshShelfFromCatalog()
             }
+            setStatus("已把${bookText}移入「$targetName」")
         }
     }
 
@@ -1868,20 +1933,30 @@ runCatching { hiddenBooks?.load()?.let { hiddenBooksSet.addAll(it) } }
             )
             added = true
         }
-        // 分类作用域过滤（V1.1）：可见集合由**核心**给出（`nr_list_books_in_scope`，
-        // 子树展开在核心完成）；这里只做集合成员判断。
+        // 分类过滤（V1.1；2026-10-09 起为**直属口径**）：可见集合由核心映射逐本判定
+        // （`nr_list_book_categories`）—— 界面不遍历父子链、不自行派生分类语义。
         //
         // ⚠️ **必须无条件执行**（不能只在 `added` 时做）：书架已填充后再切换分类，
         // 目录里没有任何新条目，`added` 为 false —— 若过滤挂在 `added` 下，
         // 「选中分类却不筛选」就会复现（初版即此缺陷，被侧栏测试抓出）。
         //
-        // 注意：**从未打开过**的书在宿主目录里没有 bookId ⇒ 无法判断归属，
-        // 因此在非「全部」作用域下**不显示**（诚实：不知道就不猜）。「全部」作用域不过滤。
+        // 归属判定：
+        // - 「全部书籍」（`null`）：不过滤；
+        // - 根层（`-1`）：未分类的书 + **归属不可判定**的书（宿主目录里没有 bookId，
+        //   或核心映射缺失）—— 后者只在根层显示，否则它们在所有分类下都不可见；
+        // - 具体分类（`> 0`）：仅核心映射指向该分类的书（从不猜测）。
+        val location = _ui.value.categories.selectedId
         val visible = _ui.value.visibleBookIds
-        val books = if (visible == null) {
-            shelf.values.toList()
-        } else {
-            shelf.values.filter { book -> book.bookId != 0L && book.bookId in visible }
+        val books = when {
+            location == null -> shelf.values.toList()
+            location == CategoryTreeAssembly.UNCATEGORIZED -> shelf.values.filter { book ->
+                book.bookId == 0L ||
+                    book.bookId !in _ui.value.categories.bookCategories ||
+                    book.bookId in (visible ?: emptySet())
+            }
+            else -> shelf.values.filter { book ->
+                book.bookId != 0L && book.bookId in (visible ?: emptySet())
+            }
         }
         update { it.copy(shelf = it.shelf.copy(books = books)) }
     }

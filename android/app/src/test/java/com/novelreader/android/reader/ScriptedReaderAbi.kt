@@ -639,8 +639,14 @@ internal class ScriptedReaderAbi(
         v11Code
     }
 
+    /** 最近一次移书请求（`bookId to categoryId`；未请求过为 `null`）。 */
+    var lastBookMove: Pair<Long, Long>? = null
+
     override fun moveBookToCategory(engine: Long, bookId: Long, categoryId: Long): Int =
-        native("moveBookToCategory") { v11Code }
+        native("moveBookToCategory") {
+            lastBookMove = bookId to categoryId
+            v11Code
+        }
 
     override fun deleteCategory(
         engine: Long,
@@ -810,11 +816,15 @@ internal class ScriptedReaderAbi(
     /** 可编排的映射载荷（`bookId → categoryId` 编码为 16 字节行）。 */
     var bookCategoriesBytes: ByteArray = ByteArray(0)
 
+    /** 映射读取的失败注入（非 0 时返回 `null` = 失败）。 */
+    var bookCategoriesCode: Int = NrErrors.NR_ERR_OK
+
     override fun listBookCategories(
         engine: Long,
         outBatch: ByteArray,
         outBuffer: LongArray,
     ): ByteArray? = native("listBookCategories") {
+        if (bookCategoriesCode != NrErrors.NR_ERR_OK) return@native null
         val slots = slotsFor(bookCategoriesBytes)
         val batch = writer(NrBookCategoryBatch.STRUCT_SIZE)
         batch.putInt(0, bookCategoriesBytes.size / NrBookCategoryEntry.STRUCT_SIZE)

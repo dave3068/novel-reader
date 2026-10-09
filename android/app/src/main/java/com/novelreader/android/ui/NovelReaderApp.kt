@@ -68,13 +68,15 @@ fun NovelReaderApp(
                         onOpenHistory = viewModel::openHistory,
                         onSelectCategory = viewModel::onSelectCategory,
                         onToggleCategory = viewModel::onToggleCategory,
-                        onCreateCategory = { name -> viewModel.onCreateCategory(name) },
+                        onNavigateUp = viewModel::onNavigateUp,
+                        onCreateCategory = { name, parent -> viewModel.onCreateCategory(name, parent) },
                         onRenameCategory = viewModel::onRenameCategory,
                         categoryTargets = state.categoryTargets,
                         onLoadCategoryTargets = viewModel::onLoadCategoryTargets,
                         onClearCategoryTargets = viewModel::clearCategoryTargets,
                         onMoveCategory = viewModel::onMoveCategory,
                         onDeleteCategory = viewModel::onDeleteCategory,
+                        onMoveBookToCategory = viewModel::onMoveBookToCategory,
                     )
 
                     ReaderRoute.HISTORY -> HistoryScreen(

@@ -18,7 +18,8 @@ import org.junit.Test
  *
  * 分两部分：
  * 1. **纯装配**（[CategoryTreeAssembly]）—— 折叠语义、孤儿容错、顺序保持；
- * 2. **门面接线** —— 选中作用域时可见集合由**核心**给出，界面只做成员判断。
+ * 2. **门面接线** —— 选中位置时可见集合由**核心映射**（`nr_list_book_categories`）
+ *    逐本判定（直属口径，2026-10-09 起）；界面只做成员判断，不遍历父子链。
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class CategorySidebarTest {
@@ -44,30 +45,6 @@ class CategorySidebarTest {
         )
     }
 
-
-    /** 造 `nr_category` 批次：**所有表头在前、全部名称在后**（不是逐行交错）。 */
-    private fun categoryBatch(vararg rows: Triple<Long, Long, Pair<Int, String>>): ByteArray {
-        val names = rows.map { it.third.second.toByteArray(Charsets.UTF_8) }
-        val headerSize = com.novelreader.android.core.NrCategoryEntry.STRUCT_SIZE * rows.size
-        val total = headerSize + names.sumOf { it.size }
-        val buf = java.nio.ByteBuffer.allocate(total).order(java.nio.ByteOrder.LITTLE_ENDIAN)
-        var cursor = headerSize
-        rows.forEachIndexed { index, row ->
-            val base = index * com.novelreader.android.core.NrCategoryEntry.STRUCT_SIZE
-            buf.putLong(base, row.first)
-            buf.putLong(base + 8, row.second)
-            buf.putLong(base + 16, 1L)
-            buf.putLong(base + 24, 3L)
-            buf.putInt(base + 32, row.third.first)
-            buf.putInt(base + 36, cursor)
-            buf.putInt(base + 40, names[index].size)
-            cursor += names[index].size
-        }
-        val out = buf.array()
-        var at = headerSize
-        names.forEach { it.copyInto(out, at); at += it.size }
-        return out
-    }
 
     // ------------------------------------------------------------------ 纯装配
 
@@ -147,66 +124,77 @@ class CategorySidebarTest {
     }
 
     @Test
-    fun selectingACategoryAsksTheCoreForTheVisibleSet() = runTest {
-        // 可见集合必须**由核心给**（子树展开在核心完成）—— 界面不遍历父子链。
-        val abi = abiWithTree().apply { scopeIds = listOf(7L, 8L) }
+    fun selectingACategoryFiltersToItsDirectBooks() = runTest {
+        // 直属口径（2026-10-09）：可见集合 = 核心映射中 categoryId == 所选分类的书；
+        // 界面只做映射查询，不遍历父子链、不再向核心要「含子孙」集合。
+        val abi = abiWithTree().apply {
+            bookCategoriesBytes = bookCategoryBatch(7L to 1L, 8L to 1L, 9L to -1L)
+        }
         val vm = viewModel(abi)
 
         vm.onSelectCategory(1L)
 
         assertEquals(setOf(7L, 8L), vm.ui.value.visibleBookIds)
-        // 侧栏刷新会顺带统计「全部 / 未分类」，故查请求列表而非最后一次。
         assertTrue(
-            "应有一次 CATEGORY/1 的作用域请求，实际：${abi.scopeRequests}",
-            (NrScopeKind.CATEGORY to 1L) in abi.scopeRequests,
+            "不得再出现「含子孙」作用域请求（口径已改直属），实际：${abi.scopeRequests}",
+            abi.scopeRequests.none { it.first == NrScopeKind.CATEGORY },
         )
         assertEquals(1L, vm.ui.value.categories.selectedId)
         assertTrue(vm.ui.value.categories.rows.first { it.id == 1L }.selected)
+        assertEquals(setOf(7L, 8L, 9L), vm.ui.value.categories.bookCategories.keys)
     }
 
     @Test
-    fun selectingUncategorizedUsesTheUncategorizedScopeKind() = runTest {
-        val abi = abiWithTree().apply { scopeIds = listOf(9L) }
+    fun selectingTheRootFiltersToUncategorizedBooks() = runTest {
+        val abi = abiWithTree().apply {
+            bookCategoriesBytes = bookCategoryBatch(9L to -1L, 7L to 1L)
+        }
         val vm = viewModel(abi)
 
         vm.onSelectCategory(CategoryTreeAssembly.UNCATEGORIZED)
 
-        assertTrue((NrScopeKind.UNCATEGORIZED to 0L) in abi.scopeRequests)
         assertEquals(setOf(9L), vm.ui.value.visibleBookIds)
+        assertEquals(CategoryTreeAssembly.UNCATEGORIZED, vm.ui.value.categories.selectedId)
     }
 
     @Test
-    fun selectingAllBooksClearsTheFilterWithoutCallingTheCore() = runTest {
-        val abi = abiWithTree()
+    fun selectingAllBooksClearsTheFilterWithoutAskingForACategorySet() = runTest {
+        val abi = abiWithTree().apply { bookCategoriesBytes = bookCategoryBatch(7L to 1L) }
         val vm = viewModel(abi)
 
         vm.onSelectCategory(1L)
         vm.onSelectAllBooks()
 
-        // 根「全部书籍」不过滤 ⇒ 不需要问核心要集合。
+        // 「全部书籍」= 不过滤（宽屏侧栏专用）；也不得产生任何「含子孙」作用域请求。
         assertNull(vm.ui.value.visibleBookIds)
         assertNull(vm.ui.value.categories.selectedId)
-        // 选中分类那一次会请求 CATEGORY/1；「全部」不应再产生任何 CATEGORY 请求。
         assertEquals(
-            "「全部」不得再向核心要分类集合",
-            1,
+            "「全部书籍」不得向核心要分类集合",
+            0,
             abi.scopeRequests.count { it.first == NrScopeKind.CATEGORY },
         )
     }
 
     @Test
-    fun scopeReadFailureSurfacesInsteadOfSilentlyShowingEverything() = runTest {
-        val abi = abiWithTree().apply { v11Code = NrErrors.NR_ERR_INTERNAL }
+    fun mapReadFailureKeepsThePreviousFilterAndSurfaces() = runTest {
+        val abi = abiWithTree().apply {
+            bookCategoriesBytes = bookCategoryBatch(7L to 1L, 8L to 2L)
+        }
         val vm = viewModel(abi)
 
         vm.onSelectCategory(1L)
+        assertEquals(setOf(7L), vm.ui.value.visibleBookIds)
 
-        // 取不到可见集合时必须**明确失败**：若退化成「显示全部」，用户会以为筛选生效了。
+        // 映射读取失败 ⇒ 明确回显且**保持**原过滤与选中（不得退化成「显示全部 / 空书架」）。
+        abi.bookCategoriesCode = NrErrors.NR_ERR_INTERNAL
+        vm.onSelectCategory(2L)
+
         assertTrue(
-            "应回显失败，实际：${vm.ui.value.status}",
-            vm.ui.value.status.contains("读取分类"),
+            "应回显映射读取失败，实际：${vm.ui.value.status}",
+            vm.ui.value.status.contains("读取书籍分类映射失败"),
         )
-        assertNull("失败时不得把过滤集合设成空集（那会显示空书架）", vm.ui.value.visibleBookIds)
+        assertEquals("失败时不得切换选中位置", 1L, vm.ui.value.categories.selectedId)
+        assertEquals(setOf(7L), vm.ui.value.visibleBookIds)
     }
 
     @Test
@@ -300,26 +288,39 @@ class CategorySidebarTest {
     )
 
     @Test
-    fun shelfShowsOnlyBooksTheCorePutInScope() = runTest {
-        val abi = abiWithTree().apply { scopeIds = listOf(7L) }
-        val vm = viewModel(abi, Catalog(listOf(entry("在作用域内.txt", 7L), entry("作用域外.txt", 8L))))
+    fun shelfShowsOnlyDirectBooksOfTheSelectedCategory() = runTest {
+        // 直属口径（2026-10-09）：只显示核心映射指向该分类的书（7→1 在、8→2 不在）。
+        val abi = abiWithTree().apply { bookCategoriesBytes = bookCategoryBatch(7L to 1L, 8L to 2L) }
+        val vm = viewModel(abi, Catalog(listOf(entry("直属.txt", 7L), entry("别类.txt", 8L))))
 
         vm.openShelf()
         vm.onSelectCategory(1L)
 
-        assertEquals(listOf("在作用域内.txt"), vm.ui.value.shelf.books.map { it.displayName })
+        assertEquals(listOf("直属.txt"), vm.ui.value.shelf.books.map { it.displayName })
     }
 
     @Test
     fun booksWithoutACoreIdAreHiddenUnderASpecificScope() = runTest {
-        // 从未打开过的书没有 bookId ⇒ 归属未知。非「全部」作用域下**不猜**，直接不显示。
-        val abi = abiWithTree().apply { scopeIds = listOf(7L) }
+        // 从未打开过的书没有 bookId ⇒ 归属未知。具体分类下**不猜**，直接不显示。
+        val abi = abiWithTree().apply { bookCategoriesBytes = bookCategoryBatch(7L to 1L) }
         val vm = viewModel(abi, Catalog(listOf(entry("已知归属.txt", 7L), entry("归属未知.txt", null))))
 
         vm.openShelf()
         vm.onSelectCategory(1L)
 
         assertEquals(listOf("已知归属.txt"), vm.ui.value.shelf.books.map { it.displayName })
+    }
+
+    @Test
+    fun booksWithoutACoreIdAppearAtTheRoot() = runTest {
+        // 根层是「归属不可判定」的书唯一可见的位置 —— 否则它们在所有分类下都会消失。
+        val abi = abiWithTree().apply { bookCategoriesBytes = bookCategoryBatch(7L to 1L) }
+        val vm = viewModel(abi, Catalog(listOf(entry("已知归属.txt", 7L), entry("归属未知.txt", null))))
+
+        vm.openShelf()
+        vm.onSelectCategory(CategoryTreeAssembly.UNCATEGORIZED)
+
+        assertEquals(listOf("归属未知.txt"), vm.ui.value.shelf.books.map { it.displayName })
     }
 
     @Test
