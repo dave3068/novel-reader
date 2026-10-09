@@ -3,15 +3,18 @@ package com.novelreader.android
 import android.content.Context
 import android.net.Uri
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.lifecycleScope
 import com.novelreader.android.core.NrAbiConstants
 import com.novelreader.android.reader.HostOpenTarget
 import com.novelreader.android.reader.HostSourceResolver
 import com.novelreader.android.reader.ReaderViewModel
+import com.novelreader.android.reader.ScreenOnController
 import com.novelreader.android.source.AndroidSafKeyValue
 import com.novelreader.android.source.HiddenBooksPrefsStore
 import com.novelreader.android.source.ReaderAnchorPrefsStore
@@ -20,18 +23,24 @@ import com.novelreader.android.source.SafHost
 import com.novelreader.android.source.SafWindowProviderHolder
 import com.novelreader.android.ui.NovelReaderApp
 import java.io.File
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 
 /**
  * 应用唯一 Activity：挂载三页面外壳 [NovelReaderApp] 并完成宿主接线。
  *
- * # 本文件承担的三件事（此前无人认领的「宿主接线」缺口）
+ * # 本文件承担的职责（此前无人认领的「宿主接线」缺口）
  *
  * 1. **挂载应用外壳**：`setContent { NovelReaderApp(...) }`。此前本 Activity 只渲染 AN1 的
  *    构建标记页（白屏 + 居中标题），装机后既无书架也无任何可交互控件；
  * 2. **注册系统文件选择器**：`ActivityResultContracts.OpenDocument` → [SafHost]；
  *    持久读权限由 `SafBookSource.intake` 内部取得（`takePersistableReadPermission`），本层不重复申请；
  * 3. **给引擎接上平台窗口来源**：把进程级 [SafWindowProviderHolder.shared] 传给
- *    `productionFactory`，使 SAF 可定位来源能按窗口读取；文件源与私有缓存副本走既有入口。
+ *    `productionFactory`，使 SAF 可定位来源能按窗口读取；文件源与私有缓存副本走既有入口；
+ * 4. **阅读时保持屏幕常亮**：观测路由并把 `FLAG_KEEP_SCREEN_ON` 写入窗口 —— 仅阅读页生效，
+ *    离开阅读页（书架/设置/历史）或退到后台即恢复系统息屏；判定与去重在 [ScreenOnController]
+ *    （纯 Kotlin，有 JVM 单测），本层只做窗口写入与路由观测。
  *
  * 构建标记（A-T7 的真机核对项）由 [NovelReaderApp] 在书架页以角标形式显示，未丢失。
  *
@@ -140,6 +149,25 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         safHost = SafHost(applicationContext)
+
+        // 阅读时保持屏幕常亮（`FLAG_KEEP_SCREEN_ON`，无需任何权限；视频类应用同款做法）。
+        // - 仅阅读页置位；离开阅读页（书架/设置/历史）立即清位，恢复正常息屏；
+        // - 退到后台时窗口不可见，系统自动忽略该标志 —— 无需感知生命周期；
+        // - 判定与去重在 [ScreenOnController]（纯 Kotlin，有 JVM 单测），本层只做窗口写入。
+        val screenOn = ScreenOnController { keepOn ->
+            if (keepOn) {
+                window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            } else {
+                window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+        }
+        lifecycleScope.launch {
+            readerViewModel.ui
+                .map { it.route }
+                .distinctUntilChanged()
+                .collect { route -> screenOn.onRouteChanged(route) }
+        }
+
         setContent {
             NovelReaderApp(
                 onImportRequest = { importLauncher.launch(IMPORT_MIME_TYPES) },
