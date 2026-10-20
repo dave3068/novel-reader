@@ -38,6 +38,8 @@ jniLibs/
 *.iml
 .vscode/
 local.properties
+.env.local
+.env.*.local
 .DS_Store
 Thumbs.db
 
