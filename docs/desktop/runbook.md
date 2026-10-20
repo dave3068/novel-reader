@@ -3,6 +3,17 @@
 适用卡片：DT5（`t_47a9bed4`）；范围：Linux X11 Release 冒烟与数据安全回归的可复现操作。
 Windows / Wayland 的打包与验证路径见 DT6 文档（同一目录），本文件不覆盖。
 
+## 0. 加载本机配置
+
+首次使用可将 `.env.local.example` 复制为 `.env.local`，仅填写本机所需的 `NR_WIN_HOST`
+和 `NR_WIN_USER` 等值；该文件已被 Git 忽略。每个 Bash 会话执行：
+
+```bash
+source scripts/load-local-env.sh
+```
+
+脚本会导出 `NR_PROJECT_DIR`，并加载本机配置；不要把真实主机地址、用户名或口令写进跟踪文件。
+
 ## 1. 环境前提
 
 | 项 | 值 / 命令 |
