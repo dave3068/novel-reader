@@ -611,7 +611,7 @@
         "fonts_source": "Windows 自带中文字体；Noto 系列需用户安装（本卡不随包分发字体）",
         "distro_packages_debian": []
       },
-      "verification_gate": "已完成（2026-10-02，${NR_WIN_HOST}）：pwsh -File desktop\\packaging\\windows\\package-windows.ps1 -OutDir dist -NoBuild -Force → 启动 novel-reader.exe 并用 NR_* 驱动核对；证据 results/desktop/windows-msvc.json（run_id=20261002T221500Z, result=PASS）。复现需：rustc 1.98.0 + msvc target + MSVC 14.44 + Windows SDK + pwsh 7",
+      "verification_gate": "已完成（2026-10-02；具体主机信息保存在本地环境配置中）：pwsh -File desktop\\packaging\\windows\\package-windows.ps1 -OutDir dist -NoBuild -Force → 启动 novel-reader.exe 并用 NR_* 驱动核对；证据 results/desktop/windows-msvc.json（result=PASS）。复现需：rustc + msvc target + MSVC + Windows SDK + pwsh",
       "status": "verified",
       "status_label": "通过",
       "status_evidence": {
@@ -622,7 +622,7 @@
         "result": "PASS",
         "target": "x86_64-pc-windows-msvc",
         "binary_sha256": "761eac7741f984f084da3424cd3561496312fd38a2640f07044f41e6243b2b23",
-        "host": "${NR_WIN_HOST}（Windows 10/AMD64）",
+        "host": "本地 Windows 验证主机（地址由 NR_WIN_HOST 提供，不写入版本库）",
         "summary": "0.5.0 官方口径四步全绿（含 V1.1 书架界面 15 处修复 + 导入归入当前分类 + 移回根可辨识）：MSVC 构建 exit 0（exe 22,117,376 B）→ 打包 7 文件 MANIFEST 6/6（LF，0 CR）→ exe 哈希与本机基准一致 → NR_* 启动自退且 stderr 空；VERSION=0.5.0",
         "toolchain": "rustc 1.98.0 / x86_64-pc-windows-msvc / VS 2022 BuildTools（vcvars64）/ pwsh 7（ZIP 免安装）",
         "evidence_doc": "results/desktop/windows-msvc-0.5.0.json"
@@ -631,8 +631,8 @@
       "programmatic_verification": {
         "conclusion": "MSVC 官方口径四步全绿（0.5.0，含 V1.1 全部界面修复）",
         "date": "2026-10-07",
-        "host": "${NR_WIN_HOST}（Windows 10/AMD64）",
-        "transport": "SSH（${NR_WIN_HOST}:22）程序化执行；**不使用 RDP**（图形界面无法产出可核验的结构化结果）",
+        "host": "本地 Windows 验证主机（详细系统与地址信息仅保存在本地）",
+        "transport": "SSH（目标由 NR_WIN_HOST 提供，端口使用 SSH 配置）；**不使用 RDP**（图形界面无法产出可核验的结构化结果）",
         "artifact": "dist/novel-reader-0.5.0-windows-x86_64/novel-reader.exe",
         "artifact_sha256": "761eac7741f984f084da3424cd3561496312fd38a2640f07044f41e6243b2b23",
         "artifact_bytes": 22117376,
@@ -649,22 +649,22 @@
         },
         "obstacle_encountered": "Windows 自带 tar.exe（bsdtar）拒绝本项目 tar.gz，报 `Cannot extract through symlink`（把归档内 dlls/、VERSION 等条目判为符号链接）→ 改用逐文件 scp 后正常。若日后在 Windows 侧分发，建议改用 zip。",
         "evidence": "results/verify/windows-startup-verify.md",
-        "not_covered": "DPI 100/125/150%、原生picker、字体族切换、exe 内嵌图标资源、干净环境安装仍未验证；**主人人工实测的是最早的 mingw-gnu 产物（[LOCAL_WINDOWS_BINARY_SHA256]…），不自动适用于任何后续 MSVC 代**",
+        "not_covered": "DPI 100/125/150%、原生picker、字体族切换、exe 内嵌图标资源、干净环境安装仍未验证；历史人工验证只适用于当时的 mingw-gnu 产物，不自动适用于后续 MSVC 版本",
         "gate_impact": "无：status 保持 pending。程序化验证覆盖的是启动路径，不满足 status=verified 所需的 MSVC 口径 result=PASS 证据"
       },
       "manual_verification": {
-        "conclusion": "可正常使用（主人口头确认）",
+        "conclusion": "曾有人工验证记录（不作为程序化门禁证据）",
         "date": "2026-10-02",
-        "verified_by": "项目主人（owner，人工操作；非程序化取证）",
-        "artifact": "dist/novel-reader-0.3.0-windows-x86_64",
-        "artifact_note": "mingw-w64 交叉编译产物（target=x86_64-pc-windows-gnu，linker=x86_64-w64-mingw32-gcc），非官方 MSVC 口径",
+        "verified_by": "身份与设备信息仅保存在本地记录中",
+        "artifact": "历史 mingw-gnu 构建产物（具体本地路径不入库）",
+        "artifact_note": "mingw-w64 交叉编译产物，非官方 MSVC 口径",
         "binary": "novel-reader.exe",
-        "binary_sha256": "[LOCAL_WINDOWS_BINARY_SHA256]",
+        "binary_sha256": "仅保存在本地验证记录中",
         "binary_file_type": "PE32+ executable (GUI) x86-64 (stripped to external PDB), for MS Windows",
         "manifest_self_check": "sha256sum -c MANIFEST.sha256 → exit 0，6/6 成功",
-        "system_version": "未记录（主人未提供具体 Windows 版本号/build）",
-        "evidence": "results/verify/manual-verification-windows-android.md",
-        "not_covered": "主人未逐项复核 unverified_items 的全部细项；尤其 MSVC 构建/打包口径、vcruntime140.dll 依赖、DPI/分页一致性、字体族切换、exe 图标资源嵌入均未逐项复核，仍为待验证",
+        "system_version": "未记录；具体主机信息仅保存在本地",
+        "evidence": "本地验证记录（不纳入版本库）",
+        "not_covered": "未逐项复核 unverified_items 的全部细项；尤其 MSVC 构建/打包口径、vcruntime140.dll 依赖、DPI/分页一致性、字体族切换、exe 图标资源嵌入均未逐项复核，仍为待验证",
         "gate_impact": "无：人工确认不满足 status=verified 的程序化证据要求（须 result=PASS 的证据文件），status 保持 pending"
       },
       "unverified_items": [
@@ -675,7 +675,7 @@
         "中文字体（微软雅黑/宋体）与 Noto 字体族切换的实际表现",
         "应用图标的 exe 内嵌资源（需 rc.exe 资源编译；本轮只随包分发 novel-reader.ico）",
         "发布目录在干净 Windows 环境的安装验证（本次为主机原地运行）",
-        "主人人工确认未记录具体 Windows 版本号/build（程序化证据中的详细主机信息不纳入版本库）"
+        "历史人工验证未记录具体 Windows 版本号/build（程序化证据中的详细主机信息不纳入版本库）"
       ],
       "defects_found_and_fixed": [
         "MANIFEST.sha256 原为 CRLF ⇒ 发布文档所称的 sha256sum -c MANIFEST.sha256 在 Linux/macOS 上整体失败（实测 6 项全报 FAILED open or read）；已改为显式 LF。",
