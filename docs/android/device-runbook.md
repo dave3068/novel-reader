@@ -7,28 +7,20 @@
 > AN6 的完成定义只覆盖「可构建 + 可校验」；所有真机观察项在下表一律标记 `待验证`，
 > 由 V-AN2 卡在具备设备后执行并写入 `results/verify/android-device-verify.md`。
 
-> **2026-10-02 人工确认（不改变上述口径）**：主人已在真实 Android 真机人工确认
-> **`android/app/build/outputs/apk/debug/app-debug.apk`**（**注意：不是 `dist/app-debug.apk`**）
-> 「可正常使用」。该 APK 的实测指纹：sha256 `[LOCAL_APK_SHA256]`、
-> 26848391 B、`BUILD_MARKER=v1-gbk-resume-2026-09-30`（标记实测在 **`classes5.dex`**）、
-> 内嵌 `lib/arm64-v8a/libnr_jni.so` sha256 `[LOCAL_JNI_SHA256]c6d126ee6a60a7a89d9113f1f3d4d02331e954327d272329479480e4`
-> （**等于**源码树 `android/app/src/main/jniLibs/arm64-v8a/libnr_jni.so`，即代码确已入包）。
-> 记录见 `results/verify/manual-verification-windows-android.md`。
-> **未逐项复核、仍为「待验证」**：旋转 / 后台恢复 / 系统返回 / JNI 取消 / 权限失效 / 进程重建 /
-> SAF 持久授权细项 / DPI 与字体回退 / 功耗；**机型与系统版本未记录**。
+> **隐私说明**：与具体设备、人工验收者或本地构建产物有关的记录不纳入版本库；
+> 如需保留，请存放在被忽略的 `results/` 或项目外部的本地目录。
+> 本文不据此宣称真机验收通过；未逐项复核的设备行为均保持「待验证」。
 
 ## 1. 分发包与构建标记（BUILD_MARKER）核对方式
 
 | 文件 | 用途 | 签名状态 | 安装方式 |
 |---|---|---|---|
-| `android/app/build/outputs/apk/debug/app-debug.apk` | **2026-10-02 主人人工确认可正常使用的包**（sha256 `[LOCAL_APK_SHA256]…`，26848391 B） | 已签名（Android Debug 调试签名） | `adb install -r` 或拷入手机点击安装 |
-| `dist/app-debug.apk` | 历史分发包（sha256 `[LOCAL_APK_SHA256]…`，26813023 B，标记同为 `v1-gbk-resume-2026-09-30`） | 已签名（Android Debug 调试签名） | `adb install -r` 或拷入手机点击安装 |
-| `dist/app-release-signed.apk` | **Release 正式签名包（L1 已闭环）** | **已签名**（APK Signature Scheme **v3**；证书 SHA-256 `[LOCAL_CERT_FINGERPRINT]…6982dd`） | `adb install -r dist/app-release-signed.apk`（可安装） |
+| `android/app/build/outputs/apk/debug/app-debug.apk` | 当前工作区构建的 Debug 包；以本地构建信息文件核对版本与哈希 | 已签名（Android Debug 调试签名） | `adb install -r` 或拷入手机点击安装 |
+| `dist/app-debug.apk` | 本地历史分发包；版本与哈希以本机 `BUILD-INFO.md` 为准 | 已签名（Android Debug 调试签名） | `adb install -r` 或拷入手机点击安装 |
+| `dist/app-release-signed.apk` | Release 签名包；证书指纹仅在本机发布记录中核对 | 已签名 | `adb install -r dist/app-release-signed.apk` |
 
-> ⚠️ **两个 `app-debug.apk` 并不同源**：构建标记相同，但 `dist/app-debug.apk` 内嵌
-> `libnr_jni.so` 为 `[LOCAL_JNI_SHA256]…`，**不等于**源码树当前的 `[LOCAL_JNI_SHA256]…`（源码树 `.so` 于 2026-10-02 20:27 重编）。
-> 这是 `scripts/verify-v1-release.py` 报「APK 内 JNI `.so` 与源码树预编译 `.so` sha256 不一致」的成因。
-> **人工确认与程序化门禁都指向同一结论**：`dist/` 下的分发包已过期，需重新出包（见 `dist/BUILD-INFO.md`）。
+> ⚠️ 两个 `app-debug.apk` 可能不是同一构建。请用本机 `BUILD-INFO.md` 和
+> `scripts/verify-v1-release.py` 比较 APK 内 JNI 库与源码树库的哈希；不要将本地构建指纹写入公开文档。
 
 APK 大小、sha256 与本次构建标记以 `dist/BUILD-INFO.md` 为准（由 `scripts/build-android-apk.sh` 自动写入）。
 

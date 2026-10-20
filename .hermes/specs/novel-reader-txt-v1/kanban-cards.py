@@ -22,6 +22,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+LOCAL_REPO = os.environ.get("NR_PROJECT_DIR") or str(Path(__file__).resolve().parents[3])
 REPO = "${NR_PROJECT_DIR}"
 SPEC_ROOT = f"{REPO}/.hermes/specs/novel-reader-txt-v1"
 BOARD = "novel-reader-txt-v1"
@@ -66,7 +67,7 @@ CARDS: list[dict] = [
 - 不得降低或改写规格里的验收标准。""",
         dod="`results/gates/gate-0-baseline.md` 存在，四项内容齐全且命令输出为真实粘贴；延期项与 now-lane 边界有明确结论。",
         commands=[
-            ("cd " + REPO + " && sha256sum .hermes/specs/novel-reader-txt-v1/spec.md .hermes/specs/novel-reader-txt-v1/design.md .hermes/specs/novel-reader-txt-v1/*/spec.md", "exit 0，输出 5 个哈希并写入 gate-0"),
+            ("cd \"$NR_PROJECT_DIR\" && sha256sum .hermes/specs/novel-reader-txt-v1/spec.md .hermes/specs/novel-reader-txt-v1/design.md .hermes/specs/novel-reader-txt-v1/*/spec.md", "exit 0，输出 5 个哈希并写入 gate-0"),
             ("rustc --version && cargo --version && fc-match sans-serif:lang=zh-cn && ls /opt/dev-tools/android-sdk/ndk/", "exit 0，版本与中文字体匹配结果写入 gate-0"),
             ("source /opt/dev-tools/slint-libs/slint-env.sh && pkg-config --modversion fontconfig freetype2", "exit 0，Slint 编译依赖可用"),
         ],
@@ -92,10 +93,10 @@ CARDS: list[dict] = [
 - 不得引入浮动依赖，必须锁定版本。""",
         dod="`cargo check` 对五个 crate 全部通过；错误码与 ABI 版本有单测覆盖；`cargo tree -p reading-core` 无 UI/Android 依赖。",
         commands=[
-            ("cd " + REPO + " && cargo check -p reading-core -p reading-source -p reading-index -p reading-storage -p reading-ffi", "exit 0"),
-            ("cd " + REPO + " && cargo test -p reading-core --release -- error_codes abi_version", "exit 0 且测试数 > 0"),
-            ("cd " + REPO + " && cargo tree -p reading-core --edges normal", "不含 slint / android / tokio-tungstenite 等 UI 或网络依赖"),
-            ("cd " + REPO + " && python3 scripts/verify-core-scope.py", "exit 0，核心无 UI/Android/网络依赖，无 Synthetic/空 External 生产数据源"),
+            ("cd \"$NR_PROJECT_DIR\" && cargo check -p reading-core -p reading-source -p reading-index -p reading-storage -p reading-ffi", "exit 0"),
+            ("cd \"$NR_PROJECT_DIR\" && cargo test -p reading-core --release -- error_codes abi_version", "exit 0 且测试数 > 0"),
+            ("cd \"$NR_PROJECT_DIR\" && cargo tree -p reading-core --edges normal", "不含 slint / android / tokio-tungstenite 等 UI 或网络依赖"),
+            ("cd \"$NR_PROJECT_DIR\" && python3 scripts/verify-core-scope.py", "exit 0，核心无 UI/Android/网络依赖，无 Synthetic/空 External 生产数据源"),
         ],
         evidence="results/rc1-workspace.md",
     ),
@@ -117,9 +118,9 @@ CARDS: list[dict] = [
 - 不得在窗口层做编码转换（编码是 RC3 的职责）。""",
         dod="窗口上限、UTF-8 边界修正、EOF 语义、指纹稳定性均有单测；压力档夹具可在本机生成且单次物化字节 ≤ 256 KiB。",
         commands=[
-            ("cd " + REPO + " && python3 scripts/generate-fixtures.py --profile smoke --seed 20260912 --output /tmp/nr-smoke", "exit 0，生成 manifest.json"),
-            ("cd " + REPO + " && cargo test -p reading-source --release -- bounded_window fingerprint utf8_boundary", "exit 0 且测试数 > 0"),
-            ("cd " + REPO + " && python3 scripts/generate-fixtures.py --profile pressure --seed 20260912 --output /tmp/nr-pressure && cargo test -p reading-source --release -- max_window_cap --test-threads=1", "exit 0，单次窗口 ≤ 262144 字节有断言"),
+            ("cd \"$NR_PROJECT_DIR\" && python3 scripts/generate-fixtures.py --profile smoke --seed 20260912 --output /tmp/nr-smoke", "exit 0，生成 manifest.json"),
+            ("cd \"$NR_PROJECT_DIR\" && cargo test -p reading-source --release -- bounded_window fingerprint utf8_boundary", "exit 0 且测试数 > 0"),
+            ("cd \"$NR_PROJECT_DIR\" && python3 scripts/generate-fixtures.py --profile pressure --seed 20260912 --output /tmp/nr-pressure && cargo test -p reading-source --release -- max_window_cap --test-threads=1", "exit 0，单次窗口 ≤ 262144 字节有断言"),
         ],
         evidence="results/rc2-source.md",
     ),
@@ -142,8 +143,8 @@ CARDS: list[dict] = [
 - 不得把低可信度结果伪装成高可信度。""",
         dod="七类编码夹具各有断言；低可信度场景返回可覆盖状态；原文件 sha256 在切换编码前后一致。",
         commands=[
-            ("cd " + REPO + " && cargo test -p reading-source --release -- encoding", "exit 0 且覆盖 BOM/UTF-8/UTF-16LE/UTF-16BE/GB18030/GBK/Big5"),
-            ("cd " + REPO + " && cargo test -p reading-source --release -- encoding_override_keeps_file_untouched", "exit 0，切换编码后原文件哈希不变"),
+            ("cd \"$NR_PROJECT_DIR\" && cargo test -p reading-source --release -- encoding", "exit 0 且覆盖 BOM/UTF-8/UTF-16LE/UTF-16BE/GB18030/GBK/Big5"),
+            ("cd \"$NR_PROJECT_DIR\" && cargo test -p reading-source --release -- encoding_override_keeps_file_untouched", "exit 0，切换编码后原文件哈希不变"),
         ],
         evidence="results/rc3-encoding.md",
     ),
@@ -165,8 +166,8 @@ CARDS: list[dict] = [
 - 章节扫描不得阻塞调用方（需可取消/可增量）。""",
         dod="章节规则、虚拟章节回退、位置往返一致、锚点在同文本重复出现的段落中能就近命中，均有断言。",
         commands=[
-            ("cd " + REPO + " && cargo test -p reading-core -p reading-index --release -- chapter position anchor", "exit 0 且测试数 > 0"),
-            ("cd " + REPO + " && cargo test -p reading-core --release -- no_chapter_falls_back_to_virtual_chapter", "exit 0"),
+            ("cd \"$NR_PROJECT_DIR\" && cargo test -p reading-core -p reading-index --release -- chapter position anchor", "exit 0 且测试数 > 0"),
+            ("cd \"$NR_PROJECT_DIR\" && cargo test -p reading-core --release -- no_chapter_falls_back_to_virtual_chapter", "exit 0"),
         ],
         evidence="results/rc4-index.md",
     ),
@@ -188,8 +189,8 @@ CARDS: list[dict] = [
 - 不得用百分比冒充准确页码。""",
         dod="正反向分页连续无丢字/重字、非法边界被拒、签名变更全部失效、过期 layout_id 结果被丢弃，均有断言。",
         commands=[
-            ("cd " + REPO + " && cargo test -p reading-core --release -- pagination boundary layout", "exit 0 且测试数 > 0"),
-            ("cd " + REPO + " && cargo test -p reading-core --release -- stale_layout_result_rejected invalidate_by_signature", "exit 0"),
+            ("cd \"$NR_PROJECT_DIR\" && cargo test -p reading-core --release -- pagination boundary layout", "exit 0 且测试数 > 0"),
+            ("cd \"$NR_PROJECT_DIR\" && cargo test -p reading-core --release -- stale_layout_result_rejected invalidate_by_signature", "exit 0"),
         ],
         evidence="results/rc5-pagination.md",
     ),
@@ -211,8 +212,8 @@ CARDS: list[dict] = [
 - 不得删除用户原始文件。""",
         dod="初始迁移可重复执行；模块化安全测试证明清理索引后书籍/进度/书签仍在；迁移与异常中断恢复有断言。",
         commands=[
-            ("cd " + REPO + " && cargo test -p reading-storage --release", "exit 0 且测试数 > 0"),
-            ("cd " + REPO + " && cargo test -p reading-storage --release -- index_clear_keeps_user_metadata migration_recovery", "exit 0"),
+            ("cd \"$NR_PROJECT_DIR\" && cargo test -p reading-storage --release", "exit 0 且测试数 > 0"),
+            ("cd \"$NR_PROJECT_DIR\" && cargo test -p reading-storage --release -- index_clear_keeps_user_metadata migration_recovery", "exit 0"),
         ],
         evidence="results/rc6-storage.md",
     ),
@@ -234,9 +235,9 @@ CARDS: list[dict] = [
 - 不得让缓冲区所有权含糊（谁申请、谁释放必须写明并有测试）。""",
         dod="头文件与 Rust 导出符号逐项一致（本阶段 Android Kotlin 尚未建立，Kotlin 声明一致性由 AN2 负责）；`verify-abi.py --self-test` 用临时 fixture 证明缺失项会被报出而非静默通过；句柄生命周期、错误码、缓冲释放、取消均有测试；ABI 版本有宏与断言。",
         commands=[
-            ("cd " + REPO + " && cargo build -p reading-ffi --release", "exit 0"),
-            ("cd " + REPO + " && python3 scripts/verify-abi.py --header include/novel_reader.h --allow-missing-kotlin --self-test", "exit 0，头文件与导出符号一致；自测证明缺失项可被报出；Kotlin 缺失时明确打印跳过项"),
-            ("cd " + REPO + " && cargo test -p reading-ffi --release", "exit 0 且测试数 > 0"),
+            ("cd \"$NR_PROJECT_DIR\" && cargo build -p reading-ffi --release", "exit 0"),
+            ("cd \"$NR_PROJECT_DIR\" && python3 scripts/verify-abi.py --header include/novel_reader.h --allow-missing-kotlin --self-test", "exit 0，头文件与导出符号一致；自测证明缺失项可被报出；Kotlin 缺失时明确打印跳过项"),
+            ("cd \"$NR_PROJECT_DIR\" && cargo test -p reading-ffi --release", "exit 0 且测试数 > 0"),
         ],
         evidence="results/rc7-abi.md",
     ),
@@ -258,9 +259,9 @@ CARDS: list[dict] = [
 - 不得降低断言。""",
         dod="核心全量测试与压力档命令均真实执行；四条 AC 判定齐全；任何 FAIL 都带复现命令。",
         commands=[
-            ("source /opt/dev-tools/slint-libs/slint-env.sh && cd " + REPO + " && cargo test --workspace --all-targets --release", "exit 0；记录测试数与失败数（桌面卡片合入后 workspace 含 Slint 依赖，必须保留 slint-env 前缀）"),
-            ("cd " + REPO + " && python3 scripts/generate-fixtures.py --profile pressure --seed 20260912 --output /tmp/nr-verify-pressure && cargo test -p reading-source --release -- bounded_window --test-threads=1", "exit 0，单窗口上限断言通过"),
-            ("cd " + REPO + " && python3 scripts/verify-core-scope.py", "exit 0，核心无 Slint/Compose/Android/网络依赖，且无 Synthetic 生产数据源"),
+            ("source /opt/dev-tools/slint-libs/slint-env.sh && cd \"$NR_PROJECT_DIR\" && cargo test --workspace --all-targets --release", "exit 0；记录测试数与失败数（桌面卡片合入后 workspace 含 Slint 依赖，必须保留 slint-env 前缀）"),
+            ("cd \"$NR_PROJECT_DIR\" && python3 scripts/generate-fixtures.py --profile pressure --seed 20260912 --output /tmp/nr-verify-pressure && cargo test -p reading-source --release -- bounded_window --test-threads=1", "exit 0，单窗口上限断言通过"),
+            ("cd \"$NR_PROJECT_DIR\" && python3 scripts/verify-core-scope.py", "exit 0，核心无 Slint/Compose/Android/网络依赖，且无 Synthetic 生产数据源"),
         ],
         evidence="results/verify/core-functional-verify.md",
     ),
@@ -282,9 +283,9 @@ CARDS: list[dict] = [
 - 不得跳过原文件哈希对比。""",
         dod="两块证据齐全并给出 PASS/FAIL；原文件哈希前后一致已实测；文档 diff 检查为空。",
         commands=[
-            ("cd " + REPO + " && cargo test -p reading-storage --release", "exit 0 且测试数 > 0"),
-            ("cd " + REPO + " && python3 scripts/verify-abi.py --header include/novel_reader.h --kotlin android/app/src/main/java --allow-missing-kotlin", "exit 0"),
-            ("cd " + REPO + " && git diff --exit-code -- docs/novel-reader-solution.md docs/novel-reader-v1-development-plan.md docs/ui-technology-selection-plan.md", "exit 0，方案文档未被改写"),
+            ("cd \"$NR_PROJECT_DIR\" && cargo test -p reading-storage --release", "exit 0 且测试数 > 0"),
+            ("cd \"$NR_PROJECT_DIR\" && python3 scripts/verify-abi.py --header include/novel_reader.h --kotlin android/app/src/main/java --allow-missing-kotlin", "exit 0"),
+            ("cd \"$NR_PROJECT_DIR\" && git diff --exit-code -- docs/novel-reader-solution.md docs/novel-reader-v1-development-plan.md docs/ui-technology-selection-plan.md", "exit 0，方案文档未被改写"),
         ],
         evidence="results/verify/core-storage-abi-verify.md",
     ),
@@ -306,8 +307,8 @@ CARDS: list[dict] = [
 - 不得直接修改产品代码（发现问题走 remediation 卡）。""",
         dod="gate-1-core.md 含逐条 AC 判定、引用到的证据文件路径与真实输出摘要；放行结论明确。",
         commands=[
-            ("cd " + REPO + " && ls -l results/verify/core-functional-verify.md results/verify/core-storage-abi-verify.md", "两个证据文件均存在且非空"),
-            ("source /opt/dev-tools/slint-libs/slint-env.sh && cd " + REPO + " && cargo test --workspace --all-targets --release 2>&1 | tail -20", "exit 0；把测试汇总行粘贴进 gate-1"),
+            ("cd \"$NR_PROJECT_DIR\" && ls -l results/verify/core-functional-verify.md results/verify/core-storage-abi-verify.md", "两个证据文件均存在且非空"),
+            ("source /opt/dev-tools/slint-libs/slint-env.sh && cd \"$NR_PROJECT_DIR\" && cargo test --workspace --all-targets --release 2>&1 | tail -20", "exit 0；把测试汇总行粘贴进 gate-1"),
         ],
         evidence="results/gates/gate-1-core.md",
     ),
@@ -331,9 +332,9 @@ CARDS: list[dict] = [
 - 不得使用私有 Slint 文本 API。""",
         dod="Release 可编译并可启动出窗口；三页面可切换；版式常量只有一个定义处（grep 可验证）。",
         commands=[
-            ("source /opt/dev-tools/slint-libs/slint-env.sh && cd " + REPO + " && cargo check -p desktop-app", "exit 0"),
-            ("cd " + REPO + " && cargo test -p desktop-app --release -- layout_constants_single_source", "exit 0 且测试数 > 0"),
-            ("cd " + REPO + " && python3 scripts/verify-desktop-scope.py", "exit 0，生产桌面无 Synthetic 书籍/空 External/整本复制/截图 OCR"),
+            ("source /opt/dev-tools/slint-libs/slint-env.sh && cd \"$NR_PROJECT_DIR\" && cargo check -p desktop-app", "exit 0"),
+            ("cd \"$NR_PROJECT_DIR\" && cargo test -p desktop-app --release -- layout_constants_single_source", "exit 0 且测试数 > 0"),
+            ("cd \"$NR_PROJECT_DIR\" && python3 scripts/verify-desktop-scope.py", "exit 0，生产桌面无 Synthetic 书籍/空 External/整本复制/截图 OCR"),
         ],
         evidence="results/dt1-desktop-skeleton.md",
     ),
@@ -356,8 +357,8 @@ CARDS: list[dict] = [
 - 不得自动用新文件覆盖旧进度。""",
         dod="导入成功/非 TXT/空文件/不可读/失效重连五类行为均有测试；导入后原文件哈希不变。",
         commands=[
-            ("cd " + REPO + " && cargo test -p desktop-app --release -- import", "exit 0 且测试数 > 0"),
-            ("cd " + REPO + " && cargo test -p desktop-app --release -- import_rejects_non_txt missing_source_relink", "exit 0"),
+            ("cd \"$NR_PROJECT_DIR\" && cargo test -p desktop-app --release -- import", "exit 0 且测试数 > 0"),
+            ("cd \"$NR_PROJECT_DIR\" && cargo test -p desktop-app --release -- import_rejects_non_txt missing_source_relink", "exit 0"),
         ],
         evidence="results/dt2-import.md",
     ),
@@ -380,9 +381,9 @@ CARDS: list[dict] = [
 - 不得并发重排互相覆盖、不得让旧结果覆盖新页面。""",
         dod="正反向翻页、重排、UTF-8 边界、EOF、正文区域一致性均有测试；实际启动后正文区无滚动且铺满。",
         commands=[
-            ("cd " + REPO + " && cargo test -p desktop-app --release -- pagination utf8_boundary page_cache", "exit 0 且测试数 > 0"),
-            ("cd " + REPO + " && cargo test -p desktop-app --release -- pagination_200_pages backward_100_pages", "exit 0，无丢字/重字/非法边界"),
-            ("cd " + REPO + " && cargo test -p desktop-app --release -- viewport_after_map_only paragraph_and_indent_zero", "exit 0"),
+            ("cd \"$NR_PROJECT_DIR\" && cargo test -p desktop-app --release -- pagination utf8_boundary page_cache", "exit 0 且测试数 > 0"),
+            ("cd \"$NR_PROJECT_DIR\" && cargo test -p desktop-app --release -- pagination_200_pages backward_100_pages", "exit 0，无丢字/重字/非法边界"),
+            ("cd \"$NR_PROJECT_DIR\" && cargo test -p desktop-app --release -- viewport_after_map_only paragraph_and_indent_zero", "exit 0"),
         ],
         evidence="results/dt3-pagination.md",
     ),
@@ -404,8 +405,8 @@ CARDS: list[dict] = [
 - 不得让重排阻塞 UI 线程。""",
         dod="合并式重排、串行化、过期结果丢弃均有断言；连续 30 次字号变更只产生一次最终重排。",
         commands=[
-            ("cd " + REPO + " && cargo test -p desktop-app --release -- merged_reflow_requests stale_layout_result_rejected", "exit 0 且测试数 > 0"),
-            ("cd " + REPO + " && cargo test -p desktop-app --release -- serialized_state_mutations reflow_non_blocking", "exit 0"),
+            ("cd \"$NR_PROJECT_DIR\" && cargo test -p desktop-app --release -- merged_reflow_requests stale_layout_result_rejected", "exit 0 且测试数 > 0"),
+            ("cd \"$NR_PROJECT_DIR\" && cargo test -p desktop-app --release -- serialized_state_mutations reflow_non_blocking", "exit 0"),
         ],
         evidence="results/dt3b-reflow.md",
     ),
@@ -428,8 +429,8 @@ CARDS: list[dict] = [
 - 不得为每本书另建一套独立设置体系（V1 只有全局设置）。""",
         dod="端到端脚本真实执行通过；重启恢复位置正确；书签增删改跳有效。",
         commands=[
-            ("cd " + REPO + " && python3 tests/e2e/run_txt_lifecycle.py --platform desktop --fixture tests/fixtures/smoke.txt", "exit 0，输出含导入/翻页/书签/重启恢复各阶段结果"),
-            ("cd " + REPO + " && cargo test -p desktop-app --release -- progress bookmarks chapters settings", "exit 0 且测试数 > 0"),
+            ("cd \"$NR_PROJECT_DIR\" && python3 tests/e2e/run_txt_lifecycle.py --platform desktop --fixture tests/fixtures/smoke.txt", "exit 0，输出含导入/翻页/书签/重启恢复各阶段结果"),
+            ("cd \"$NR_PROJECT_DIR\" && cargo test -p desktop-app --release -- progress bookmarks chapters settings", "exit 0 且测试数 > 0"),
         ],
         evidence="results/dt4-reading.md",
     ),
@@ -451,8 +452,8 @@ CARDS: list[dict] = [
 - 不得留下僵尸进程或后台服务。""",
         dod="两个脚本在 Linux X11 真实执行通过；`results/` 输出被后续 verifier 卡直接复用。",
         commands=[
-            ("source /opt/dev-tools/slint-libs/slint-env.sh && cd " + REPO + " && bash scripts/smoke-desktop.sh --backend x11 --fixture tests/fixtures/smoke.txt", "exit 0，就绪字段与退出清理均通过，无残留进程"),
-            ("cd " + REPO + " && python3 tests/e2e/run_txt_safety.py", "exit 0，原文件与用户元数据安全"),
+            ("source /opt/dev-tools/slint-libs/slint-env.sh && cd \"$NR_PROJECT_DIR\" && bash scripts/smoke-desktop.sh --backend x11 --fixture tests/fixtures/smoke.txt", "exit 0，就绪字段与退出清理均通过，无残留进程"),
+            ("cd \"$NR_PROJECT_DIR\" && python3 tests/e2e/run_txt_safety.py", "exit 0，原文件与用户元数据安全"),
         ],
         evidence="results/dt5-desktop-gates.md",
     ),
@@ -473,7 +474,7 @@ CARDS: list[dict] = [
 - 不得为此卡引入新的第三方运行时依赖。""",
         dod="校验脚本可执行且对未实测目标明确输出 `待验证`；打包路径与依赖文档齐全并经过一次本机 dry-run。",
         commands=[
-            ("cd " + REPO + " && python3 scripts/verify-desktop-targets.py --targets windows-x86_64 linux-wayland --dry-run", "exit 0，未实测目标标记 `待验证`"),
+            ("cd \"$NR_PROJECT_DIR\" && python3 scripts/verify-desktop-targets.py --targets windows-x86_64 linux-wayland --dry-run", "exit 0，未实测目标标记 `待验证`"),
         ],
         evidence="results/dt6-desktop-targets.md",
     ),
@@ -495,10 +496,10 @@ CARDS: list[dict] = [
 - 不得用探针工程替代正式桌面应用。""",
         dod="证据文件含全部命令、退出码、关键输出与五条 AC 判定；发现的问题已用 request_changes 退回并记录复现命令。",
         commands=[
-            ("source /opt/dev-tools/slint-libs/slint-env.sh && cd " + REPO + " && cargo build --release -p desktop-app", "exit 0"),
-            ("source /opt/dev-tools/slint-libs/slint-env.sh && cd " + REPO + " && bash scripts/smoke-desktop.sh --backend x11 --fixture tests/fixtures/smoke.txt", "exit 0，无残留进程"),
-            ("cd " + REPO + " && python3 tests/e2e/run_txt_lifecycle.py --platform desktop --fixture tests/fixtures/smoke.txt", "exit 0"),
-            ("cd " + REPO + " && python3 scripts/verify-desktop-scope.py", "exit 0，生产桌面无 Synthetic 书籍/空 External/整本复制/截图 OCR"),
+            ("source /opt/dev-tools/slint-libs/slint-env.sh && cd \"$NR_PROJECT_DIR\" && cargo build --release -p desktop-app", "exit 0"),
+            ("source /opt/dev-tools/slint-libs/slint-env.sh && cd \"$NR_PROJECT_DIR\" && bash scripts/smoke-desktop.sh --backend x11 --fixture tests/fixtures/smoke.txt", "exit 0，无残留进程"),
+            ("cd \"$NR_PROJECT_DIR\" && python3 tests/e2e/run_txt_lifecycle.py --platform desktop --fixture tests/fixtures/smoke.txt", "exit 0"),
+            ("cd \"$NR_PROJECT_DIR\" && python3 scripts/verify-desktop-scope.py", "exit 0，生产桌面无 Synthetic 书籍/空 External/整本复制/截图 OCR"),
         ],
         evidence="results/verify/desktop-verify.md",
     ),
@@ -519,8 +520,8 @@ CARDS: list[dict] = [
 - 不得在测试中删除用户的真实文件（只使用 /tmp 下的夹具副本）。""",
         dod="每一项删除语义都有前后对比证据；结论明确列出「应用永不删除原始文件」是否被代码证据支持。",
         commands=[
-            ("cd " + REPO + " && python3 tests/e2e/run_txt_safety.py --json", "exit 0，输出原文件哈希前后一致"),
-            ("cd " + REPO + " && cargo test -p desktop-app --release -- safety cache_clear", "exit 0"),
+            ("cd \"$NR_PROJECT_DIR\" && python3 tests/e2e/run_txt_safety.py --json", "exit 0，输出原文件哈希前后一致"),
+            ("cd \"$NR_PROJECT_DIR\" && cargo test -p desktop-app --release -- safety cache_clear", "exit 0"),
         ],
         evidence="results/verify/desktop-safety-verify.md",
     ),
@@ -542,8 +543,8 @@ CARDS: list[dict] = [
 - 不得绕过证据直接采信 worker 自报。""",
         dod="gate-2-desktop.md 含逐条判定、证据路径、延期项清单与放行结论。",
         commands=[
-            ("cd " + REPO + " && ls -l results/verify/desktop-verify.md results/verify/desktop-safety-verify.md", "证据文件均存在且非空"),
-            ("cd " + REPO + " && python3 scripts/verify-desktop-targets.py --targets windows-x86_64 linux-wayland", "exit 0，未实测目标标记 `待验证`"),
+            ("cd \"$NR_PROJECT_DIR\" && ls -l results/verify/desktop-verify.md results/verify/desktop-safety-verify.md", "证据文件均存在且非空"),
+            ("cd \"$NR_PROJECT_DIR\" && python3 scripts/verify-desktop-targets.py --targets windows-x86_64 linux-wayland", "exit 0，未实测目标标记 `待验证`"),
         ],
         evidence="results/gates/gate-2-desktop.md",
     ),
@@ -568,8 +569,8 @@ CARDS: list[dict] = [
 - 不得省略 `ndkVersion`（否则符号不剥离、包体异常）。""",
         dod="Gradle 构建可跑通；Rust arm64 交叉编译与 JNI 链接脚本 exit 0，`.so` 符号已剥离。",
         commands=[
-            ("cd " + REPO + "/android && ./gradlew :app:assembleDebug", "exit 0，生成 Debug APK"),
-            ("cd " + REPO + " && bash scripts/build-android-libs.sh --abi arm64-v8a", "exit 0，生成 libnr_jni.so 并完成符号剥离"),
+            ("cd \"$NR_PROJECT_DIR/android\" && ./gradlew :app:assembleDebug", "exit 0，生成 Debug APK"),
+            ("cd \"$NR_PROJECT_DIR\" && bash scripts/build-android-libs.sh --abi arm64-v8a", "exit 0，生成 libnr_jni.so 并完成符号剥离"),
         ],
         evidence="results/an1-gradle.md",
     ),
@@ -593,8 +594,8 @@ CARDS: list[dict] = [
 - 不得用 `System.loadLibrary` 之外的方式绕过自包含 `.so`。""",
         dod="Kotlin 声明与头文件逐项一致；错误映射与释放有 JVM 单测；`verify-abi.py` 不再需要 `--allow-missing-kotlin`。",
         commands=[
-            ("cd " + REPO + "/android && ./gradlew :app:testDebugUnitTest", "exit 0 且测试数 > 0"),
-            ("cd " + REPO + " && python3 scripts/verify-abi.py --header include/novel_reader.h --kotlin android/app/src/main/java", "exit 0，三方声明一致"),
+            ("cd \"$NR_PROJECT_DIR/android\" && ./gradlew :app:testDebugUnitTest", "exit 0 且测试数 > 0"),
+            ("cd \"$NR_PROJECT_DIR\" && python3 scripts/verify-abi.py --header include/novel_reader.h --kotlin android/app/src/main/java", "exit 0，三方声明一致"),
         ],
         evidence="results/an2-jni.md",
     ),
@@ -617,8 +618,8 @@ CARDS: list[dict] = [
 - 不得用空回调占位（每个控件必须接真实状态）。""",
         dod="三页面可编译；并发与重排合并有 JVM 单测；空回调清零（grep/静态检查可验证）。",
         commands=[
-            ("cd " + REPO + "/android && ./gradlew :app:testDebugUnitTest", "exit 0 且测试数 > 0"),
-            ("cd " + REPO + " && python3 scripts/verify-android-scope.py", "exit 0，无业务复制、无整本正文传递、无空回调占位"),
+            ("cd \"$NR_PROJECT_DIR/android\" && ./gradlew :app:testDebugUnitTest", "exit 0 且测试数 > 0"),
+            ("cd \"$NR_PROJECT_DIR\" && python3 scripts/verify-android-scope.py", "exit 0，无业务复制、无整本正文传递、无空回调占位"),
         ],
         evidence="results/an3-compose.md",
     ),
@@ -640,8 +641,8 @@ CARDS: list[dict] = [
 - 不得用「最后写入者获胜」掩盖覆盖问题。""",
         dod="串行化、重排合并、过期丢弃、取消语义均有 JVM 单测；并发重填缓存的回归用例通过。",
         commands=[
-            ("cd " + REPO + "/android && ./gradlew :app:testDebugUnitTest --tests '*Concurrency*'", "exit 0 且测试数 > 0"),
-            ("cd " + REPO + "/android && ./gradlew :app:testDebugUnitTest --tests '*Reflow*'", "exit 0"),
+            ("cd \"$NR_PROJECT_DIR/android\" && ./gradlew :app:testDebugUnitTest --tests '*Concurrency*'", "exit 0 且测试数 > 0"),
+            ("cd \"$NR_PROJECT_DIR/android\" && ./gradlew :app:testDebugUnitTest --tests '*Reflow*'", "exit 0"),
         ],
         evidence="results/an3b-concurrency.md",
     ),
@@ -664,8 +665,8 @@ CARDS: list[dict] = [
 - 不得在无权限时静默失败。""",
         dod="SAF 元数据/权限/窗口读取/回退复制均有 JVM 或静态证据；无整本加载路径。",
         commands=[
-            ("cd " + REPO + "/android && ./gradlew :app:testDebugUnitTest --tests '*Saf*'", "exit 0 且测试数 > 0"),
-            ("cd " + REPO + " && python3 scripts/verify-android-scope.py --check-no-whole-file-read", "exit 0"),
+            ("cd \"$NR_PROJECT_DIR/android\" && ./gradlew :app:testDebugUnitTest --tests '*Saf*'", "exit 0 且测试数 > 0"),
+            ("cd \"$NR_PROJECT_DIR\" && python3 scripts/verify-android-scope.py --check-no-whole-file-read", "exit 0"),
         ],
         evidence="results/an4-saf.md",
     ),
@@ -687,8 +688,8 @@ CARDS: list[dict] = [
 - 不得用滚动容器掩盖分页错误。""",
         dod="口径一致性、UTF-8 页末、安全余量与过期丢弃均有单测；小字号末行不做裁切。",
         commands=[
-            ("cd " + REPO + "/android && ./gradlew :app:testDebugUnitTest --tests '*Pagination*'", "exit 0 且测试数 > 0"),
-            ("cd " + REPO + "/android && ./gradlew :app:testDebugUnitTest --tests '*Layout*'", "exit 0"),
+            ("cd \"$NR_PROJECT_DIR/android\" && ./gradlew :app:testDebugUnitTest --tests '*Pagination*'", "exit 0 且测试数 > 0"),
+            ("cd \"$NR_PROJECT_DIR/android\" && ./gradlew :app:testDebugUnitTest --tests '*Layout*'", "exit 0"),
         ],
         evidence="results/an5-layout.md",
     ),
@@ -711,8 +712,8 @@ CARDS: list[dict] = [
 - 不得声称已真机验证。""",
         dod="Debug/Release APK 均生成；校验脚本 exit 0 并输出包体、ABI 库、DEX 标记与签名状态；`docs/android/` 说明可供真机使用。",
         commands=[
-            ("cd " + REPO + "/android && ./gradlew :app:assembleDebug :app:assembleRelease", "exit 0，两个 APK 均生成"),
-            ("cd " + REPO + " && python3 scripts/verify-android-apk.py android/app/build/outputs/apk/debug/app-debug.apk --abi arm64-v8a", "exit 0，输出包名/版本/JNI 库/DEX 标记/签名状态"),
+            ("cd \"$NR_PROJECT_DIR/android\" && ./gradlew :app:assembleDebug :app:assembleRelease", "exit 0，两个 APK 均生成"),
+            ("cd \"$NR_PROJECT_DIR\" && python3 scripts/verify-android-apk.py android/app/build/outputs/apk/debug/app-debug.apk --abi arm64-v8a", "exit 0，输出包名/版本/JNI 库/DEX 标记/签名状态"),
         ],
         evidence="results/an6-apk.md",
     ),
@@ -734,9 +735,9 @@ CARDS: list[dict] = [
 - 不得跳过边界扫描。""",
         dod="证据文件含全部命令与判定；延期项清单明确且未被计入通过项。",
         commands=[
-            ("cd " + REPO + "/android && ./gradlew :app:testDebugUnitTest", "exit 0 且测试数 > 0"),
-            ("cd " + REPO + " && python3 scripts/verify-android-boundary.py --header include/novel_reader.h --kotlin android/app/src/main/java", "exit 0"),
-            ("cd " + REPO + " && python3 scripts/verify-android-apk.py android/app/build/outputs/apk/debug/app-debug.apk --abi arm64-v8a", "exit 0"),
+            ("cd \"$NR_PROJECT_DIR/android\" && ./gradlew :app:testDebugUnitTest", "exit 0 且测试数 > 0"),
+            ("cd \"$NR_PROJECT_DIR\" && python3 scripts/verify-android-boundary.py --header include/novel_reader.h --kotlin android/app/src/main/java", "exit 0"),
+            ("cd \"$NR_PROJECT_DIR\" && python3 scripts/verify-android-apk.py android/app/build/outputs/apk/debug/app-debug.apk --abi arm64-v8a", "exit 0"),
         ],
         evidence="results/verify/android-verify.md",
     ),
@@ -758,8 +759,8 @@ CARDS: list[dict] = [
 - 不得把延期项写成通过。""",
         dod="两个脚本可执行且真实运行；发布物清单、版本标识、许可清单与未验证项清单均被输出。",
         commands=[
-            ("cd " + REPO + " && python3 scripts/verify-v1-structure.py", "exit 0"),
-            ("cd " + REPO + " && python3 scripts/verify-v1-release.py --desktop --android", "exit 0，输出发布物与未验证项清单"),
+            ("cd \"$NR_PROJECT_DIR\" && python3 scripts/verify-v1-structure.py", "exit 0"),
+            ("cd \"$NR_PROJECT_DIR\" && python3 scripts/verify-v1-release.py --desktop --android", "exit 0，输出发布物与未验证项清单"),
         ],
         evidence="results/rel1-release-scripts.md",
     ),
@@ -781,9 +782,9 @@ CARDS: list[dict] = [
 - 不得顺手重构无关代码。""",
         dod="三条命令 exit 0；证据文件含基线与最终退出的真实输出；如有 block 则写明具体问题与归属卡片。",
         commands=[
-            ("source /opt/dev-tools/slint-libs/slint-env.sh && cd " + REPO + " && cargo fmt --all -- --check", "exit 0"),
-            ("source /opt/dev-tools/slint-libs/slint-env.sh && cd " + REPO + " && cargo clippy --workspace --all-targets -- -D warnings", "exit 0"),
-            ("cd " + REPO + "/android && ./gradlew lintDebug", "exit 0；仅允许已在证据文件中登记的非阻断告警"),
+            ("source /opt/dev-tools/slint-libs/slint-env.sh && cd \"$NR_PROJECT_DIR\" && cargo fmt --all -- --check", "exit 0"),
+            ("source /opt/dev-tools/slint-libs/slint-env.sh && cd \"$NR_PROJECT_DIR\" && cargo clippy --workspace --all-targets -- -D warnings", "exit 0"),
+            ("cd \"$NR_PROJECT_DIR/android\" && ./gradlew lintDebug", "exit 0；仅允许已在证据文件中登记的非阻断告警"),
         ],
         evidence="results/qa1-quality-gate.md",
     ),
@@ -803,8 +804,8 @@ CARDS: list[dict] = [
 - 不得绕过证据文件。""",
         dod="gate-3-android.md 含逐条判定、延期项与前置条件、放行结论。",
         commands=[
-            ("cd " + REPO + " && ls -l results/verify/android-verify.md", "证据文件存在且非空"),
-            ("cd " + REPO + " && python3 scripts/verify-android-device-readiness.py --docs docs/android --results results", "exit 0，真机步骤与 `待验证` 状态完整"),
+            ("cd \"$NR_PROJECT_DIR\" && ls -l results/verify/android-verify.md", "证据文件存在且非空"),
+            ("cd \"$NR_PROJECT_DIR\" && python3 scripts/verify-android-device-readiness.py --docs docs/android --results results", "exit 0，真机步骤与 `待验证` 状态完整"),
         ],
         evidence="results/gates/gate-3-android.md",
     ),
@@ -826,9 +827,9 @@ CARDS: list[dict] = [
 - 不得删除用户数据或原始文件。""",
         dod="两个校验脚本可在本机执行；gate-final.md 含发布物清单、许可证、延期项与明确裁定。",
         commands=[
-            ("cd " + REPO + " && python3 scripts/verify-v1-structure.py", "exit 0"),
-            ("cd " + REPO + " && python3 scripts/verify-v1-release.py --desktop --android", "exit 0，输出发布物与未验证项清单"),
-            ("cd " + REPO + " && git diff --exit-code -- docs/novel-reader-solution.md docs/novel-reader-v1-development-plan.md", "exit 0，方案文档未被改写"),
+            ("cd \"$NR_PROJECT_DIR\" && python3 scripts/verify-v1-structure.py", "exit 0"),
+            ("cd \"$NR_PROJECT_DIR\" && python3 scripts/verify-v1-release.py --desktop --android", "exit 0，输出发布物与未验证项清单"),
+            ("cd \"$NR_PROJECT_DIR\" && git diff --exit-code -- docs/novel-reader-solution.md docs/novel-reader-v1-development-plan.md", "exit 0，方案文档未被改写"),
         ],
         evidence="results/gates/gate-final.md",
     ),
@@ -853,7 +854,7 @@ CARDS: list[dict] = [
 - 不得宣称延期项已通过。""",
         dod="延期门禁文档存在；三项环境的前置条件与对应验证卡编号齐全；本卡保持 blocked 直到用户提供环境。",
         commands=[
-            ("cd " + REPO + " && python3 -c \"import json,pathlib;p=pathlib.Path('results/gates/gate-env-deferred.md');print('exists' if p.exists() else 'missing')\"", "输出 exists 且文档含三项环境与对应卡片编号"),
+            ("cd \"$NR_PROJECT_DIR\" && python3 -c \"import json,pathlib;p=pathlib.Path('results/gates/gate-env-deferred.md');print('exists' if p.exists() else 'missing')\"", "输出 exists 且文档含三项环境与对应卡片编号"),
         ],
         evidence="results/gates/gate-env-deferred.md",
     ),
@@ -875,7 +876,7 @@ CARDS: list[dict] = [
 - 不得修改产品代码。""",
         dod="在环境可得时产出真实结果；否则保持 `待验证` 并记录前置条件，不计入通过项。",
         commands=[
-            ("cd " + REPO + " && python3 scripts/verify-desktop-targets.py --targets windows-x86_64 linux-wayland", "exit 0；实测后才可把对应目标状态从 `待验证` 改为实测结论"),
+            ("cd \"$NR_PROJECT_DIR\" && python3 scripts/verify-desktop-targets.py --targets windows-x86_64 linux-wayland", "exit 0；实测后才可把对应目标状态从 `待验证` 改为实测结论"),
         ],
         evidence="results/verify/desktop-deferred-verify.md",
     ),
@@ -897,7 +898,7 @@ CARDS: list[dict] = [
 - 不得修改产品代码（问题走 remediation 卡）。""",
         dod="环境可得时产出真实机型证据与 AC-A6 判定；否则保持 `待验证` 并记录前置条件。",
         commands=[
-            ("adb devices && adb install -r " + REPO + "/dist/app-debug.apk", "环境可得时 exit 0；不可得时记录 `待验证` 与缺失前提"),
+            ("adb devices && adb install -r \"$NR_PROJECT_DIR/dist/app-debug.apk\"", "环境可得时 exit 0；不可得时记录 `待验证` 与缺失前提"),
         ],
         evidence="results/verify/android-device-verify.md",
     ),
@@ -925,7 +926,7 @@ def build_body(card: dict) -> str:
     return "\n".join(lines)
 
 
-def card_records() -> list[dict]:
+def card_records(workspace_root: str = REPO) -> list[dict]:
     out = []
     for c in CARDS:
         out.append(
@@ -936,7 +937,7 @@ def card_records() -> list[dict]:
                 "parents": c["parents"],
                 "max_runtime": c["runtime"],
                 "skills": c["skills"],
-                "workspace": f"dir:{REPO}",
+                "workspace": f"dir:{workspace_root}",
                 "evidence": c["evidence"],
                 "body": build_body(c),
             }
@@ -1002,14 +1003,14 @@ def ensure_board() -> None:
     env.setdefault("HERMES_HOME", os.path.expanduser("~/.hermes"))
     subprocess.run(
         [HERMES, "kanban", "boards", "create", BOARD, "--name", BOARD_NAME,
-         "--description", BOARD_DESC, "--default-workdir", REPO],
+         "--description", BOARD_DESC, "--default-workdir", LOCAL_REPO],
         capture_output=True, text=True, timeout=180, env=env,
     )
 
 
 def create() -> int:
     ensure_board()
-    records = card_records()
+    records = card_records(LOCAL_REPO)
     ids: dict[str, str] = {}
     root_reasons = {
         "M1": "等待用户明确授权开工：create-only 阶段，禁止网关自动认领整条开发链。",
