@@ -27,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.novelreader.android.reader.BackgroundFit
@@ -59,6 +60,12 @@ fun SettingsScreen(
     onBackgroundScrimChange: (Int) -> Unit,
     onBackgroundPick: (Int, Int) -> Unit,
     onBackgroundClear: () -> Unit,
+    onSyncExportRequest: (() -> Unit)? = null,
+    onSyncImportRequest: (() -> Unit)? = null,
+    onWebDavChange: ((String, String, String) -> Unit)? = null,
+    onWebDavEnabledChange: ((Boolean) -> Unit)? = null,
+    onWebDavProgressChange: ((Boolean) -> Unit)? = null,
+    onWebDavSync: (() -> Unit)? = null,
     onRelayout: () -> Unit,
     onSavePosition: () -> Unit,
     onRebuildIndex: () -> Unit,
@@ -287,6 +294,101 @@ fun SettingsScreen(
                     Text("移除背景")
                 }
             }
+            HorizontalDivider()
+            Text("同步（阶段 0）", style = MaterialTheme.typography.titleSmall)
+            Text(
+                text = "导出/导入包含进度、书签、分类与书籍副本的目录包；" +
+                    "可放进百度网盘同步空间、坚果云等由客户端搬运。原始 TXT 不会被修改。",
+                style = MaterialTheme.typography.labelSmall,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                OutlinedButton(
+                    onClick = { onSyncExportRequest?.invoke() },
+                    enabled = onSyncExportRequest != null,
+                    modifier = Modifier
+                        .weight(1f)
+                        .semantics { contentDescription = "导出同步包" },
+                ) {
+                    Text("导出同步包…")
+                }
+                OutlinedButton(
+                    onClick = { onSyncImportRequest?.invoke() },
+                    enabled = onSyncImportRequest != null,
+                    modifier = Modifier
+                        .weight(1f)
+                        .semantics { contentDescription = "导入同步包" },
+                ) {
+                    Text("导入同步包…")
+                }
+            }
+            Text("WebDAV 同步（阶段 1，仅 HTTPS）", style = MaterialTheme.typography.labelSmall)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text("启用 WebDAV（关闭时按离线模式运行）", style = MaterialTheme.typography.bodyMedium)
+                Switch(
+                    checked = state.webDav.enabled,
+                    onCheckedChange = { onWebDavEnabledChange?.invoke(it) },
+                    enabled = onWebDavEnabledChange != null,
+                )
+            }
+            OutlinedTextField(
+                value = state.webDav.baseUrl,
+                onValueChange = { onWebDavChange?.invoke(it, state.webDav.username, state.webDav.password) },
+                label = { Text("WebDAV 地址") },
+                singleLine = true,
+                enabled = state.webDav.enabled,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = state.webDav.username,
+                onValueChange = { onWebDavChange?.invoke(state.webDav.baseUrl, it, state.webDav.password) },
+                label = { Text("用户名") },
+                singleLine = true,
+                enabled = state.webDav.enabled,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = state.webDav.password,
+                onValueChange = { onWebDavChange?.invoke(state.webDav.baseUrl, state.webDav.username, it) },
+                label = { Text("密码 / 应用密码") },
+                singleLine = true,
+                enabled = state.webDav.enabled,
+                visualTransformation = PasswordVisualTransformation(),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text("远端进度较新时使用远端", style = MaterialTheme.typography.bodyMedium)
+                Switch(
+                    checked = state.webDav.useRemoteProgress,
+                    onCheckedChange = { onWebDavProgressChange?.invoke(it) },
+                    enabled = state.webDav.enabled && onWebDavProgressChange != null,
+                )
+            }
+            OutlinedButton(
+                onClick = { onWebDavSync?.invoke() },
+                enabled = onWebDavSync != null && state.webDav.enabled && !state.webDav.busy &&
+                    state.webDav.baseUrl.regionMatches(0, "https://", 0, "https://".length) &&
+                    state.webDav.username.isNotBlank(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .semantics { contentDescription = "WebDAV 同步" },
+            ) {
+                Text(if (state.webDav.busy) "正在同步…" else "WebDAV 同步")
+            }
+            Text(
+                text = "密码暂存于应用私有 SharedPreferences（未接 Keystore）；阶段 1 已知限制。",
+                style = MaterialTheme.typography.labelSmall,
+            )
             HorizontalDivider()
             Text("阅读命令", style = MaterialTheme.typography.titleSmall)
             Row(

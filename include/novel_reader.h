@@ -509,7 +509,7 @@ typedef struct nr_error_info {
     nr_buffer message;       /* UTF-8；Rust 分配，调用方用 nr_release_buffer 归还 */
 } nr_error_info;
 
-/* ==================== 入口（冻结 18 项 + nr_set_encoding + V1.1 分类 4 + 历史 3 + 配色 5 + 背景 4 + 书籍分类映射 1 项，共 40 项） ==================== */
+/* ==================== 入口（冻结 18 项 + nr_set_encoding + V1.1 分类 4 + 历史 3 + 配色 5 + 背景 4 + 书籍分类映射 1 项 + 阶段 0 同步 2 项，共 42 项） ==================== */
 
 /* 1. 查询 ABI 版本。无需句柄；可与编译期宏 NR_ABI_VERSION 对照。 */
 uint32_t nr_abi_version(void);
@@ -688,6 +688,20 @@ int32_t nr_list_books_in_scope(uint64_t engine, int32_t scope_kind, int64_t cate
  * 本入口给出 bookId → categoryId，两者相合即可筛选。
  * out_batch 可为 NULL（此时只做校验）。 */
 int32_t nr_list_book_categories(uint64_t engine, nr_book_category_batch *out_batch);
+
+/* ---- 阶段 0 跨设备同步（加性契约修订；WebDAV 传输层后续复用同一包格式）---- */
+
+/* 导出同步包到宿主选择的本地目录（UTF-8 路径，非空）。
+ * 成功时 out_summary 收到 UTF-8 JSON 摘要，调用方必须用 nr_release_buffer 归还。
+ * 只读数据库与用户 TXT；书籍副本写入 <dir>/books/<sha256>.txt。
+ * out_summary 不得为 NULL。 */
+int32_t nr_sync_export(uint64_t engine, const uint8_t *dir_ptr, uint32_t dir_len, nr_buffer *out_summary);
+
+/* 从目录合并同步包；书籍副本落到数据库同目录的 sync-books/。
+ * progress_policy：0 = 远端进度较新时保留本地；1 = 使用远端较新进度。
+ * 成功时 out_summary 收到 UTF-8 JSON 摘要，调用方必须归还。
+ * 原始 TXT 永不被修改或删除；out_summary 不得为 NULL。 */
+int32_t nr_sync_import(uint64_t engine, const uint8_t *dir_ptr, uint32_t dir_len, uint32_t progress_policy, nr_buffer *out_summary);
 
 /* 16. 取消请求（协作式）。request_id 必须非 0；对长任务可从另一线程调用。 */
 int32_t nr_cancel_request(uint64_t engine, uint64_t request_id);

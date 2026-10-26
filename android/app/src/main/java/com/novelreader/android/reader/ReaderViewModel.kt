@@ -17,6 +17,7 @@ import com.novelreader.android.core.NrPageBoundarySubmission
 import com.novelreader.android.core.NrReleaser
 import com.novelreader.android.core.NrSourceProvider
 import com.novelreader.android.core.NrSavePositionRequest
+import com.novelreader.android.source.WebDavClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -29,6 +30,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.io.File
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -92,6 +95,12 @@ class ReaderViewModel(
     private val backgroundDir: String? = null,
     
     private val hiddenBooks: HiddenBooksStore? = null,
+    /** 同步书持久化端口（阶段 0）；`null` = 不持久化，仅本次会话可见。 */
+    private val syncedBooks: SyncedBooksStore? = null,
+    /** WebDAV 配置持久化（阶段 1）；`null` = 不持久化。 */
+    private val webDavStore: WebDavConfigStore? = null,
+    /** WebDAV 同步暂存目录（app-private 绝对路径）。 */
+    private val syncStagingRoot: String? = null,
     workScope: CoroutineScope? = null,
 ) : ViewModel() {
 
@@ -195,6 +204,20 @@ class ReaderViewModel(
 // 「已移除」书籍：启动即载入，供目录重建书架时过滤。
 runCatching { hiddenBooks?.load()?.let { hiddenBooksSet.addAll(it) } }
         runCatching { loadPersistedSettings() }
+        runCatching {
+            webDavStore?.load()?.let { config ->
+                update {
+                    it.copy(
+                        webDav = it.webDav.copy(
+                            enabled = config.enabled,
+                            baseUrl = config.baseUrl,
+                            username = config.username,
+                            password = config.password,
+                        ),
+                    )
+                }
+            }
+        }
         runCatching { refreshShelfFromCatalog() }
     }
 
@@ -353,6 +376,307 @@ runCatching { hiddenBooks?.load()?.let { hiddenBooksSet.addAll(it) } }
      *
      * 只更新可见状态与失败信息，不触碰阅读状态 —— 界面因此不会停在「加载中」。
      */
+    /**
+     * 阶段 0：导出同步包到宿主物化的本地目录（调用方负责 SAF 复制）。
+     *
+     * 返回核心的 JSON 摘要；失败抛 [NrException]/[Throwable]，由宿主如实回报。
+     */
+    suspend fun exportSyncToStaging(dir: File): String = gate.withLock {
+        withContext(io) { engine.syncExport(dir.absolutePath.toByteArray(Charsets.UTF_8)) }
+    }
+
+    /**
+     * 阶段 0：从宿主物化的本地目录合并同步包。
+     *
+     * 合并后刷新书架/分类，并把导入的副本写入持久目录（重启后仍可见）。
+     */
+    suspend fun importSyncFromStaging(dir: File): String {
+        val summary = gate.withLock {
+            withContext(io) {
+                engine.syncImport(
+                    dir.absolutePath.toByteArray(Charsets.UTF_8),
+                    if (_ui.value.webDav.useRemoteProgress) 1 else 0,
+                )
+            }
+        }
+        mergeSyncedBooks(summary)
+        refreshShelfFromCatalog()
+        refreshCategories()
+        setStatus("同步导入完成：${syncSummaryText(summary)}")
+        return summary
+    }
+
+    /** 更新并持久化 WebDAV 配置。 */
+    fun onWebDavConfigChange(baseUrl: String, username: String, password: String) {
+        val current = _ui.value.webDav
+        update {
+            it.copy(
+                webDav = it.webDav.copy(
+                    baseUrl = baseUrl.trim(),
+                    username = username.trim(),
+                    password = password,
+                ),
+            )
+        }
+        runCatching {
+            webDavStore?.save(
+                WebDavConfig(
+                    current.enabled,
+                    baseUrl.trim(),
+                    username.trim(),
+                    password,
+                    current.useRemoteProgress,
+                ),
+            )
+        }
+    }
+
+    /** 启用/停用 WebDAV；停用时保持普通离线模式。 */
+    fun onWebDavEnabledChange(enabled: Boolean) {
+        update { it.copy(webDav = it.webDav.copy(enabled = enabled)) }
+        val current = _ui.value.webDav
+        runCatching {
+            webDavStore?.save(
+                WebDavConfig(
+                    enabled,
+                    current.baseUrl.trim(),
+                    current.username.trim(),
+                    current.password,
+                    current.useRemoteProgress,
+                ),
+            )
+        }
+    }
+
+    /** 远端进度较新时是否使用远端（false = 保留本地）。 */
+    fun onWebDavProgressChange(useRemoteProgress: Boolean) {
+        update { it.copy(webDav = it.webDav.copy(useRemoteProgress = useRemoteProgress)) }
+        val current = _ui.value.webDav
+        runCatching {
+            webDavStore?.save(
+                WebDavConfig(
+                    current.enabled,
+                    current.baseUrl.trim(),
+                    current.username.trim(),
+                    current.password,
+                    useRemoteProgress,
+                ),
+            )
+        }
+    }
+
+    /**
+     * 阶段 1：WebDAV 双向同步。
+     *
+     * 远程布局：`state-<device_id>.json` + `books/<sha256>.txt`。每台设备只写自己的状态文件；
+     * 合并语义仍由核心 `nr_sync_import` 裁定。只接受 HTTPS。
+     */
+    fun syncWebDav(mode: SyncMode = SyncMode.Both) {
+        val root = syncStagingRoot
+        if (root.isNullOrBlank()) {
+            setStatus("WebDAV 同步失败：宿主未提供同步暂存目录")
+            return
+        }
+        if (!_ui.value.webDav.enabled) {
+            setStatus("WebDAV 未启用：当前按离线模式运行")
+            return
+        }
+        if (_ui.value.webDav.busy) return
+        val config = WebDavConfig(
+            enabled = true,
+            baseUrl = _ui.value.webDav.baseUrl,
+            username = _ui.value.webDav.username,
+            password = _ui.value.webDav.password,
+            useRemoteProgress = _ui.value.webDav.useRemoteProgress,
+        )
+        update { it.copy(webDav = it.webDav.copy(busy = true)) }
+        launchSerial {
+            try {
+                val summary = withContext(io) { runWebDavSync(root, config, mode) }
+                refreshShelfFromCatalog()
+                refreshCategories()
+                setStatus(summary)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                setStatus("WebDAV 同步失败：${error.message ?: "未知错误"}")
+            } finally {
+                update { it.copy(webDav = it.webDav.copy(busy = false)) }
+            }
+        }
+    }
+
+    private fun runWebDavSync(stagingRoot: String, config: WebDavConfig, mode: SyncMode): String {
+        val client = WebDavClient(config)
+        val root = File(stagingRoot, "run-${System.currentTimeMillis()}")
+        if (root.exists()) root.deleteRecursively()
+        if (!root.mkdirs() && !root.isDirectory) throw IllegalStateException("无法创建 WebDAV 暂存目录")
+        try {
+            client.ensureDir("")
+            client.ensureDir("books")
+            client.ensureDir("states")
+            val exportDir = File(root, "export")
+            if (!exportDir.mkdirs() && !exportDir.isDirectory) throw IllegalStateException("无法创建导出目录")
+            val exportSummary = engine.syncExport(exportDir.absolutePath.toByteArray(Charsets.UTF_8))
+            val exportJson = JSONObject(exportSummary)
+            val deviceId = exportJson.optString("device_id")
+            if (deviceId.isBlank()) throw IllegalStateException("核心未返回 device_id")
+            val ownState = "state-$deviceId.json"
+
+            val sharedBooks = File(root, "books").apply { mkdirs() }
+            var remoteStates = 0
+            var downloaded = 0
+            var importedBooks = 0
+            var importedProgress = 0
+            val conflicts = mutableListOf<String>()
+
+            val remoteStatesList = mutableListOf<Pair<String, String>>()
+            if (mode != SyncMode.Push) {
+                for (name in client.listNames("states")) {
+                    if (looksLikeStateFile(name)) remoteStatesList += "states" to name
+                }
+                for (name in client.listNames("")) {
+                    if (looksLikeStateFile(name) && remoteStatesList.none { it.second == name }) {
+                        remoteStatesList += "" to name
+                    }
+                }
+            }
+            if (mode != SyncMode.Push) for ((directory, name) in remoteStatesList) {
+                if (name == ownState) continue
+                val remotePath = if (directory.isBlank()) name else "$directory/$name"
+                val stateDir = File(root, "remote-${remoteStates + 1}")
+                val stateBooks = File(stateDir, "books").apply { mkdirs() }
+                val bytes = client.get(remotePath)
+                stateDir.mkdirs()
+                File(stateDir, "state.json").writeBytes(bytes)
+                val json = JSONObject(String(bytes, Charsets.UTF_8))
+                val books = json.optJSONArray("books")
+                if (books != null) {
+                    for (index in 0 until books.length()) {
+                        val hash = books.optJSONObject(index)?.optString("content_hash").orEmpty()
+                        if (hash.length != 64 || !hash.all { it.isDigit() || it.lowercaseChar() in 'a'..'f' }) continue
+                        val shared = File(sharedBooks, "$hash.txt")
+                        if (!shared.isFile) {
+                            val bookBytes = client.get("books/$hash.txt")
+                            shared.writeBytes(bookBytes)
+                            downloaded += 1
+                        }
+                        val target = File(stateBooks, "$hash.txt")
+                        if (!target.isFile) target.writeBytes(readFile(shared))
+                    }
+                }
+                val summary = engine.syncImport(
+                    stateDir.absolutePath.toByteArray(Charsets.UTF_8),
+                    if (config.useRemoteProgress) 1 else 0,
+                )
+                val parsed = JSONObject(summary)
+                importedBooks += parsed.optInt("books_created", 0)
+                importedProgress += parsed.optInt("progress_applied", 0)
+                parsed.optJSONArray("conflicts")?.let { array ->
+                    for (index in 0 until array.length()) conflicts += array.optString(index)
+                }
+                mergeSyncedBooks(summary)
+                remoteStates += 1
+            }
+
+            if (mode == SyncMode.Pull) {
+                val conflictText = if (conflicts.isEmpty()) "" else "，冲突/跳过 ${conflicts.size} 项"
+                return "已拉取远端读物：远端状态 $remoteStates，下载书 $downloaded，" +
+                    "书籍 +$importedBooks，进度 $importedProgress$conflictText"
+            }
+
+            // 上传前按**合并后的本地库**重新导出；Push 模式没有远端合并，也走同一路径。
+            exportDir.deleteRecursively()
+            if (!exportDir.mkdirs() && !exportDir.isDirectory) {
+                throw IllegalStateException("无法重建导出目录")
+            }
+            engine.syncExport(exportDir.absolutePath.toByteArray(Charsets.UTF_8))
+
+            var uploaded = 0
+            File(exportDir, "books").listFiles()?.forEach { book ->
+                val remote = "books/${book.name}"
+                if (!client.exists(remote)) {
+                    client.put(remote, readFile(book))
+                    uploaded += 1
+                }
+            }
+            client.put("states/$ownState", readFile(File(exportDir, "state.json")))
+
+            val conflictText = if (conflicts.isEmpty()) "" else "，冲突/跳过 ${conflicts.size} 项"
+            return "WebDAV 同步完成：远端状态 $remoteStates，下载书 $downloaded，上传书 $uploaded，" +
+                "书籍 +$importedBooks，进度 $importedProgress$conflictText"
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    private fun looksLikeStateFile(name: String): Boolean =
+        name.length > "state-".length + ".json".length &&
+            name.regionMatches(0, "state-", 0, "state-".length) &&
+            name.regionMatches(name.length - ".json".length, ".json", 0, ".json".length)
+
+    private fun readFile(file: File): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        file.inputStream().use { input ->
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val read = input.read(buffer)
+                if (read <= 0) break
+                out.write(buffer, 0, read)
+            }
+        }
+        return out.toByteArray()
+    }
+
+    /** 同步失败的可读回报（宿主 SAF 复制/选择失败时调用）。 */
+    fun reportSyncFailure(detail: String) {
+        setStatus("同步失败：$detail")
+    }
+
+    /** 同步成功/进度的可读回报（宿主搬运成功后调用）。 */
+    fun reportSyncStatus(message: String) {
+        setStatus(message)
+    }
+
+    private fun mergeSyncedBooks(summary: String) {
+        val store = syncedBooks ?: return
+        val json = runCatching { JSONObject(summary) }.getOrNull() ?: return
+        val array = json.optJSONArray("books") ?: return
+        val merged = LinkedHashMap<Long, SyncedBookEntry>()
+        for (entry in store.load()) merged[entry.bookId] = entry
+        for (index in 0 until array.length()) {
+            val item = array.optJSONObject(index) ?: continue
+            val id = item.optLong("id", 0L)
+            if (id <= 0) continue
+            if (item.optString("status") == "removed") {
+                merged.remove(id)
+                continue
+            }
+            val path = item.optString("source_locator")
+            if (path.isBlank()) continue
+            merged[id] = SyncedBookEntry(
+                bookId = id,
+                displayName = item.optString("display_name", "同步书"),
+                sourceLocator = path,
+                sourceSize = item.optLong("source_size", 0L).coerceAtLeast(0L),
+            )
+        }
+        store.save(merged.values.toList())
+    }
+
+    private fun syncSummaryText(summary: String): String {
+        val json = runCatching { JSONObject(summary) }.getOrNull() ?: return "完成"
+        val created = json.optInt("books_created", 0)
+        val updated = json.optInt("books_updated", 0)
+        val progress = json.optInt("progress_applied", 0)
+        val kept = json.optInt("progress_skipped_remote_newer", 0)
+        val marks = json.optInt("bookmarks_created", 0)
+        val conflicts = json.optJSONArray("conflicts")?.length() ?: 0
+        val keptText = if (kept > 0) "，保留本地进度 $kept 本" else ""
+        val suffix = if (conflicts > 0) "，冲突/跳过 $conflicts 项" else ""
+        return "书籍 +$created / 更新 $updated，进度 $progress$keptText，书签 +$marks$suffix"
+    }
+
     fun reportHostFailure(detail: String) {
         update {
             it.copy(
@@ -594,6 +918,12 @@ runCatching { hiddenBooks?.load()?.let { hiddenBooksSet.addAll(it) } }
         val catalog = bookCatalog
         val entry = catalog?.byBookId(bookId)
         if (entry == null) {
+            // 阶段 0/1：同步导入的书不在 SAF 目录里，但已在书架映射中有 bookId。
+            val synced = shelf.values.firstOrNull { it.bookId == bookId }
+            if (synced != null) {
+                openBook(synced)
+                return
+            }
             setStatus(
                 if (catalog == null) {
                     ReaderStatus.HISTORY_NO_CATALOG
@@ -1910,12 +2240,10 @@ runCatching { hiddenBooks?.load()?.let { hiddenBooksSet.addAll(it) } }
      * 目录不可用时静默跳过 —— 书架为空也不得影响阅读主链路。
      */
     private fun refreshShelfFromCatalog() {
-        val catalog = bookCatalog ?: return
-        val entries = try {
-            catalog.list()
-        } catch (error: Throwable) {
-            return
-        }
+        // 目录不可用（宿主未接线/提供者异常）只跳过目录来源；同步书仍应从本地副本重建。
+        val entries = bookCatalog?.let { catalog ->
+            runCatching { catalog.list() }.getOrDefault(emptyList())
+        }.orEmpty()
         var added = false
         for (entry in entries) {
             if (shelf.containsKey(entry.sourceIdentity)) continue
@@ -1930,6 +2258,23 @@ runCatching { hiddenBooks?.load()?.let { hiddenBooksSet.addAll(it) } }
                 totalBytes = 0L,
                 chapterCount = 0,
                 sourceKind = entry.sourceKind,
+            )
+            added = true
+        }
+        // 阶段 0：同步导入的书籍（核心副本路径）也要重建到书架。
+        // 只接受确实存在的私有副本；原始文件不在此列。
+        for (entry in syncedBooks?.load().orEmpty()) {
+            if (entry.bookId <= 0 || entry.sourceLocator in hiddenBooksSet) continue
+            if (shelf.values.any { it.bookId == entry.bookId }) continue
+            val file = File(entry.sourceLocator)
+            if (!file.isFile) continue
+            shelf[entry.sourceLocator] = ShelfBook(
+                sourceIdentity = entry.sourceLocator,
+                displayName = entry.displayName,
+                bookId = entry.bookId,
+                totalBytes = if (entry.sourceSize > 0) entry.sourceSize else file.length(),
+                chapterCount = 0,
+                sourceKind = NrAbiConstants.NR_SOURCE_KIND_FILE,
             )
             added = true
         }
@@ -2594,6 +2939,9 @@ runCatching { hiddenBooks?.load()?.let { hiddenBooksSet.addAll(it) } }
             bookCatalog: HostBookCatalog? = null,
             hiddenBooks: HiddenBooksStore? = null,
             backgroundDir: String? = null,
+            syncedBooks: SyncedBooksStore? = null,
+            webDavStore: WebDavConfigStore? = null,
+            syncStagingRoot: String? = null,
         ): ViewModelProvider.Factory = viewModelFactory {
             initializer {
                 ReaderViewModel(
@@ -2604,6 +2952,9 @@ runCatching { hiddenBooks?.load()?.let { hiddenBooksSet.addAll(it) } }
                     bookCatalog = bookCatalog,
                     hiddenBooks = hiddenBooks,
                     backgroundDir = backgroundDir,
+                    syncedBooks = syncedBooks,
+                    webDavStore = webDavStore,
+                    syncStagingRoot = syncStagingRoot,
                 )
             }
         }

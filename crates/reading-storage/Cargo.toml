@@ -16,3 +16,14 @@ name = "reading_storage"
 # backup 提供 SQLite 在线备份 API（迁移前备份 / 失败恢复）。
 # 精确版本锁定（`=X.Y.Z`），由 scripts/verify-core-scope.py 强制校验。
 rusqlite = { version = "=0.40.2", features = ["bundled", "backup"] }
+
+# 阶段 0 同步包：JSON 状态文件、SHA-256 内容寻址、稳定 UUID。
+# 纯 Rust、无网络依赖，版本精确锁定（AGENTS.md「依赖必须精确锁定」）。
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+sha2 = "=0.10.9"
+uuid = { version = "=1.24.0", features = ["v4"] }
+
+[dev-dependencies]
+# 集成测试直接解析同步包 state.json；与运行时使用同一精确版本。
+serde_json = "=1.0.151"

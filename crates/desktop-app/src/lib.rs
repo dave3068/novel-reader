@@ -48,8 +48,12 @@ pub mod settings;
 pub mod shelf;
 pub mod shelf_ops;
 pub mod source_status;
+pub mod sync_config;
+pub mod sync_ops;
 pub mod theme_derive;
 pub mod ui;
+pub mod webdav;
+pub mod webdav_ops;
 
 pub use app_state::{
     AppState, ApplyOutcome, BackgroundPayload, BackgroundResult, ChoiceRow, DialogView, ErrorView,

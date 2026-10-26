@@ -211,14 +211,16 @@ fn all_entries_are_linkable() {
     let _ = nr_move_category;
     let _ = nr_list_books_in_scope;
     let _ = nr_list_book_categories;
+    let _ = nr_sync_export;
+    let _ = nr_sync_import;
     let _ = nr_cancel_request;
     let _ = nr_get_last_error;
     let _ = nr_release_buffer;
     assert_eq!(nr_abi_version(), ABI_VERSION);
     assert_eq!(
         entry_names().len(),
-        40,
-        "18 项冻结 + nr_set_encoding + V1.1 分类 4 + 历史 3 + 配色 5 + 背景 4 + 作用域书籍 1 + 书籍分类映射 1 + 分类改名/移动 2 + 移动目标 1 项"
+        42,
+        "40 项既有契约 + 阶段 0 同步导出/导入 2 项"
     );
     assert!(entry_names().iter().all(|name| name.starts_with("nr_")));
 }
@@ -2481,4 +2483,53 @@ fn move_targets_include_uncategorized_first_with_its_name() {
         "未分类恒可选"
     );
     unsafe { nr_engine_destroy(engine) };
+}
+
+#[test]
+fn sync_export_import_roundtrip_via_c_abi() {
+    let book = TempBook::new(&chapter_text());
+    let db_a = book.dir.join("sync-a.db").to_string_lossy().into_owned();
+    let bundle = book.dir.join("bundle");
+    std::fs::create_dir_all(&bundle).expect("创建同步包目录");
+
+    let engine_a = create_engine_with_db(&db_a);
+    let opened = open_book(engine_a, &book);
+    assert!(opened.book_id > 0);
+
+    let dir = bundle.to_string_lossy().into_owned();
+    let mut summary = NrBuffer::default();
+    let code = unsafe { nr_sync_export(engine_a, dir.as_ptr(), dir.len() as u32, &mut summary) };
+    assert_eq!(code, 0, "导出必须成功");
+    let exported = String::from_utf8(unsafe { summary.as_slice() }.to_vec()).expect("摘要 UTF-8");
+    assert!(exported.contains("\"books_exported\":1"), "{exported}");
+    assert_eq!(unsafe { nr_release_buffer(&mut summary) }, 0);
+
+    let db_b = book.dir.join("sync-b.db").to_string_lossy().into_owned();
+    let engine_b = create_engine_with_db(&db_b);
+    let mut imported = NrBuffer::default();
+    let code =
+        unsafe { nr_sync_import(engine_b, dir.as_ptr(), dir.len() as u32, 0, &mut imported) };
+    assert_eq!(code, 0, "导入必须成功");
+    let imported_text =
+        String::from_utf8(unsafe { imported.as_slice() }.to_vec()).expect("摘要 UTF-8");
+    assert!(
+        imported_text.contains("\"books_created\":1"),
+        "{imported_text}"
+    );
+    assert!(
+        imported_text.contains("\"books\":["),
+        "导入摘要必须带书籍列表，供 Android 重建书架: {imported_text}"
+    );
+    assert_eq!(unsafe { nr_release_buffer(&mut imported) }, 0);
+
+    // 原始 TXT 未被修改。
+    assert_eq!(
+        std::fs::read(&book.path).expect("回读原文件"),
+        chapter_text().as_bytes()
+    );
+
+    unsafe {
+        nr_engine_destroy(engine_a);
+        nr_engine_destroy(engine_b);
+    }
 }

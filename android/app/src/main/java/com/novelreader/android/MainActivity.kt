@@ -21,11 +21,16 @@ import com.novelreader.android.source.ReaderAnchorPrefsStore
 import com.novelreader.android.source.ReaderSettingsPrefsStore
 import com.novelreader.android.source.SafHost
 import com.novelreader.android.source.SafWindowProviderHolder
+import com.novelreader.android.source.SyncSafBridge
+import com.novelreader.android.source.SyncedBooksPrefsStore
+import com.novelreader.android.source.WebDavPrefsStore
 import com.novelreader.android.ui.NovelReaderApp
 import java.io.File
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * 应用唯一 Activity：挂载三页面外壳 [NovelReaderApp] 并完成宿主接线。
@@ -67,6 +72,12 @@ class MainActivity : ComponentActivity() {
     /** 书架「移除」的持久化集合（只存来源标识，绝不触碰用户文件）。 */
     private val hiddenBooksStore by lazy { HiddenBooksPrefsStore(AndroidSafKeyValue(applicationContext)) }
 
+    /** 阶段 0：同步导入的书籍副本（重启后重建书架）。 */
+    private val syncedBooksStore by lazy { SyncedBooksPrefsStore(AndroidSafKeyValue(applicationContext)) }
+
+    /** 阶段 1：WebDAV 配置（应用私有 KV；密码尚未接 Keystore）。 */
+    private val webDavStore by lazy { WebDavPrefsStore(AndroidSafKeyValue(applicationContext)) }
+
     /**
      * 把 SAF 宿主适配成 ViewModel 需要的 [HostSourceResolver]（书架再次打开 SAF 来源时使用）。
      *
@@ -95,6 +106,9 @@ class MainActivity : ComponentActivity() {
                 bookCatalog = safHost,
                 hiddenBooks = hiddenBooksStore,
                 backgroundDir = backgroundDirPath(this),
+                syncedBooks = syncedBooksStore,
+                webDavStore = webDavStore,
+                syncStagingRoot = File(filesDir, "state/webdav").apply { mkdirs() }.absolutePath,
             ),
         )[ReaderViewModel::class.java]
     }
@@ -145,6 +159,59 @@ class MainActivity : ComponentActivity() {
             )
         }
 
+    /**
+     * 阶段 0 导出：用户选一个目录 → 核心先写 app-private 暂存 → 宿主复制到
+     * `<所选目录>/novel-reader-sync/`。原 TXT 只读。
+     */
+    private val exportSyncLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
+            if (uri == null) return@registerForActivityResult
+            val staging = File(cacheDir, "sync-export")
+            lifecycleScope.launch {
+                val outcome = runCatching {
+                    withContext(Dispatchers.IO) {
+                        SyncSafBridge.resetStaging(staging)
+                        readerViewModel.exportSyncToStaging(staging)
+                        SyncSafBridge.copyLocalToTree(applicationContext, uri, staging)
+                    }
+                }
+                outcome.fold(
+                    onSuccess = {
+                        readerViewModel.reportSyncStatus(
+                            "已导出同步包到所选目录的 ${SyncSafBridge.BUNDLE_DIR_NAME}/；原始 TXT 未被修改",
+                        )
+                    },
+                    onFailure = { error ->
+                        readerViewModel.reportSyncFailure(error.message ?: "导出失败")
+                    },
+                )
+                staging.deleteRecursively()
+            }
+        }
+
+    /**
+     * 阶段 0 导入：用户选同步包目录 → 宿主复制到 app-private 暂存 → 核心合并。
+     * 只写应用自己的副本，绝不修改/删除原始 TXT。
+     */
+    private val importSyncLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
+            if (uri == null) return@registerForActivityResult
+            val staging = File(cacheDir, "sync-import")
+            lifecycleScope.launch {
+                val outcome = runCatching {
+                    withContext(Dispatchers.IO) {
+                        SyncSafBridge.resetStaging(staging)
+                        SyncSafBridge.copyTreeToLocal(applicationContext, uri, staging)
+                        readerViewModel.importSyncFromStaging(staging)
+                    }
+                }
+                outcome.onFailure { error ->
+                    readerViewModel.reportSyncFailure(error.message ?: "导入失败")
+                }
+                staging.deleteRecursively()
+            }
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -172,6 +239,8 @@ class MainActivity : ComponentActivity() {
             NovelReaderApp(
                 onImportRequest = { importLauncher.launch(IMPORT_MIME_TYPES) },
                 onPickBackgroundImage = { backgroundLauncher.launch(IMAGE_MIME_TYPES) },
+                onSyncExportRequest = { exportSyncLauncher.launch(null) },
+                onSyncImportRequest = { importSyncLauncher.launch(null) },
                 buildMarker = BuildConfig.BUILD_MARKER,
                 viewModel = readerViewModel,
             )

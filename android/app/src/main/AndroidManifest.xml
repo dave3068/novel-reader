@@ -7,6 +7,9 @@
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- 阶段 1：WebDAV 同步（仅 HTTPS；无明文流量配置）。 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application
         android:allowBackup="false"
         android:label="@string/app_name"

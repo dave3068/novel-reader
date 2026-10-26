@@ -56,7 +56,7 @@ pub const CONTENT_UNIT_SINGLE: u32 = 1;
 ///
 /// 与 `results/gates/gate-0-baseline.md` §2.7 逐项一致：16 项最小接口 +
 /// `nr_release_buffer` + `nr_abi_version`。
-pub const ABI_ENTRY_NAMES: [&str; 40] = [
+pub const ABI_ENTRY_NAMES: [&str; 42] = [
     "nr_abi_version",
     "nr_engine_create",
     "nr_engine_destroy",
@@ -99,6 +99,8 @@ pub const ABI_ENTRY_NAMES: [&str; 40] = [
     "nr_move_category",
     "nr_list_books_in_scope",
     "nr_list_book_categories",
+    "nr_sync_export",
+    "nr_sync_import",
     "nr_cancel_request",
     "nr_get_last_error",
     "nr_release_buffer",
@@ -111,7 +113,7 @@ pub const ABI_VERSION_MACRO_TEXT: &str = "NR_ABI_VERSION";
 ///
 /// 与 [`ABI_ENTRY_NAMES`] 一一对应；`tests/header_parity.rs` 用它逐项比对
 /// `include/novel_reader.h` 的函数声明，使"头文件与 Rust 导出符号逐项一致"变成机器校验。
-pub const ABI_FUNCTIONS: [(&str, &str); 40] = [
+pub const ABI_FUNCTIONS: [(&str, &str); 42] = [
     ("nr_abi_version", "uint32_t(void)"),
     (
         "nr_engine_create",
@@ -249,6 +251,14 @@ pub const ABI_FUNCTIONS: [(&str, &str); 40] = [
     (
         "nr_list_book_categories",
         "int32_t(uint64_t, nr_book_category_batch *)",
+    ),
+    (
+        "nr_sync_export",
+        "int32_t(uint64_t, const uint8_t *, uint32_t, nr_buffer *)",
+    ),
+    (
+        "nr_sync_import",
+        "int32_t(uint64_t, const uint8_t *, uint32_t, uint32_t, nr_buffer *)",
     ),
     ("nr_cancel_request", "int32_t(uint64_t, uint64_t)"),
     ("nr_get_last_error", "int32_t(uint64_t, nr_error_info *)"),
@@ -553,12 +563,7 @@ mod tests {
     #[test]
     fn entry_list_is_unique_and_matches_frozen_count() {
         let mut names = ABI_ENTRY_NAMES.to_vec();
-        // 18 项冻结契约 + 向后兼容新增的 `nr_set_encoding`。
-        assert_eq!(
-            names.len(),
-            40,
-            "18 项冻结 + nr_set_encoding + V1.1 分类 4 + 历史 3 + 配色 5 + 背景 4 + 作用域书籍 1 + 书籍分类映射 1 + 分类改名/移动 2 + 移动目标 1 项"
-        );
+        assert_eq!(names.len(), 42, "40 项既有契约 + 阶段 0 同步导出/导入 2 项");
         let total = names.len();
         names.sort_unstable();
         names.dedup();

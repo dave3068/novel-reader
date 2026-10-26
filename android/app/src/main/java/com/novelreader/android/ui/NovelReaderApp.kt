@@ -44,6 +44,8 @@ import com.novelreader.android.reader.ReaderViewModel
 fun NovelReaderApp(
     onImportRequest: () -> Unit,
     onPickBackgroundImage: (() -> Unit)? = null,
+    onSyncExportRequest: (() -> Unit)? = null,
+    onSyncImportRequest: (() -> Unit)? = null,
     buildMarker: String = "",
     viewModel: ReaderViewModel = viewModel(factory = ReaderViewModel.productionFactory()),
 ) {
@@ -77,6 +79,9 @@ fun NovelReaderApp(
                         onMoveCategory = viewModel::onMoveCategory,
                         onDeleteCategory = viewModel::onDeleteCategory,
                         onMoveBookToCategory = viewModel::onMoveBookToCategory,
+                        webDavEnabled = state.webDav.enabled,
+                        webDavBusy = state.webDav.busy,
+                        onSyncMode = { mode -> viewModel.syncWebDav(mode) },
                     )
 
                     ReaderRoute.HISTORY -> HistoryScreen(
@@ -130,6 +135,12 @@ fun NovelReaderApp(
                             viewModel.onBackgroundPickRequest(fit, scrim, onPickBackgroundImage)
                         },
                         onBackgroundClear = viewModel::onBackgroundClear,
+                        onSyncExportRequest = onSyncExportRequest,
+                        onSyncImportRequest = onSyncImportRequest,
+                        onWebDavChange = viewModel::onWebDavConfigChange,
+                        onWebDavEnabledChange = viewModel::onWebDavEnabledChange,
+                        onWebDavProgressChange = viewModel::onWebDavProgressChange,
+                        onWebDavSync = { viewModel.syncWebDav() },
                         onRelayout = viewModel::requestRelayout,
                         onSavePosition = viewModel::savePositionNow,
                         onRebuildIndex = viewModel::rebuildIndex,

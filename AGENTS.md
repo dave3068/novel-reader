@@ -50,7 +50,7 @@ bash scripts/build-android-apk.sh --abi arm64-v8a
 # 项目边界/结构/ABI
 python3 scripts/verify-core-scope.py
 python3 scripts/verify-v1-structure.py
-python3 scripts/verify-abi.py
+python3 scripts/verify-abi.py --kotlin android/app/src/main/java
 ```
 
 - Linux 桌面构建可能需要先加载本机 Slint 原生依赖环境，具体见 `docs/desktop/runbook.md`；不要把某台开发机的绝对路径当作通用依赖。

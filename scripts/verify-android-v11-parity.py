@@ -73,6 +73,9 @@ V11_ENTRIES = [
     "nr_move_category",
     "nr_list_books_in_scope",
     "nr_list_book_categories",
+    # 阶段 0 同步（加性契约；2026-10-25）
+    "nr_sync_export",
+    "nr_sync_import",
 ]
 
 # 12 处站点（规格 §4）→ (相对路径, 说明)
@@ -162,7 +165,7 @@ def check_sites() -> None:
             f"缺 {', '.join(n for n in V11_ENTRIES if n not in implemented)}"
         )
     else:
-        ok(f"V1.1 B1 分类 {len(V11_ENTRIES)} 个导出已实施")
+        ok(f"加性导出 {len(V11_ENTRIES)} 项已实施")
     if PENDING_ENTRIES:
         ok(
             f"后续批次 {len(PENDING_ENTRIES)} 个导出**尚未实施**"

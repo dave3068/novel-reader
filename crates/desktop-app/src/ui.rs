@@ -1110,6 +1110,7 @@ pub fn apply_snapshot(ui: &AppWindow, snapshot: &UiSnapshot) {
             current_index: row.current_index,
             checked: row.checked,
             mono: row.mono,
+            secret: row.secret,
             range_label: row.range_label.as_str().into(),
             row_height: row.row_height as f32,
             offset_y: row.offset_y as f32,
@@ -1226,6 +1227,14 @@ fn mutate_and_refresh(
 fn submit_shelf_refresh(state: &Arc<Mutex<AppState>>, channel: &JobChannel, db_path: &Path) {
     let request = lock(state).next_shelf_request(db_path.to_path_buf());
     let _ = channel.submit(request);
+}
+
+/// 同步导入后立即同步刷新书架（阶段 0；数据量小，直接在当前线程读库）。
+fn refresh_shelf_now(ui: &AppWindow, state: &Arc<Mutex<AppState>>, db_path: &Path) {
+    let request = lock(state).next_shelf_request(db_path.to_path_buf());
+    let result = crate::shelf::shelf_job(request);
+    let _ = lock(state).apply_result(result);
+    refresh(ui, state);
 }
 
 /// 分类操作浮层的 `DialogView.kind`（名称态：新建/重命名共用）。
@@ -3760,12 +3769,38 @@ pub fn run() -> Result<(), slint::PlatformError> {
         let state = Arc::clone(&state);
         let reader = Arc::clone(&reader);
         let tracker = Arc::clone(&tracker);
+        let settings_slot = Arc::clone(&settings_slot);
         let db_path = db_path.clone();
         let weak = ui.as_weak();
         move |index| {
             let Some(ui) = weak.upgrade() else {
                 return;
             };
+            if lock(&state).dialog_kind() == 7 {
+                let sync = lock(&settings_slot).sync().clone();
+                mutate_and_refresh(&ui, &state, |guard| guard.close_dialog());
+                if !sync.enabled || !sync.is_ready() {
+                    set_status_text(&ui, &state, "同步", "WebDAV 未启用或配置不完整");
+                    return;
+                }
+                let mode = match index {
+                    0 => crate::webdav_ops::SyncMode::Pull,
+                    1 => crate::webdav_ops::SyncMode::PullProgressOnly,
+                    2 => crate::webdav_ops::SyncMode::PullBooksOnly,
+                    3 => crate::webdav_ops::SyncMode::Push,
+                    _ => crate::webdav_ops::SyncMode::Both,
+                };
+                match crate::webdav_ops::sync_mode(&db_path, &sync.webdav(), mode) {
+                    Ok(report) => {
+                        if mode != crate::webdav_ops::SyncMode::Push {
+                            refresh_shelf_now(&ui, &state, &db_path);
+                        }
+                        set_status_text(&ui, &state, "同步", &report.summary());
+                    }
+                    Err(message) => set_status_text(&ui, &state, "同步", &message),
+                }
+                return;
+            }
             let rows = lock(&state).dialog().choice_rows.clone();
             let Some(row) = rows.get(index.max(0) as usize) else {
                 mutate_and_refresh(&ui, &state, |guard| {
@@ -3907,6 +3942,88 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 return;
             };
             let key = key.as_str().to_string();
+            // 阶段 0：同步包导出/导入（按 key 分派；`.slint` 只转发 key）。
+            if key == settings::KEY_WEBDAV_CONFIG {
+                let config = lock(&settings_slot).sync().clone();
+                ui.set_webdav_initial_enabled(config.enabled);
+                ui.set_webdav_initial_url(config.base_url.as_str().into());
+                ui.set_webdav_initial_user(config.username.as_str().into());
+                ui.set_webdav_initial_password(config.password.as_str().into());
+                ui.set_webdav_initial_remote_progress(
+                    config.progress == settings::PROGRESS_REMOTE_IF_NEWER,
+                );
+                ui.set_webdav_dialog_open(true);
+                return;
+            }
+            if key == settings::KEY_WEBDAV_SYNC {
+                let sync = lock(&settings_slot).sync().clone();
+                if !sync.enabled {
+                    set_status_text(&ui, &state, "WebDAV", "WebDAV 未启用：当前按离线模式运行");
+                    return;
+                }
+                if !sync.is_ready() {
+                    set_status_text(
+                        &ui,
+                        &state,
+                        "WebDAV",
+                        "请先填写 HTTPS 地址与用户名（密码按需填写）",
+                    );
+                    return;
+                }
+                match crate::webdav_ops::sync(&db_path, &sync.webdav()) {
+                    Ok(report) => {
+                        refresh_shelf_now(&ui, &state, &db_path);
+                        set_status_text(&ui, &state, "WebDAV", &report.summary());
+                    }
+                    Err(message) => set_status_text(&ui, &state, "WebDAV", &message),
+                }
+                return;
+            }
+            if key == settings::KEY_SYNC_EXPORT || key == settings::KEY_SYNC_IMPORT {
+                let picked = match picker.pick_directory() {
+                    Ok(Some(path)) => path,
+                    Ok(None) => return,
+                    Err(error) => {
+                        set_status_text(&ui, &state, "同步", &error.to_string());
+                        return;
+                    }
+                };
+                let outcome = if key == settings::KEY_SYNC_EXPORT {
+                    crate::sync_ops::export(&db_path, &picked).map(|(path, report)| {
+                        format!(
+                            "已导出到 {}（{} 本书，{} 个文件）；原始 TXT 未被修改",
+                            path.display(),
+                            report.books_exported,
+                            report.book_files_copied
+                        )
+                    })
+                } else {
+                    crate::sync_ops::import(&db_path, &picked).map(|(_path, report)| {
+                        let conflict_note = if report.conflicts.is_empty() {
+                            String::new()
+                        } else {
+                            format!("；冲突/跳过 {} 项", report.conflicts.len())
+                        };
+                        format!("导入完成（{}）{}", report.summary(), conflict_note)
+                    })
+                };
+                match outcome {
+                    Ok(message) => {
+                        if key == settings::KEY_SYNC_IMPORT {
+                            refresh_shelf_now(&ui, &state, &db_path);
+                        }
+                        if let Ok(fresh) = settings::load(&db_path) {
+                            *lock(&settings_slot) = fresh;
+                        }
+                        set_status_text(&ui, &state, "同步", &message);
+                        refresh(&ui, &state);
+                    }
+                    Err(message) => {
+                        set_status_text(&ui, &state, "同步", &message);
+                    }
+                }
+                return;
+            }
             // V1.1：「启用自定义配色」开关走自己的表（`reader_theme_custom`），
             // **不进** `GlobalSettings` 的普通字段路径。
             if key == settings::KEY_CUSTOM_THEME {
@@ -4048,7 +4165,8 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 return;
             };
             let key = key.as_str().to_string();
-            let value = value.as_str().trim().to_string();
+            let raw_value = value.as_str().to_string();
+            let value = raw_value.trim().to_string();
 
             // V1.1：基色字段（`kind = 8`）写入 `reader_theme_custom` 后**立即重算派生**，
             // 让用户当场看到效果；校验与写入都在 Rust（界面不解析颜色）。
@@ -4078,6 +4196,29 @@ pub fn run() -> Result<(), slint::PlatformError> {
                         refresh(&ui, &state);
                     }
                 }
+                return;
+            }
+
+            // 阶段 1：WebDAV 文本字段（地址/用户名/密码）不做整数解析。
+            if key == settings::KEY_WEBDAV_URL
+                || key == settings::KEY_WEBDAV_USER
+                || key == settings::KEY_WEBDAV_PASSWORD
+            {
+                let mut guard = lock(&reader);
+                let session = guard.as_mut();
+                apply_settings_value(
+                    &ui,
+                    &state,
+                    &db_path,
+                    &settings_slot,
+                    session,
+                    &key,
+                    SettingsChange::Text(if key == settings::KEY_WEBDAV_PASSWORD {
+                        raw_value
+                    } else {
+                        value
+                    }),
+                );
                 return;
             }
 
@@ -4638,6 +4779,40 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 .map(|row| row.title.clone())
                 .unwrap_or_else(|| format!("book_id={book_id}"));
             match action.as_str() {
+                "toggle-sync" => {
+                    let mut storage = match reading_storage::Storage::open(&db_path) {
+                        Ok(storage) => storage,
+                        Err(error) => {
+                            set_status_text(&ui, &state, "同步范围", &format!("打开数据库失败：{error}"));
+                            return;
+                        }
+                    };
+                    let mut store = match reading_storage::sync::SyncStore::open(Some(&db_path)) {
+                        Ok(store) => store,
+                        Err(error) => {
+                            set_status_text(&ui, &state, "同步范围", &format!("读取同步状态失败：{error}"));
+                            return;
+                        }
+                    };
+                    let excluded = reading_storage::sync::is_book_excluded(&store, storage.conn(), book_id)
+                        .unwrap_or(false);
+                    let result = reading_storage::sync::set_book_excluded(
+                        &mut store,
+                        storage.conn(),
+                        book_id,
+                        !excluded,
+                    )
+                    .and_then(|_| store.save());
+                    mutate_and_refresh(&ui, &state, |guard| {
+                        guard.set_shelf_menu_index(-2);
+                        guard.set_status(match result {
+                            Ok(()) if !excluded => format!("已将「{title}」设为仅本地：不上传文件与阅读进度"),
+                            Ok(()) => format!("已恢复「{title}」的同步"),
+                            Err(error) => format!("同步范围设置失败：{error}"),
+                        });
+                    });
+                    submit_shelf_refresh(&state, &channel, &db_path);
+                }
                 "relink" => {
                     mutate_and_refresh(&ui, &state, |guard| {
                         guard.set_shelf_menu_index(-2);
@@ -4862,6 +5037,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
     ui.on_category_menu_picked({
         let state = Arc::clone(&state);
         let weak = ui.as_weak();
+        let channel = Arc::clone(&channel);
         let db_path = db_path.clone();
         move |action, id| {
             let Some(ui) = weak.upgrade() else {
@@ -4871,6 +5047,50 @@ pub fn run() -> Result<(), slint::PlatformError> {
             let id = id.to_string();
             let db = db_path.clone();
             let parsed = id.parse::<i64>().ok();
+
+            if action == "category-sync" {
+                let Some(category_id) = parsed else {
+                    set_status_text(&ui, &state, "同步范围", "分类标识非法");
+                    return;
+                };
+                let mut storage = match reading_storage::Storage::open(&db_path) {
+                    Ok(storage) => storage,
+                    Err(error) => {
+                        set_status_text(&ui, &state, "同步范围", &format!("打开数据库失败：{error}"));
+                        return;
+                    }
+                };
+                let mut store = match reading_storage::sync::SyncStore::open(Some(&db_path)) {
+                    Ok(store) => store,
+                    Err(error) => {
+                        set_status_text(&ui, &state, "同步范围", &format!("读取同步状态失败：{error}"));
+                        return;
+                    }
+                };
+                let excluded = reading_storage::sync::is_category_excluded(
+                    &store,
+                    storage.conn(),
+                    category_id,
+                )
+                .unwrap_or(false);
+                let result = reading_storage::sync::set_category_excluded(
+                    &mut store,
+                    storage.conn(),
+                    category_id,
+                    !excluded,
+                )
+                .and_then(|_| store.save());
+                mutate_and_refresh(&ui, &state, |guard| {
+                    guard.close_category_menu();
+                    guard.set_status(match result {
+                        Ok(()) if !excluded => "已将该分类设为仅本地（子分类一并排除）".to_string(),
+                        Ok(()) => "已恢复该分类的同步".to_string(),
+                        Err(error) => format!("同步范围设置失败：{error}"),
+                    });
+                });
+                submit_shelf_refresh(&state, &channel, &db_path);
+                return;
+            }
 
             // 移动态需要目标列表（自身与子孙不可选；判定在 Rust）。
             let targets = if action == "category-move" {
@@ -5139,6 +5359,32 @@ pub fn run() -> Result<(), slint::PlatformError> {
         }
     });
 
+    ui.on_sync_menu({
+        let state = Arc::clone(&state);
+        let settings_slot = Arc::clone(&settings_slot);
+        let db_path = db_path.clone();
+        let weak = ui.as_weak();
+        move || {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let sync = lock(&settings_slot).sync().clone();
+            if !sync.enabled {
+                set_status_text(&ui, &state, "同步", "WebDAV 未启用：当前按离线模式运行");
+                return;
+            }
+            if !sync.is_ready() {
+                set_status_text(
+                    &ui,
+                    &state,
+                    "同步",
+                    "请先在设置页填写 HTTPS 地址与用户名（密码按需）",
+                );
+                return;
+            }
+            mutate_and_refresh(&ui, &state, |guard| guard.open_sync_menu());
+        }
+    });
     ui.on_shelf_import_batch({
         let state = Arc::clone(&state);
         let weak = ui.as_weak();
@@ -5317,7 +5563,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 let source = dialog.category_dialog_parent_id.parse::<i64>().ok();
                 let targets =
                     source.and_then(|cid| crate::category_ops::move_targets(&db_path, cid).ok());
-            mutate_and_refresh(&ui, &state, |guard| {
+                mutate_and_refresh(&ui, &state, |guard| {
                     let mut dialog = guard.dialog().clone();
                     dialog.category_dialog_title = "选择移入的分类".to_string();
                     dialog.category_dialog_parent =
@@ -5568,6 +5814,68 @@ pub fn run() -> Result<(), slint::PlatformError> {
                     });
                 }
             }
+        }
+    });
+    ui.on_webdav_config_cancelled({
+        let weak = ui.as_weak();
+        move || {
+            if let Some(ui) = weak.upgrade() {
+                ui.set_webdav_dialog_open(false);
+            }
+        }
+    });
+    ui.on_webdav_config_saved({
+        let state = Arc::clone(&state);
+        let settings_slot = Arc::clone(&settings_slot);
+        let db_path = db_path.clone();
+        let weak = ui.as_weak();
+        move |enabled, url, user, password, remote_progress| {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let url = url.as_str().trim().to_string();
+            let user = user.as_str().trim().to_string();
+            let warning = if enabled && !url.starts_with("https://") {
+                "；地址不是 HTTPS，同步会失败"
+            } else if enabled && user.is_empty() {
+                "；用户名为空，同步会失败"
+            } else {
+                ""
+            };
+            let config = crate::sync_config::SyncConfig {
+                enabled,
+                base_url: url,
+                username: user,
+                password: password.to_string(),
+                progress: if remote_progress {
+                    settings::PROGRESS_REMOTE_IF_NEWER.to_string()
+                } else {
+                    settings::PROGRESS_KEEP_LOCAL.to_string()
+                },
+            };
+            {
+                let mut guard = lock(&settings_slot);
+                guard.set_sync_config(config);
+                if let Err(error) = settings::save(&db_path, &guard, import::now_unix()) {
+                    drop(guard);
+                    set_status_text(&ui, &state, "WebDAV 配置", &format!("保存失败：{error}"));
+                    return;
+                }
+            }
+            ui.set_webdav_dialog_open(false);
+            if let Ok(fresh) = settings::load(&db_path) {
+                *lock(&settings_slot) = fresh;
+            }
+            set_status_text(
+                &ui,
+                &state,
+                "WebDAV 配置",
+                &if enabled {
+                    format!("已保存并启用{warning}")
+                } else {
+                    "已保存；WebDAV 未启用，按离线模式运行".to_string()
+                },
+            );
         }
     });
     ui.on_dialog_rename_save({

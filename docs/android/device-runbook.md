@@ -84,12 +84,15 @@ adb install -r ${NR_PROJECT_DIR}/dist/app-debug.apk
 | S10 | 权限失效重关联 | 撤销该 TXT 的 URI 权限后再次打开该书 | 提示重新选择文件；不崩溃；库记录不丢 | 待验证 |
 | S11 | 批次读取中途取消 | 导入大文件后在其读取过程中返回/取消 | 无残留半成品缓存；可重新导入；不崩溃 | 待验证 |
 | S12 | 崩溃日志排查 | `adb logcat -d > results/verify/android-device-logs/logcat.txt` | 无本包名 PID 的 `FATAL EXCEPTION`（shell 进程崩溃不算） | 待验证 |
+| S13 | 阶段 0 目录包导出 | 设置 → 同步 → 导出同步包 → 选择一个本地目录 | 生成 `novel-reader-sync/state.json` 与 `books/`；无崩溃；原 TXT 未变 | 待验证 |
+| S14 | 阶段 0 目录包导入 | 将同步包放到另一台设备可选目录 → 设置 → 导入同步包 | 书籍/进度/书签/设置合并；重启后同步书仍在书架；重复导入不产生重复 | 待验证 |
+| S15 | WebDAV 同步 | 设置 → 启用 WebDAV → 填 HTTPS 地址/用户名/应用密码 → 书架「同步」选择拉取/上传/双向 | 关闭开关时离线可正常用；成功后显示统计；失败有可读错误；不修改原 TXT；弱网/429 行为记录 | 待验证 |
 
 ## 5. 证据与路径约定
 
 | 项 | 约定路径 | 说明 |
 |---|---|---|
-| 主证据 | `results/verify/android-device-verify.md` | V-AN2 写入：逐条 S1–S12 判定、机型、系统版本、未覆盖项 |
+| 主证据 | `results/verify/android-device-verify.md` | V-AN2 写入：逐条 S1–S15 判定、机型、系统版本、未覆盖项 |
 | 附件日志 | `results/verify/android-device-logs/` | logcat、`adb shell uiautomator dump` 层级、安装输出等原始输出 |
 | 构建期证据 | `results/an6-apk.md`、`results/an6-logs/` | AN6 产出：构建命令、退出码、校验输出（本文件不替代它） |
 

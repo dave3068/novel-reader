@@ -72,3 +72,54 @@ interface HostBookCatalog {
     fun byBookId(bookId: Long): HostBookEntry? =
         list().firstOrNull { entry -> entry.bookId == bookId }
 }
+
+/**
+ * 同步导入后写入本地书架的书籍条目（阶段 0）。
+ *
+ * 与 [HostBookEntry] 分开：同步书的来源是**应用自己的副本路径**，不需要 SAF 持久权限；
+ * 但仍需在重启后重建书架，否则「导入一次、重启消失」。
+ */
+data class SyncedBookEntry(
+    val bookId: Long,
+    val displayName: String,
+    val sourceLocator: String,
+    val sourceSize: Long,
+)
+
+/**
+ * 同步书持久化端口（阶段 0）。
+ *
+ * 只存同步导入产生的**副本路径**；不触碰用户原始文件。实现方不得抛异常。
+ */
+interface SyncedBooksStore {
+    fun load(): List<SyncedBookEntry>
+    fun save(entries: List<SyncedBookEntry>)
+}
+
+/**
+ * WebDAV 配置（阶段 1）。
+ *
+ * 注意：当前实现把密码保存在应用私有 SharedPreferences（未接 Android Keystore）；
+ * 这是阶段 1 的已知限制，后续必须迁移到 Keystore/EncryptedSharedPreferences。
+ */
+data class WebDavConfig(
+    val enabled: Boolean = false,
+    val baseUrl: String = "",
+    val username: String = "",
+    val password: String = "",
+    /** true = 远端进度较新时使用远端；false = 保留本地。 */
+    val useRemoteProgress: Boolean = false,
+) {
+    /** 防止日志泄露密码。 */
+    override fun toString(): String =
+        "WebDavConfig(enabled=$enabled, baseUrl=$baseUrl, username=$username, password=<redacted>, useRemoteProgress=$useRemoteProgress)"
+}
+
+/** 阶段 1 同步方向（书架「同步」菜单）。 */
+enum class SyncMode { Pull, Push, Both }
+
+/** WebDAV 配置持久化端口；实现方不得抛异常。 */
+interface WebDavConfigStore {
+    fun load(): WebDavConfig?
+    fun save(config: WebDavConfig)
+}

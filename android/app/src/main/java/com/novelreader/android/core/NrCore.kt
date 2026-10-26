@@ -312,6 +312,24 @@ object NrCore {
         outBuffer: LongArray,
     ): ByteArray?
 
+    /**
+     * 阶段 0：导出同步包到 [dir]（宿主先物化的 app-private 目录）。
+     * 返回 UTF-8 JSON 摘要；`null` = 失败（错误码经 [nr_get_last_error]）。
+     * `outBuffer` 必须是 `LongArray(3)`；返回的摘要缓冲区由调用方恰好归还一次。
+     */
+    external fun nr_sync_export(engine: Long, dir: ByteArray, outBuffer: LongArray): ByteArray?
+
+    /**
+     * 阶段 0：从 [dir] 合并同步包。
+     * 返回 UTF-8 JSON 摘要；`null` = 失败；`outBuffer` 语义同 [nr_sync_export]。
+     */
+    external fun nr_sync_import(
+        engine: Long,
+        dir: ByteArray,
+        progressPolicy: Int,
+        outBuffer: LongArray,
+    ): ByteArray?
+
     /** 16. 取消请求（协作式）。requestId 必须非 0；可从另一线程调用。 */
     external fun nr_cancel_request(engine: Long, requestId: Long): Int
 

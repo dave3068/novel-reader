@@ -1,6 +1,7 @@
 //! `reading-ffi`：正式跨语言 ABI 导出层（C ABI / JNI / 平台窗口内容协议）。
 //!
-//! 冻结契约见 `results/gates/gate-0-baseline.md` §2.7：**18 项入口** + 向后兼容新增的 `nr_set_encoding`（共 19 项）
+//! 冻结契约见 `results/gates/gate-0-baseline.md` §2.7：**18 项入口** + 向后兼容新增的 `nr_set_encoding`；
+//! 加上 V1.1 与阶段 0 的加性入口，当前共 **42 项**。
 //! （16 项最小接口 + [`exports::nr_release_buffer`] + [`exports::nr_abi_version`]）。
 //! 头文件 `include/novel_reader.h` 是本层的 C 侧对照，二者由
 //! `scripts/verify-abi.py`（导出符号）与 `tests/header_parity.rs`（签名与结构体字段）
@@ -15,7 +16,7 @@
 //! - [`external`]：平台窗口内容协议（平台提供受限窗口字节，Rust 裁定坐标与边界）；
 //! - [`cancel`]：跨线程可见的协作式取消；
 //! - [`engine`]：把入口映射到共享核心与本地存储的真实语义；
-//! - [`exports`]：19 项 `#[no_mangle] extern "C"` 导出（18 项冻结契约 + `nr_set_encoding`）。
+//! - [`exports`]：42 项 `#[no_mangle] extern "C"` 导出（18 项冻结 + `nr_set_encoding` + V1.1 + 阶段 0 同步）。
 //!
 //! # 硬性边界（卡片禁止事项）
 //!
@@ -40,7 +41,7 @@ pub use reading_core::{ABI_VERSION, CORE_VERSION};
 /// V1 冻结的 ABI 入口数量（16 项最小接口 + 缓冲区释放 + ABI 版本查询）。
 ///
 /// 冻结依据：`results/gates/gate-0-baseline.md` §2.7。
-pub const ABI_ENTRY_COUNT: usize = 40;
+pub const ABI_ENTRY_COUNT: usize = 42;
 
 #[cfg(test)]
 mod tests {
@@ -56,8 +57,8 @@ mod tests {
     #[test]
     fn abi_entry_count_matches_frozen_baseline() {
         assert_eq!(
-            ABI_ENTRY_COUNT, 40,
-            "18 项冻结 + nr_set_encoding + V1.1 分类 4 + 历史 3 + 配色 5 + 背景 4 + 作用域书籍 1 + 书籍分类映射 1 + 分类改名/移动 2 + 移动目标 1 项"
+            ABI_ENTRY_COUNT, 42,
+            "40 项既有契约 + 阶段 0 同步导出/导入 2 项"
         );
         assert_eq!(CORE_VERSION, reading_core::CORE_VERSION);
         assert_eq!(abi::ABI_ENTRY_NAMES.len(), ABI_ENTRY_COUNT);

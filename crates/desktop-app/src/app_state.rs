@@ -1559,6 +1559,45 @@ impl AppState {
         };
     }
 
+    /// 打开书架「同步」菜单（阶段 1；选项只表达方向，远端是否可用由 Rust 再校验）。
+    pub fn open_sync_menu(&mut self) {
+        let rows = vec![
+            ChoiceRow {
+                name: "拉取远端读物到本地".to_string(),
+                current: false,
+                enabled: true,
+            },
+            ChoiceRow {
+                name: "仅拉取远端阅读进度".to_string(),
+                current: false,
+                enabled: true,
+            },
+            ChoiceRow {
+                name: "仅下载远端书籍文件".to_string(),
+                current: false,
+                enabled: true,
+            },
+            ChoiceRow {
+                name: "上传本地读物到服务器".to_string(),
+                current: false,
+                enabled: true,
+            },
+            ChoiceRow {
+                name: "双向同步".to_string(),
+                current: false,
+                enabled: true,
+            },
+        ];
+        self.dialog = DialogView {
+            kind: 7,
+            choice_title: "同步".to_string(),
+            choice_meta: "选择方向；书籍按内容哈希去重".to_string(),
+            choice_rows: rows,
+            choice_current_index: -1,
+            ..DialogView::default()
+        };
+    }
+
     /// 打开重命名弹窗。
     pub fn open_rename(
         &mut self,

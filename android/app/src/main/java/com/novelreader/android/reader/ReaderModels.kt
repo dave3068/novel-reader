@@ -613,6 +613,20 @@ object ThemeBase {
     val LABELS = listOf("正文色", "背景色", "主色", "强调色")
 }
 
+/** WebDAV 设置页状态（密码只用于发起请求；不在日志输出）。 */
+data class WebDavState(
+    val enabled: Boolean = false,
+    val baseUrl: String = "",
+    val username: String = "",
+    val password: String = "",
+    val useRemoteProgress: Boolean = false,
+    val busy: Boolean = false,
+) {
+    /** 防止整状态日志/崩溃报告泄露密码。 */
+    override fun toString(): String =
+        "WebDavState(enabled=$enabled, baseUrl=$baseUrl, username=$username, password=<redacted>, useRemoteProgress=$useRemoteProgress, busy=$busy)"
+}
+
 data class ReaderUiState(
     val route: ReaderRoute = ReaderRoute.SHELF,
     val shelf: ShelfState = ShelfState(),
@@ -626,6 +640,8 @@ data class ReaderUiState(
     val background: BackgroundState = BackgroundState(),
     /** 书架分类侧栏（V1.1；层级与计数全部来自核心）。 */
     val categories: CategoryState = CategoryState(),
+    /** WebDAV 配置与同步状态（阶段 1）。 */
+    val webDav: WebDavState = WebDavState(),
     /** 当前的移动 / 删除目标选项（核心给；空 = 未在选目标）。 */
     val categoryTargets: List<CategoryTargetView> = emptyList(),
     /**

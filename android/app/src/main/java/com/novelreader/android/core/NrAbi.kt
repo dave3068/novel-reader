@@ -296,6 +296,17 @@ internal interface NrAbi {
      */
     fun listBookCategories(engine: Long, outBatch: ByteArray, outBuffer: LongArray): ByteArray?
 
+    /** 阶段 0：导出同步包。默认实现让既有 JVM 测试替身不必立刻补齐。 */
+    fun syncExport(engine: Long, dir: ByteArray, outBuffer: LongArray): ByteArray? =
+        throw UnsupportedOperationException("syncExport 未由测试替身实现")
+
+    /** 阶段 0：导入同步包。 */
+    fun syncImport(
+        engine: Long,
+        dir: ByteArray,
+        progressPolicy: Int,
+        outBuffer: LongArray,
+    ): ByteArray? = throw UnsupportedOperationException("syncImport 未由测试替身实现")
 
     fun cancelRequest(engine: Long, requestId: Long): Int
     fun getLastError(engine: Long, outInfo: ByteArray, outBuffer: LongArray): ByteArray?
@@ -502,6 +513,16 @@ internal object NrJniAbi : NrAbi {
         outBatch: ByteArray,
         outBuffer: LongArray,
     ): ByteArray? = NrCore.nr_list_book_categories(engine, outBatch, outBuffer)
+
+    override fun syncExport(engine: Long, dir: ByteArray, outBuffer: LongArray): ByteArray? =
+        NrCore.nr_sync_export(engine, dir, outBuffer)
+
+    override fun syncImport(
+        engine: Long,
+        dir: ByteArray,
+        progressPolicy: Int,
+        outBuffer: LongArray,
+    ): ByteArray? = NrCore.nr_sync_import(engine, dir, progressPolicy, outBuffer)
 
     override fun categoryMoveTargets(
         engine: Long,

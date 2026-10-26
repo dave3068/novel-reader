@@ -180,7 +180,10 @@ pub fn menu_items() -> Vec<crate::app_state::ChoiceRow> {
 /// ⚠️ 判定与顺序**全部来自共享存储层** [`categories::move_targets`] ——
 /// 本函数只做「存储行 → 界面行」的文案装箱。**不得**在此重新遍历父子链：
 /// 桌面与 Android 必须同源，否则两端「哪些目标可选」会各自演化。
-pub fn move_targets(db_path: &Path, source_id: i64) -> Result<Vec<crate::app_state::ChoiceRow>, String> {
+pub fn move_targets(
+    db_path: &Path,
+    source_id: i64,
+) -> Result<Vec<crate::app_state::ChoiceRow>, String> {
     use crate::app_state::ChoiceRow;
     let storage = open(db_path)?;
     let targets =
@@ -304,9 +307,18 @@ mod tests {
         let rows = book_move_targets(&db).expect("书籍目标");
         let names: Vec<String> = rows.iter().map(|row| row.name.clone()).collect();
         assert!(names[0].starts_with("未分类"), "未分类钉在顶部：{names:?}");
-        assert!(names.iter().any(|n| n.contains("科幻")), "含科幻：{names:?}");
-        assert!(names.iter().any(|n| n.contains("中国科幻")), "含子分类：{names:?}");
-        assert!(names.iter().any(|n| n.contains("历史")), "含历史：{names:?}");
+        assert!(
+            names.iter().any(|n| n.contains("科幻")),
+            "含科幻：{names:?}"
+        );
+        assert!(
+            names.iter().any(|n| n.contains("中国科幻")),
+            "含子分类：{names:?}"
+        );
+        assert!(
+            names.iter().any(|n| n.contains("历史")),
+            "含历史：{names:?}"
+        );
         assert!(
             rows.iter().all(|row| row.enabled),
             "书籍目标**全部可选**（无「不可选」）：{names:?}"
@@ -580,9 +592,15 @@ mod tests {
         );
         assert_eq!(ids[0], None, "首个是未分类（`None` 口径）");
         // 被阻断项**仍在**列表里（标记不可选，而非剔除）—— 下标因此保持一致。
-        let sci_index = text.iter().position(|name| name.contains("科幻") && name.contains("不可选"));
+        let sci_index = text
+            .iter()
+            .position(|name| name.contains("科幻") && name.contains("不可选"));
         let history_index = text.iter().position(|name| name.contains("历史"));
-        assert_eq!(ids[sci_index.expect("自身行")], Some(sci), "自身仍在列表里，只是不可选");
+        assert_eq!(
+            ids[sci_index.expect("自身行")],
+            Some(sci),
+            "自身仍在列表里，只是不可选"
+        );
         // 关键回归：**被阻断行之后**的目标必须仍能被下标取到
         // （旧实现剔除阻断项 ⇒ 这里的下标会落到别的分类上，甚至越界取不到）。
         assert_eq!(
@@ -620,8 +638,6 @@ mod tests {
         assert!(items[2].name.contains("移动到分类"));
         assert!(items[3].name.contains("删除"), "删除必须是最后一项");
     }
-
-
 }
 
 /// 「移动到分类」的目标列表（**书籍**；设计稿 C5）。
@@ -631,13 +647,11 @@ mod tests {
 ///
 /// 顺序与缩进来自**共享存储层**的树投影（与分类移动同源），避免两处各自算一套树序。
 /// 「未分类」**钉在顶部**（设计稿 C5）。
-pub fn book_move_targets(
-    db_path: &Path,
-) -> Result<Vec<crate::app_state::ChoiceRow>, String> {
+pub fn book_move_targets(db_path: &Path) -> Result<Vec<crate::app_state::ChoiceRow>, String> {
     use crate::app_state::ChoiceRow;
     let storage = open(db_path)?;
-    let (nodes, unclassified) =
-        categories::project_tree_with_uncategorized(storage.conn()).map_err(|error| error.to_string())?;
+    let (nodes, unclassified) = categories::project_tree_with_uncategorized(storage.conn())
+        .map_err(|error| error.to_string())?;
 
     let mut rows = Vec::with_capacity(nodes.len() + 1);
     rows.push(ChoiceRow {
@@ -661,12 +675,10 @@ pub fn book_move_targets(
 /// 与名称列表**逐下标对齐**（界面用 0 基下标查它）—— 同 [`move_target_ids`] 的纪律。
 pub fn book_move_target_ids(db_path: &Path) -> Result<Vec<Option<i64>>, String> {
     let storage = open(db_path)?;
-    let (nodes, _) =
-        categories::project_tree_with_uncategorized(storage.conn()).map_err(|error| error.to_string())?;
+    let (nodes, _) = categories::project_tree_with_uncategorized(storage.conn())
+        .map_err(|error| error.to_string())?;
     let mut ids = Vec::with_capacity(nodes.len() + 1);
     ids.push(None);
     ids.extend(nodes.iter().map(|node| Some(node.id)));
     Ok(ids)
-
-
 }

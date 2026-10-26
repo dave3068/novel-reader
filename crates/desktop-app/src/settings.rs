@@ -23,6 +23,12 @@ use reading_storage::Storage;
 
 use crate::layout::{MAX_FONT_SIZE_PX, MIN_FONT_SIZE_PX};
 use crate::reflow::TypographySettings;
+use crate::sync_config::{self, SyncConfig};
+pub use crate::sync_config::{
+    KEY_ENABLED as KEY_WEBDAV_ENABLED, KEY_PASSWORD as KEY_WEBDAV_PASSWORD,
+    KEY_PROGRESS as KEY_WEBDAV_PROGRESS, KEY_URL as KEY_WEBDAV_URL, KEY_USER as KEY_WEBDAV_USER,
+    PROGRESS_KEEP_LOCAL, PROGRESS_REMOTE_IF_NEWER,
+};
 
 /// 交互（翻页）模式的元信息键（存核心 `app_meta`，不新增表/列）。
 pub const INTERACTION_MODE_KEY: &str = "ui.interaction_mode";
@@ -86,6 +92,16 @@ pub const KEY_BACKGROUND_FIT: &str = "background.fit";
 pub const KEY_BACKGROUND_SCRIM: &str = "background.scrim";
 /// 「清除背景图」动作。
 pub const KEY_BACKGROUND_CLEAR: &str = "background.clear";
+
+// ---- 阶段 0 同步（导出/导入目录包；传输层后续接 WebDAV）----
+/// 「导出同步包…」动作。
+pub const KEY_SYNC_EXPORT: &str = "sync.export";
+/// 「导入同步包…」动作。
+pub const KEY_SYNC_IMPORT: &str = "sync.import";
+/// 「WebDAV 配置…」动作（阶段 1；打开配置对话框）。
+pub const KEY_WEBDAV_CONFIG: &str = "webdav.config";
+/// 「WebDAV 同步…」动作（阶段 1）。
+pub const KEY_WEBDAV_SYNC: &str = "webdav.sync";
 /// 字段键：交互模式（手势/按钮）。
 pub const KEY_INTERACTION_MODE: &str = "interaction-mode";
 /// 字段键：沉浸时自动隐藏工具条。
@@ -331,6 +347,70 @@ pub const SETTINGS_FIELDS: &[SettingsField] = &[
         effective: true,
         note: "",
     },
+    // ---- 阶段 0 同步 ----
+    SettingsField {
+        key: KEY_SYNC_EXPORT,
+        label: "导出同步包…（选择网盘同步目录）",
+        kind: FieldKind::Action,
+        effective: false,
+        note: "同步动作，不参与排版",
+    },
+    SettingsField {
+        key: KEY_SYNC_IMPORT,
+        label: "导入同步包…（选择同步包目录）",
+        kind: FieldKind::Action,
+        effective: false,
+        note: "同步动作，不参与排版",
+    },
+    SettingsField {
+        key: KEY_WEBDAV_ENABLED,
+        label: "启用 WebDAV 同步",
+        kind: FieldKind::Toggle,
+        effective: false,
+        note: "关闭时按普通离线模式运行",
+    },
+    SettingsField {
+        key: KEY_WEBDAV_URL,
+        label: "WebDAV 地址（https://…）",
+        kind: FieldKind::Text,
+        effective: false,
+        note: "仅接受 HTTPS",
+    },
+    SettingsField {
+        key: KEY_WEBDAV_USER,
+        label: "WebDAV 用户名",
+        kind: FieldKind::Text,
+        effective: false,
+        note: "应用密码对应的账号",
+    },
+    SettingsField {
+        key: KEY_WEBDAV_PASSWORD,
+        label: "WebDAV 应用密码",
+        kind: FieldKind::Text,
+        effective: false,
+        note: "明文保存在本机数据库；勿在共享设备使用",
+    },
+    SettingsField {
+        key: KEY_WEBDAV_PROGRESS,
+        label: "远端进度较新时",
+        kind: FieldKind::Enum(&[PROGRESS_KEEP_LOCAL, PROGRESS_REMOTE_IF_NEWER]),
+        effective: false,
+        note: "同步动作策略，不参与排版",
+    },
+    SettingsField {
+        key: KEY_WEBDAV_CONFIG,
+        label: "WebDAV 配置…",
+        kind: FieldKind::Action,
+        effective: false,
+        note: "配置动作，不参与排版",
+    },
+    SettingsField {
+        key: KEY_WEBDAV_SYNC,
+        label: "WebDAV 双向同步…",
+        kind: FieldKind::Action,
+        effective: false,
+        note: "同步动作，不参与排版",
+    },
 ];
 
 /// 设置行（可显示字段；文案与控件口径由 Rust 唯一生成）。
@@ -366,6 +446,8 @@ pub struct SettingsRowView {
     pub checked: bool,
     /// 值文本用等宽字体（机器可核对信息）。
     pub mono: bool,
+    /// 密码字段（`.slint` 用 `InputType.password` 遮蔽显示）。
+    pub secret: bool,
     /// V1.1 `kind = 8`：基色色块（`(r, g, b, a)`；Rust 解析好，界面不解析颜色）。
     pub swatch: (u8, u8, u8, u8),
     /// 取值范围显示口径（如 `12 … 40`、`1.0 × … 2.4 ×`；空串表示不显示）。
@@ -452,6 +534,8 @@ pub struct GlobalSettings {
     custom_theme: Option<reading_storage::theme::ThemeCustom>,
     /// V1.1 全局背景图的**显示快照**（从 `reader_background` 读回）。
     background: Option<reading_storage::background::Background>,
+    /// 阶段 1 跨设备同步配置（WebDAV 开关/地址/凭证/进度策略）。
+    sync: SyncConfig,
 }
 
 impl Default for GlobalSettings {
@@ -463,6 +547,7 @@ impl Default for GlobalSettings {
             origin: SettingsOrigin::Default,
             custom_theme: None,
             background: None,
+            sync: SyncConfig::default(),
         }
     }
 }
@@ -476,6 +561,16 @@ impl GlobalSettings {
     /// 设置来源。
     pub fn origin(&self) -> SettingsOrigin {
         self.origin
+    }
+
+    /// 阶段 1 同步配置（只读投影；写入走设置页字段）。
+    pub fn sync(&self) -> &SyncConfig {
+        &self.sync
+    }
+
+    /// 配置对话框保存时写入（随后由设置页统一落库）。
+    pub fn set_sync_config(&mut self, config: SyncConfig) {
+        self.sync = config;
     }
 
     /// 交互模式（`buttons` / `gesture`）。
@@ -542,6 +637,7 @@ impl GlobalSettings {
             KEY_MARGIN_X => (self.reader.margin_x_milli / 1_000).max(0) as i32,
             KEY_MARGIN_Y => (self.reader.margin_y_milli / 1_000).max(0) as i32,
             KEY_IMMERSIVE_AUTOHIDE => i32::from(self.immersive_autohide),
+            KEY_WEBDAV_ENABLED => i32::from(self.sync.enabled),
             _ => 0,
         }
     }
@@ -557,6 +653,7 @@ impl GlobalSettings {
         match key {
             KEY_LINE_SPACING => self.set_line_spacing_mult_permille(value)?,
             KEY_IMMERSIVE_AUTOHIDE => self.immersive_autohide = value != 0,
+            KEY_WEBDAV_ENABLED => self.sync.enabled = value != 0,
             KEY_FONT_SIZE
             | KEY_PARAGRAPH_SPACING
             | KEY_FIRST_LINE_INDENT
@@ -592,6 +689,7 @@ impl GlobalSettings {
                 "暗黑".to_string(),
             ],
             KEY_INTERACTION_MODE => vec!["按钮翻页".to_string(), "手势翻页".to_string()],
+            KEY_WEBDAV_PROGRESS => vec!["保留本地进度".to_string(), "使用远端较新进度".to_string()],
             // V1.1 背景缩放：标签与顺序由存储层 `FitMode` 给出（单一事实源）。
             KEY_BACKGROUND_FIT => reading_storage::background::FitMode::all()
                 .iter()
@@ -621,6 +719,7 @@ impl GlobalSettings {
                 _ => 0,
             },
             KEY_INTERACTION_MODE => i32::from(self.gesture_mode()),
+            KEY_WEBDAV_PROGRESS => i32::from(self.sync.progress == PROGRESS_REMOTE_IF_NEWER),
             KEY_FONT_FAMILY => FONT_FAMILIES
                 .iter()
                 .position(|name| *name == self.reader.font_family)
@@ -645,6 +744,14 @@ impl GlobalSettings {
                     MODE_GESTURE
                 } else {
                     MODE_BUTTONS
+                }
+                .to_string();
+            }
+            KEY_WEBDAV_PROGRESS => {
+                self.sync.progress = if index.clamp(0, 1) == 1 {
+                    PROGRESS_REMOTE_IF_NEWER
+                } else {
+                    PROGRESS_KEEP_LOCAL
                 }
                 .to_string();
             }
@@ -685,6 +792,30 @@ impl GlobalSettings {
                     "开".to_string()
                 } else {
                     "关".to_string()
+                }
+            }
+            KEY_WEBDAV_ENABLED => {
+                if self.sync.enabled {
+                    "开".to_string()
+                } else {
+                    "关".to_string()
+                }
+            }
+            KEY_WEBDAV_CONFIG => {
+                if self.sync.enabled {
+                    "已启用；点击配置地址/账号".to_string()
+                } else {
+                    "未启用（离线模式）；点击配置".to_string()
+                }
+            }
+            KEY_WEBDAV_URL => self.sync.base_url.clone(),
+            KEY_WEBDAV_USER => self.sync.username.clone(),
+            KEY_WEBDAV_PASSWORD => self.sync.password.clone(),
+            KEY_WEBDAV_PROGRESS => {
+                if self.sync.progress == PROGRESS_REMOTE_IF_NEWER {
+                    "使用远端较新进度".to_string()
+                } else {
+                    "保留本地进度".to_string()
                 }
             }
             // V1.1 配色字段：值不在 `GlobalSettings` 里（存 `reader_theme_custom`），
@@ -796,6 +927,14 @@ impl GlobalSettings {
                     self.immersive_autohide = !self.immersive_autohide;
                 }
             }
+            (KEY_WEBDAV_ENABLED, _) => {
+                if delta % 2 != 0 {
+                    self.sync.enabled = !self.sync.enabled;
+                }
+            }
+            (KEY_WEBDAV_PROGRESS, FieldKind::Enum(values)) => {
+                self.sync.progress = cycle(values, &self.sync.progress, delta);
+            }
             (_, FieldKind::Enum(_)) => {
                 return Err(SettingsError::UnknownField {
                     key: key.to_string(),
@@ -828,7 +967,12 @@ impl GlobalSettings {
         let field = Self::field(key).ok_or_else(|| SettingsError::UnknownField {
             key: key.to_string(),
         })?;
-        let value = value.trim();
+        // 密码保留原始字符（应用密码可能含首尾空格）；其余字段按习惯 trim。
+        let value = if key == KEY_WEBDAV_PASSWORD {
+            value
+        } else {
+            value.trim()
+        };
         match field.kind {
             FieldKind::FontFamily => {
                 if value.is_empty() {
@@ -878,13 +1022,22 @@ impl GlobalSettings {
                 });
             }
             FieldKind::Text => {
-                // 基色由 `theme_custom::*` 持久化；这里只做格式校验并放行，
-                // 真正的写入由设置页回调调用存储层完成（保持单一写入口）。
-                if !value.is_empty() && !is_hex_color(value) {
-                    return Err(SettingsError::InvalidValue {
-                        key: key.to_string(),
-                        detail: format!("应为 #RRGGBB（收到 {value}）"),
-                    });
+                if key == KEY_WEBDAV_URL {
+                    // 输入过程中允许半截地址；真正发起请求前由 `is_ready`/客户端校验 HTTPS。
+                    self.sync.base_url = value.to_string();
+                } else if key == KEY_WEBDAV_USER {
+                    self.sync.username = value.to_string();
+                } else if key == KEY_WEBDAV_PASSWORD {
+                    self.sync.password = value.to_string();
+                } else {
+                    // 基色由 `theme_custom::*` 持久化；这里只做格式校验并放行，
+                    // 真正的写入由设置页回调调用存储层完成（保持单一写入口）。
+                    if !value.is_empty() && !is_hex_color(value) {
+                        return Err(SettingsError::InvalidValue {
+                            key: key.to_string(),
+                            detail: format!("应为 #RRGGBB（收到 {value}）"),
+                        });
+                    }
                 }
             }
             // V1.1：动作行不接受文本值（它们是点按）。
@@ -1031,6 +1184,7 @@ pub fn load(db_path: &Path) -> Result<GlobalSettings, SettingsError> {
         custom_theme,
         // 背景读回失败同样**不阻断设置加载**（与配色一致）。
         background: reading_storage::background::load(storage.conn()).unwrap_or(None),
+        sync: sync_config::load_from_conn(storage.conn()),
     })
 }
 
@@ -1057,6 +1211,8 @@ pub fn save(db_path: &Path, settings: &GlobalSettings, now: i64) -> Result<(), S
         now,
     )
     .map_err(|error| SettingsError::Storage(error.to_string()))?;
+    sync_config::save_to_conn(storage.conn(), &settings.sync, now)
+        .map_err(SettingsError::Storage)?;
     Ok(())
 }
 
@@ -1201,6 +1357,7 @@ pub fn display_rows(
             settings.control_value(key) != 0
         },
         mono: false,
+        secret: key == KEY_WEBDAV_PASSWORD,
         // V1.1：基色色块。**未设置时给透明**（界面以 `effective=false` 显示空底+红框），
         // 不擅自用内置值冒充「用户选的颜色」。
         swatch: settings.custom_theme_swatch(key).unwrap_or((0, 0, 0, 0)),
@@ -1304,6 +1461,22 @@ pub fn display_rows(
         section: 4,
         ..SettingsRowView::default()
     });
+    // ---- 阶段 0 同步 ----
+    header(
+        &mut rows,
+        "同步 · 目录包（阶段 0）",
+        "导出/导入目录包；可放进百度网盘同步空间、坚果云等由客户端搬运。原 TXT 不会被修改。",
+    );
+    rows.push(row(KEY_SYNC_EXPORT, 9, 4));
+    rows.push(row(KEY_SYNC_IMPORT, 9, 4));
+    // ---- 阶段 1 WebDAV ----
+    header(
+        &mut rows,
+        "同步 · WebDAV（阶段 1）",
+        "配置放在独立对话框里输入，避免逐键重投影导致滚动/焦点跳动；关闭时按离线模式运行。",
+    );
+    rows.push(row(KEY_WEBDAV_CONFIG, 9, 4));
+    rows.push(row(KEY_WEBDAV_SYNC, 9, 4));
     // 逐行计算 y 偏移与行高：界面按此**绝对定位**每一行（不依赖布局引擎）。
     let mut offset = 0u32;
     for row in rows.iter_mut() {
@@ -1863,5 +2036,53 @@ mod tests {
         assert_eq!(load_shelf_view(&db), 1);
         assert_eq!(load_shelf_sort(&db), crate::app_state::SORT_TITLE);
         let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod sync_rows_tests {
+    use super::*;
+
+    #[test]
+    fn settings_save_round_trips_webdav_config() {
+        let dir = std::env::temp_dir().join(format!(
+            "nr-settings-sync-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |delta| delta.as_nanos())
+        ));
+        std::fs::create_dir_all(&dir).expect("建目录");
+        let db = dir.join("library.db");
+        let mut storage = reading_storage::Storage::open(&db).expect("打开");
+        storage.migrate().expect("迁移");
+        drop(storage);
+
+        let mut settings = GlobalSettings::default();
+        settings.sync.enabled = true;
+        settings.sync.base_url = "https://dav.example.com/dav/".to_string();
+        settings.sync.username = "u".to_string();
+        settings.sync.password = "p".to_string();
+        settings.sync.progress = PROGRESS_REMOTE_IF_NEWER.to_string();
+        save(&db, &settings, 1).expect("保存");
+        let loaded = load(&db).expect("读回");
+        assert!(loaded.sync.enabled);
+        assert_eq!(loaded.sync.base_url, settings.sync.base_url);
+        assert_eq!(loaded.sync.password, settings.sync.password);
+        assert_eq!(loaded.sync.progress, PROGRESS_REMOTE_IF_NEWER);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn webdav_config_is_an_action_row() {
+        let mut settings = GlobalSettings::default();
+        settings.sync.enabled = true;
+        let rows = display_rows(&settings, "/tmp/library.db", (0, 0));
+        let row = rows
+            .iter()
+            .find(|row| row.key == KEY_WEBDAV_CONFIG)
+            .expect("配置动作行");
+        assert_eq!(row.kind, 9);
+        assert!(row.value.contains("已启用"));
     }
 }

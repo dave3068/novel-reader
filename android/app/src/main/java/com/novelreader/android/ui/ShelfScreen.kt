@@ -35,6 +35,7 @@ import com.novelreader.android.reader.CategoryState
 import com.novelreader.android.reader.CategoryTargetView
 import com.novelreader.android.reader.CategoryTreeAssembly
 import com.novelreader.android.reader.ReaderState
+import com.novelreader.android.reader.SyncMode
 import com.novelreader.android.reader.ReaderStatus
 import com.novelreader.android.reader.ShelfBook
 import com.novelreader.android.reader.ShelfLayout
@@ -82,7 +83,11 @@ fun ShelfScreen(
     onMoveCategory: (Long, Long) -> Unit,
     onDeleteCategory: (Long, Int, Long) -> Unit,
     onMoveBookToCategory: (bookId: Long, categoryId: Long, label: String?) -> Unit,
+    webDavEnabled: Boolean = false,
+    webDavBusy: Boolean = false,
+    onSyncMode: ((SyncMode) -> Unit)? = null,
 ) {
+    var syncMenu by remember { mutableStateOf(false) }
     Column(modifier = Modifier.fillMaxSize().nrScreenInsets().testTag(ReaderTestTags.SHELF_SCREEN)) {
         NrTopBar(
             title = "书架",
@@ -113,6 +118,13 @@ fun ShelfScreen(
             ) {
                 Text("设置")
             }
+            TextButton(
+                onClick = { if (webDavEnabled) syncMenu = true },
+                enabled = webDavEnabled && !webDavBusy,
+                modifier = Modifier.semantics { contentDescription = "跨设备同步" },
+            ) {
+                Text(if (webDavBusy) "同步中…" else "同步")
+            }
         }
         HorizontalDivider()
 
@@ -124,6 +136,39 @@ fun ShelfScreen(
         var menuForBook by remember { mutableStateOf<ShelfBook?>(null) }
         var moveForBook by remember { mutableStateOf<ShelfBook?>(null) }
         var moveTarget by remember { mutableStateOf<Long?>(null) }
+
+        if (syncMenu) {
+            AlertDialog(
+                onDismissRequest = { syncMenu = false },
+                title = { Text("跨设备同步") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("书籍按内容哈希去重；原始 TXT 不会被修改。")
+                        TextButton(
+                            onClick = {
+                                syncMenu = false
+                                onSyncMode?.invoke(SyncMode.Pull)
+                            },
+                        ) { Text("拉取远端读物到本地") }
+                        TextButton(
+                            onClick = {
+                                syncMenu = false
+                                onSyncMode?.invoke(SyncMode.Push)
+                            },
+                        ) { Text("上传本地读物到服务器") }
+                        TextButton(
+                            onClick = {
+                                syncMenu = false
+                                onSyncMode?.invoke(SyncMode.Both)
+                            },
+                        ) { Text("双向同步") }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { syncMenu = false }) { Text("取消") }
+                },
+            )
+        }
 
         pendingRemoval?.let { target ->
             AlertDialog(

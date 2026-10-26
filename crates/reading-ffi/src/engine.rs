@@ -988,6 +988,45 @@ impl Engine {
         &mut self.storage
     }
 
+    /// 阶段 0：导出同步包到本地目录（目录由平台/宿主选择）。
+    ///
+    /// 只读数据库与书籍源文件；不在核心内猜测平台数据目录。
+    pub fn export_sync_bundle(&self, dir: &Path) -> NrResult<reading_storage::sync::SyncReport> {
+        use reading_storage::sync;
+        let db_path = self.storage.path().map(Path::to_path_buf);
+        let mut store = sync::SyncStore::open(db_path.as_deref()).map_err(map_storage_error)?;
+        sync::export_bundle(
+            &mut store,
+            self.storage.conn(),
+            dir,
+            &sync::ExportOptions::default(),
+        )
+        .map_err(map_storage_error)
+    }
+
+    /// 阶段 0：从本地目录合并同步包。
+    ///
+    /// 书籍副本落在数据库同目录的 `sync-books/`；原始 TXT 永不被修改/删除。
+    pub fn import_sync_bundle(
+        &self,
+        dir: &Path,
+        progress_policy: reading_storage::sync::ProgressPolicy,
+    ) -> NrResult<reading_storage::sync::SyncReport> {
+        use reading_storage::sync;
+        let db_path = self.storage.path().map(Path::to_path_buf);
+        let mut store = sync::SyncStore::open(db_path.as_deref()).map_err(map_storage_error)?;
+        sync::import_bundle(
+            &mut store,
+            self.storage.conn(),
+            dir,
+            &sync::ImportOptions {
+                progress_policy,
+                ..sync::ImportOptions::default()
+            },
+        )
+        .map_err(map_storage_error)
+    }
+
     /// 分类批量条目（V1.1；`nr_list_categories` 的载荷）。
     pub fn category_rows(&self) -> NrResult<CategoryRowsData> {
         use reading_storage::categories;

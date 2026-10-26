@@ -65,6 +65,8 @@ class NrJniBoundaryTest {
         "nr_move_category",
         "nr_list_books_in_scope",
         "nr_list_book_categories",
+        "nr_sync_export",
+        "nr_sync_import",
         "nr_cancel_request",
         "nr_get_last_error",
         "nr_release_buffer",
@@ -112,6 +114,8 @@ class NrJniBoundaryTest {
         "moveCategory",
         "listBooksInScope",
         "listBookCategories",
+        "syncExport",
+        "syncImport",
         "cancelRequest",
         "getLastError",
         "releaseBuffer",
@@ -128,8 +132,8 @@ class NrJniBoundaryTest {
     fun nrCoreDeclaresExactlyTheFrozenEntrySet() {
         val natives = nativeMethods()
         assertEquals(
-            "external fun 声明数必须为 40（18 项冻结 + nr_set_encoding + V1.1 分类 4 + 历史 3 + 配色 5 + 背景 4 + 作用域书籍 1 + 书籍分类映射 1 + 分类改名/移动 2 + 移动目标 1 项）",
-            40,
+            "external fun 声明数必须为 42（40 项既有契约 + 阶段 0 同步 2 项）",
+            42,
             natives.size,
         )
         assertEquals(entryNames.toSet(), natives.map { it.name }.toSet())
@@ -194,8 +198,8 @@ class NrJniBoundaryTest {
             .map { it.name.substringBefore('$') }
             .toSet()
         assertEquals(
-            "NrAbi 接口方法数必须为 40（与 external fun 一一对应）",
-            40,
+            "NrAbi 接口方法数必须为 42（与 external fun 一一对应）",
+            42,
             declared.size,
         )
         assertEquals(seamNames.toSet(), declared)

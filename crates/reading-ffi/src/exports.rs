@@ -17,6 +17,7 @@
 
 use std::os::raw::c_void;
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::path::Path;
 use std::sync::Arc;
 
 use reading_core::{ErrorCode, LayoutSignature, NrError, NrResult, TextDirection};
@@ -1456,6 +1457,71 @@ pub unsafe extern "C" fn nr_get_last_error(engine: u64, out_info: *mut NrErrorIn
     })
 }
 
+/// 阶段 0：导出同步包到目录（`nr_sync_export`）。
+///
+/// `dir_ptr/dir_len` 是宿主选择/创建的本地目录（UTF-8，非空）。成功时
+/// `out_summary` 收到 UTF-8 JSON 摘要，调用方必须用 `nr_release_buffer` 归还。
+/// 目录必须可写；不修改任何用户原始 TXT。
+///
+/// # Safety
+///
+/// `dir_ptr` 必须指向 `dir_len` 字节的合法 UTF-8；`out_summary` 必须可写。
+#[no_mangle]
+pub unsafe extern "C" fn nr_sync_export(
+    engine: u64,
+    dir_ptr: *const u8,
+    dir_len: u32,
+    out_summary: *mut NrBuffer,
+) -> i32 {
+    with_engine(engine, |engine| {
+        let dir = read_utf8(dir_ptr, dir_len as usize, "sync_dir")?
+            .ok_or_else(|| invalid("sync_dir 不得为空"))?;
+        if dir.is_empty() {
+            return Err(invalid("sync_dir 不得为空"));
+        }
+        let report = engine.export_sync_bundle(Path::new(&dir))?;
+        write_out(
+            out_summary,
+            NrBuffer::from_vec(report.to_json().into_bytes()),
+        )
+    })
+}
+
+/// 阶段 0：从目录合并同步包（`nr_sync_import`）。
+///
+/// 成功时 `out_summary` 收到 UTF-8 JSON 摘要，调用方必须归还。
+/// 只写应用自己的书籍副本；原始 TXT 永不被修改/删除。
+///
+/// # Safety
+///
+/// `dir_ptr` 必须指向 `dir_len` 字节的合法 UTF-8；`out_summary` 必须可写。
+#[no_mangle]
+pub unsafe extern "C" fn nr_sync_import(
+    engine: u64,
+    dir_ptr: *const u8,
+    dir_len: u32,
+    progress_policy: u32,
+    out_summary: *mut NrBuffer,
+) -> i32 {
+    with_engine(engine, |engine| {
+        let dir = read_utf8(dir_ptr, dir_len as usize, "sync_dir")?
+            .ok_or_else(|| invalid("sync_dir 不得为空"))?;
+        if dir.is_empty() {
+            return Err(invalid("sync_dir 不得为空"));
+        }
+        let policy = match progress_policy {
+            0 => reading_storage::sync::ProgressPolicy::KeepLocal,
+            1 => reading_storage::sync::ProgressPolicy::RemoteIfNewer,
+            other => return Err(invalid(format!("progress_policy 只支持 0/1，实际 {other}"))),
+        };
+        let report = engine.import_sync_bundle(Path::new(&dir), policy)?;
+        write_out(
+            out_summary,
+            NrBuffer::from_vec(report.to_json().into_bytes()),
+        )
+    })
+}
+
 /// 归还 Rust 分配的缓冲区（`nr_release_buffer`）。
 ///
 /// 归还后 `buf` 的三个字段全部置零；对已归零的缓冲区再次调用是安全 no-op。
@@ -1540,7 +1606,7 @@ fn record_outcome_error(engine: &mut Engine, code: i32, outcome: &crate::engine:
 }
 
 /// 供测试与文档使用：冻结入口清单。
-pub fn entry_names() -> &'static [&'static str; 40] {
+pub fn entry_names() -> &'static [&'static str; 42] {
     &ABI_ENTRY_NAMES
 }
 

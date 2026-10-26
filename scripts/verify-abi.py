@@ -104,6 +104,8 @@ FROZEN_ENTRY_NAMES = [
     "nr_move_category",
     "nr_list_books_in_scope",
     "nr_list_book_categories",
+    "nr_sync_export",
+    "nr_sync_import",
     "nr_cancel_request",
     "nr_get_last_error",
     "nr_release_buffer",

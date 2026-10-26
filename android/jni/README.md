@@ -1,6 +1,6 @@
 # android/jni —— JNI 薄适配层契约（AN1 冻结）
 
-本目录是「Kotlin `external fun nr_*` 声明」与「`include/novel_reader.h` 冻结 18 项 C ABI」
+本目录是「Kotlin `external fun nr_*` 声明」与「`include/novel_reader.h` 当前 42 项 C ABI（18 项冻结 + 24 项加性）」
 之间的唯一适配层。Kotlin 侧只做装箱/拆箱与错误映射，不复制任何章节、位置、分页、缓存失效
 或书签业务（子规格 `android/spec.md` AR2 / design.md）。
 
@@ -26,14 +26,18 @@
 对应的 C 符号是 `Java_com_novelreader_android_core_NrCore_nr_1abi_1version`，
 而**不是** `..._NrCore_nr_abi_version`（后者在 HotSpot 上实测直接
 `UnsatisfiedLinkError: no implementation found`）。
-`android/jni/nr_jni.c` 的 18 项定义全部使用转义名，`scripts/build-android-libs.sh`
-会同时校验「转义名 = 18 项」且「未转义名 = 0 项」，防止回退。
+`android/jni/nr_jni.c` 的 42 项定义全部使用转义名，`scripts/build-android-libs.sh`
+会同时校验「转义名 = 42 项」且「未转义名 = 0 项」，防止回退。
 
 因此 Kotlin 必须放在 `android/app/src/main/java/com/novelreader/android/core/NrCore.kt`，
 包名与类名都不可更改，否则 JNI 符号无法解析（`UnsatisfiedLinkError`）。
-18 项声明的函数名必须与头文件入口名**逐字相同**（`scripts/verify-abi.py` 逐项校验）。
+42 项声明的函数名必须与头文件入口名**逐字相同**（`scripts/verify-abi.py` 逐项校验）。
 
-## §2 18 项 Kotlin `external` 声明（可直接复制）
+## §2 最小 18 项冻结 `external` 声明（完整 42 项见 `NrCore.kt`）
+
+> 下列代码块只列 V1 冻结的 18 项，便于快速核对 JNI 命名；
+> `nr_set_encoding`、V1.1 分类/历史/配色/背景与阶段 0 同步的 24 项加性声明
+> 以 `android/app/src/main/java/com/novelreader/android/core/NrCore.kt` 为准。
 
 ```kotlin
 package com.novelreader.android.core
@@ -220,7 +224,7 @@ bash scripts/build-android-libs.sh --abi arm64-v8a
 # Gradle 会（在 .so 缺失/过期时）自动调用上面的脚本，再打包 APK
 cd android && ./gradlew :app:assembleDebug
 
-# 宿主机 JNI 层自检（真实加载 .so 并调用 18 项入口，见 host-smoke/）
+# 宿主机 JNI 层自检（真实加载 .so 并调用 42 项入口，见 host-smoke/）
 bash scripts/build-android-libs.sh --host-smoke
 ```
 

@@ -8,11 +8,21 @@
 - 自动识别常见文本编码，并支持手动选择编码。
 - 整页分页阅读、章节导航、阅读位置恢复与书签。
 - 本地书架、阅读设置及 SQLite 持久化。
+- 可选跨设备同步（阶段 0 目录包 + 阶段 1 WebDAV）：阅读进度、书签、分类、设置与书籍副本；原 TXT 只读。
 - 桌面目标为 Linux、Windows；Android 目标为 Android 12（API 31）及以上。
 
-当前版本**不支持** ZIP、EPUB、MOBI、PDF、在线书源、账号/云同步、正文全文搜索或连续滚动。应用管理书架记录和缓存时不会修改或删除用户原始 TXT 文件。
+当前版本**不支持** ZIP、EPUB、MOBI、PDF、在线书源、账号系统、正文全文搜索或连续滚动。跨设备同步未完成真实网盘/真机验收，详见 [`docs/research/sync-phase0-implementation.md`](docs/research/sync-phase0-implementation.md) 与 [`docs/research/webdav-sync-implementation.md`](docs/research/webdav-sync-implementation.md)。应用管理书架记录和缓存时不会修改或删除用户原始 TXT 文件。
 
 > 本仓库仍有平台验收项待验证。不要仅根据目标平台或成功构建推断平台已完整通过；详见 [`docs/desktop/platform-requirements.md`](docs/desktop/platform-requirements.md)、[`docs/android/device-runbook.md`](docs/android/device-runbook.md) 和 [`docs/release/known-limitations.md`](docs/release/known-limitations.md)。
+
+## 跨设备同步（可选）
+
+同步是**显式开启**的辅助能力，不改变本地优先与原始 TXT 只读语义：
+
+- **阶段 0（目录包）**：桌面/Android 设置页可选择目录导出/导入 `novel-reader-sync/`（`state.json` + `books/<sha256>.txt`）。可放进百度网盘同步空间、坚果云等由客户端搬运。
+- **阶段 1（WebDAV）**：桌面/Android 设置页启用并填写 HTTPS 地址、用户名、应用密码；未启用时按普通离线模式运行。书架「同步…」可选择「拉取远端读物到本地」「上传本地读物到服务器」「双向同步」；远端进度较新时可在设置中选择保留本地或使用远端。
+- 合并规则、已知限制与真机待验证项见上述两份实现记录；不要在未实测的情况下宣称“跨设备同步已验收”。
+- 阶段 1 的 WebDAV 密码目前桌面端明文存于 `library.db`、Android 端以 Base64 存于应用私有 SharedPreferences（均非加密）；不要把数据库或设备交给他人。
 
 ## 项目结构
 
@@ -91,7 +101,7 @@ cd android
 ```bash
 python3 scripts/verify-core-scope.py
 python3 scripts/verify-v1-structure.py
-python3 scripts/verify-abi.py
+python3 scripts/verify-abi.py --kotlin android/app/src/main/java
 ```
 
 如改动涉及平台边界、发布包或对应契约，应进一步运行相关的 `scripts/verify-*.py`、端到端测试或平台门禁；以脚本当前用法和对应 runbook 为准。
@@ -106,6 +116,7 @@ python3 scripts/verify-abi.py
 
 ## 文档导航
 
+- [变更日志](CHANGELOG.md)
 - [V1 实际开发方案](docs/novel-reader-v1-development-plan.md)
 - [总体方案](docs/novel-reader-solution.md)
 - [桌面运行说明](docs/desktop/runbook.md)

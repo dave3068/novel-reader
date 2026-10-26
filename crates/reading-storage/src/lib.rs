@@ -29,6 +29,7 @@ pub mod meta;
 pub mod migrate;
 pub mod progress;
 pub mod settings;
+pub mod sync;
 pub mod theme;
 pub mod theme_derive;
 pub mod validate;

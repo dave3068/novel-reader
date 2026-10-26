@@ -1197,6 +1197,51 @@ JNIEXPORT jbyteArray JNICALL NR_JNI(nr_1list_1book_1categories)(JNIEnv *env, job
     return jni_take_buffer(env, &batch.bytes, out_buffer);
 }
 
+/* 阶段 0：nr_sync_export(engine, dir, out_buffer) -> JSON 摘要字节。
+ * dir 是宿主已物化的本地目录（SAF 选择由 Kotlin 先复制到 app-private 暂存目录）。 */
+JNIEXPORT jbyteArray JNICALL NR_JNI(nr_1sync_1export)(JNIEnv *env, jobject self, jlong engine,
+                                                     jbyteArray dir, jlongArray out_buffer) {
+    (void)self;
+    jsize dir_len = 0;
+    jbyte *dir_pinned = NULL;
+    const uint8_t *dir_bytes = jni_borrow_bytes(env, dir, &dir_len, &dir_pinned);
+    if (dir_bytes == NULL || dir_len <= 0) {
+        jni_release_bytes(env, dir, dir_pinned);
+        return NULL;
+    }
+    nr_buffer summary;
+    memset(&summary, 0, sizeof(summary));
+    int32_t code = nr_sync_export((uint64_t)engine, dir_bytes, (uint32_t)dir_len, &summary);
+    jni_release_bytes(env, dir, dir_pinned);
+    if (code != NR_ERR_OK) {
+        return NULL;
+    }
+    return jni_take_buffer(env, &summary, out_buffer);
+}
+
+/* 阶段 0：nr_sync_import(engine, dir, progress_policy, out_buffer) -> JSON 摘要字节。 */
+JNIEXPORT jbyteArray JNICALL NR_JNI(nr_1sync_1import)(JNIEnv *env, jobject self, jlong engine,
+                                                     jbyteArray dir, jint progress_policy,
+                                                     jlongArray out_buffer) {
+    (void)self;
+    jsize dir_len = 0;
+    jbyte *dir_pinned = NULL;
+    const uint8_t *dir_bytes = jni_borrow_bytes(env, dir, &dir_len, &dir_pinned);
+    if (dir_bytes == NULL || dir_len <= 0) {
+        jni_release_bytes(env, dir, dir_pinned);
+        return NULL;
+    }
+    nr_buffer summary;
+    memset(&summary, 0, sizeof(summary));
+    int32_t code = nr_sync_import((uint64_t)engine, dir_bytes, (uint32_t)dir_len,
+                                  (uint32_t)progress_policy, &summary);
+    jni_release_bytes(env, dir, dir_pinned);
+    if (code != NR_ERR_OK) {
+        return NULL;
+    }
+    return jni_take_buffer(env, &summary, out_buffer);
+}
+
 /* 16. nr_cancel_request(engine, request_id) */
 JNIEXPORT jint JNICALL NR_JNI(nr_1cancel_1request)(JNIEnv *env, jobject self, jlong engine,
                                                  jlong request_id) {

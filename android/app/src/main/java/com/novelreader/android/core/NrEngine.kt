@@ -730,6 +730,38 @@ class NrEngine internal constructor(
     }
 
     /**
+     * 阶段 0：导出同步包到宿主物化的本地目录，返回 UTF-8 JSON 摘要。
+     *
+     * 目录由宿主提供（Android 的 SAF 目录先复制到 app-private 暂存目录）；
+     * 核心不猜平台数据目录。原始 TXT 只读。
+     */
+    fun syncExport(dir: ByteArray): String {
+        requireAlive()
+        val outBuffer = LongArray(NrAbiConstants.NR_BUFFER_SLOTS)
+        val bytes = abi.syncExport(handle, dir, outBuffer) ?: throw NrException(lastErrorRawCode())
+        val buffer = NrBufferHandle.fromSlots(outBuffer)
+        NrBufferHandle.requireLenMatches(buffer, bytes.size.toLong())
+        buffer.release(releaser)
+        return bytes.toString(Charsets.UTF_8)
+    }
+
+    /**
+     * 阶段 0：从宿主物化的本地目录合并同步包，返回 UTF-8 JSON 摘要。
+     *
+     * [progressPolicy]：0 = 保留本地进度；1 = 使用远端较新进度。
+     */
+    fun syncImport(dir: ByteArray, progressPolicy: Int = 0): String {
+        requireAlive()
+        val outBuffer = LongArray(NrAbiConstants.NR_BUFFER_SLOTS)
+        val bytes = abi.syncImport(handle, dir, progressPolicy, outBuffer)
+            ?: throw NrException(lastErrorRawCode())
+        val buffer = NrBufferHandle.fromSlots(outBuffer)
+        NrBufferHandle.requireLenMatches(buffer, bytes.size.toLong())
+        buffer.release(releaser)
+        return bytes.toString(Charsets.UTF_8)
+    }
+
+    /**
      * 移动 / 删除的目标选项（`nr_category_move_targets`）。
      *
      * 含「未分类」（`id = -1`）；[sourceId] 自身与全部子孙 `selectable = false`
